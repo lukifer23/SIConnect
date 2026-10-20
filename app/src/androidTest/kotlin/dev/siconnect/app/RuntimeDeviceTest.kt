@@ -41,8 +41,10 @@ class RuntimeDeviceTest {
     }
     @Test fun actualShellApprovalDenyApproveAndRevocation()=runBlocking {
         authority()
-        val token=g.createDevelopmentAgent()
         val id="physical:${UUID.randomUUID()}"
+        val token=Settings.randomToken("test_")
+        val testAgent="physical-test-${UUID.randomUUID()}"
+        g.agents.put(AgentRecord(AgentGrant(testAgent,"Device test only",scopes=listOf("shell.*")),Settings.sha256Hex(token),System.currentTimeMillis(),tokenHint="test only"))
         fun body(requestId: String)=buildJsonObject { put("requestId",requestId); put("capabilityId","shell.execute"); putJsonObject("arguments") { put("command","id") } }
         val denied=g.remoteInvoke(body("$id:deny"),token)
         Assert.assertEquals(RequestState.AWAITING_APPROVAL,denied.state)
@@ -52,13 +54,26 @@ class RuntimeDeviceTest {
         Assert.assertEquals(RequestState.SUCCEEDED,executed.state)
         Assert.assertTrue(executed.result!!.identity!!.startsWith("uid=2000(shell)"))
         val revoked=g.remoteInvoke(body("$id:revoked"),token)
-        val agent=g.agents.get("development-client")!!
+        val agent=g.agents.get(testAgent)!!
         g.agents.put(agent.copy(grant=agent.grant.copy(revoked=true)))
         Assert.assertEquals(RequestState.FAILED,g.engine.resolveApproval(revoked.requestId,true,"instrumented-local-owner",revoked.argsHash).state)
         Assert.assertNull(g.requests.get(revoked.requestId)!!.result)
-        // Restore a fresh development credential for subsequent authenticated integration tests.
-        g.createDevelopmentAgent()
+        // Never rotate or revoke the owner's actual paired bot while running a device test.
+        g.agents.delete(testAgent)
         Unit
+    }
+    @Test fun exactReminderActuallyDeliversThroughEngine()=runBlocking {
+        Assert.assertTrue("Enable exact alarm access before this physical test",g.reminders.canScheduleExact())
+        val id="physical-reminder:${UUID.randomUUID()}"
+        val r=g.engine.submit(InvocationRequest(requestId=id,agentId="local-owner",capabilityId="reminders.create",arguments=buildJsonObject {
+            put("title","SIConnect timing test");put("text","Actual exact reminder delivery verified");put("fireAtMs",System.currentTimeMillis()+3000);put("exact",true)
+        }),Origin.LOCAL_OWNER)
+        Assert.assertEquals(RequestState.SUCCEEDED,r.state)
+        withTimeout(20000) {while(g.requests.get("reminder:$id")?.state!=RequestState.SUCCEEDED) delay(100)}
+        Assert.assertEquals("SUCCEEDED",g.reminders.get(id)!!.state)
+        val nm=g.context.getSystemService(android.app.NotificationManager::class.java)
+        Assert.assertTrue(nm.activeNotifications.any {it.id=="reminder:$id".hashCode() && it.notification.extras.getString(android.app.Notification.EXTRA_TITLE)=="SIConnect timing test"})
+        nm.cancel("reminder:$id".hashCode())
     }
     @Test fun durableNativeSkillAndPackageQuery()=runBlocking {
         val def=g.skills.get("diagnostics.snapshot")!!

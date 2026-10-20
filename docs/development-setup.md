@@ -59,3 +59,9 @@ Debug builds use the standard Android debug key.
 ## Installed runtime
 
 See [device testing](device-testing.md) for exact install/start/instrumentation commands and [gateway deployment](gateway-deployment.md) for authenticated hosted MCP setup. Double-click `Start SIConnect.command` or run `tools/start_builtin.py --serial <serial>` to start the bundled privileged service after authorized ADB setup. Use `--restart` after an APK update. This is a bootstrap, not a Mac runtime server. Native tools do not require it.
+
+## Hermes
+
+Install the generic [SIConnect skill](../integrations/skills/siconnect/SKILL.md) in the active Hermes profile's skills directory. Configure an HTTP MCP server named `siconnect` with the deployed HTTPS `/mcp` address, `Authorization: Bearer ${SICONNECT_TOKEN}`, a 30-second connection timeout and a 130-second tool timeout. Store the variable in the client's private environment/secret store, never in this repository. Use `hermes mcp test siconnect` for real discovery; invoke `device_status` to verify phone execution and correlate its request ID in Bot activity. Start a fresh agent session if its existing tool catalog is cached.
+
+The verified local setup currently shares the owner's existing paired agent with another client. Separate per-client pairing is being integrated with OAuth; do not describe this shared identity as independent grants.

@@ -16,34 +16,50 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 @Serializable
-data class Reminder(val id: String, val fireAtMs: Long, val title: String, val text: String, val agentId: String, val state: String="SCHEDULED")
+data class Reminder(val id: String, val fireAtMs: Long, val title: String, val text: String, val agentId: String, val state: String="SCHEDULED", val exact: Boolean=false, val error: String?=null, val revision: Long=0)
 
 fun registerAutomationCapabilities(g: RuntimeGraph) {
-    val table=JsonTable(g.db,"reminders","reminder_id")
-    fun all()=table.list().map { AppJson.decodeFromString(Reminder.serializer(),it) }
-    fun register(id: String, schema: JsonObject, risk: RiskClass, body: suspend (JsonObject,ExecutionContext)->JsonElement) {
+    fun register(id: String, schema: JsonObject, risk: RiskClass, available: (JsonObject)->Availability={Availability.IMPLEMENTED}, body: suspend (JsonObject,ExecutionContext)->JsonElement) {
         g.registry.register(object : Capability {
             override val descriptor=CapabilityDescriptor(id,title=id,description=id,inputSchema=schema,backend=BackendKind.NATIVE,risk=risk,
                 sideEffects=if(risk>RiskClass.READ_ONLY) listOf("Changes SIConnect reminders") else emptyList())
             override fun availability()=Availability.IMPLEMENTED
+            override fun availability(arguments: JsonObject)=available(arguments)
+            override fun availabilityDetail()="Precise reminders require Android exact alarm access. Deferrable reminders do not."
             override suspend fun execute(args: JsonObject,ctx: ExecutionContext)=CapabilityResult(body(args,ctx),BackendKind.NATIVE,"uid=${android.os.Process.myUid()}")
         })
     }
-    register("reminders.create",objectSchema { string("title","Title",true,maxLength=150); string("text","Text",true,maxLength=1000); integer("fireAtMs","Deferrable delivery time in epoch milliseconds",true,min=1) },RiskClass.LOW_IMPACT) { a,ctx ->
-        val r=Reminder(ctx.requestId,a.long("fireAtMs",0),a.str("title"),a.str("text"),ctx.agentId)
-        require(r.fireAtMs>System.currentTimeMillis()) { "Reminder must be in the future" }
-        table.insertUnique(ContentValues().apply { put("reminder_id",r.id); put("fire_at",r.fireAtMs); put("state",r.state); put("created_by",r.agentId); put("json",AppJson.encodeToString(Reminder.serializer(),r)) })
-        WorkManager.getInstance(g.context).enqueueUniqueWork("reminder:${r.id}",ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<ReminderWorker>().setInputData(workDataOf("id" to r.id)).setInitialDelay(r.fireAtMs-System.currentTimeMillis(),TimeUnit.MILLISECONDS).build())
-        AppJson.encodeToJsonElement(Reminder.serializer(),r)
+    fun exact(a: JsonObject)=a["exact"]?.jsonPrimitive?.booleanOrNull ?: false
+    fun availability(a: JsonObject)=if(exact(a) && !g.reminders.canScheduleExact()) Availability.PERMISSION_REQUIRED else Availability.IMPLEMENTED
+    fun owned(id: String,ctx: ExecutionContext): Reminder {
+        val r=g.reminders.get(id) ?: throw CapabilityException("NOT_FOUND","No such reminder")
+        if(r.agentId!=ctx.agentId && ctx.agentId!="local-owner") throw CapabilityException("POLICY_DENIED","Reminder belongs to another agent")
+        return r
     }
-    register("reminders.list",objectSchema(),RiskClass.READ_ONLY) { _,ctx -> JsonArray(all().filter { it.agentId==ctx.agentId }.map { AppJson.encodeToJsonElement(Reminder.serializer(),it) }) }
+    register("reminders.create",objectSchema {
+        string("title","Title",true,maxLength=150);string("text","Text",true,maxLength=1000)
+        integer("fireAtMs","Delivery time in epoch milliseconds",true,min=1);boolean("exact","Precise time using AlarmManager; requires special access")
+    },RiskClass.LOW_IMPACT,::availability) { a,ctx ->
+        val r=Reminder(ctx.requestId,a.long("fireAtMs",0),a.str("title"),a.str("text"),ctx.agentId,exact=exact(a))
+        AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.put(r))
+    }
+    register("reminders.update",objectSchema {
+        string("id","Existing reminder ID",true,maxLength=200);integer("fireAtMs","Replacement delivery time",min=1)
+        string("title","Replacement title",maxLength=150);string("text","Replacement content",maxLength=1000)
+        boolean("exact","Precise time using AlarmManager; requires special access")
+    },RiskClass.LOW_IMPACT,{ a ->
+        val precise=a["exact"]?.jsonPrimitive?.booleanOrNull ?: g.reminders.get(a.str("id"))?.exact ?: false
+        if(precise && !g.reminders.canScheduleExact()) Availability.PERMISSION_REQUIRED else Availability.IMPLEMENTED
+    }) { a,ctx ->
+        val r=owned(a.str("id"),ctx)
+        val updated=r.copy(fireAtMs=a["fireAtMs"]?.jsonPrimitive?.longOrNull ?: r.fireAtMs,title=a["title"]?.jsonPrimitive?.content ?: r.title,
+            text=a["text"]?.jsonPrimitive?.content ?: r.text,exact=a["exact"]?.jsonPrimitive?.booleanOrNull ?: r.exact)
+        AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.put(updated))
+    }
+    register("reminders.list",objectSchema(),RiskClass.READ_ONLY) { _,ctx -> JsonArray(g.reminders.all().filter { it.agentId==ctx.agentId || ctx.agentId=="local-owner" }.map { AppJson.encodeToJsonElement(Reminder.serializer(),it) }) }
     register("reminders.cancel",objectSchema { string("id","Reminder ID",true,maxLength=200) },RiskClass.LOW_IMPACT) { a,ctx ->
-        val r=all().firstOrNull { it.id==a.str("id") && it.agentId==ctx.agentId } ?: throw CapabilityException("NOT_FOUND","No reminder owned by agent")
-        WorkManager.getInstance(g.context).cancelUniqueWork("reminder:${r.id}")
-        val changed=r.copy(state="CANCELLED")
-        table.update(ContentValues().apply { put("state",changed.state); put("json",AppJson.encodeToString(Reminder.serializer(),changed)) },"reminder_id=?",arrayOf(r.id))
-        buildJsonObject { put("cancelled",true) }
+        val r=owned(a.str("id"),ctx)
+        AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.cancel(r.id))
     }
     val http=OkHttpClient.Builder().callTimeout(20,TimeUnit.SECONDS).build()
     g.registry.register(object : Capability {
@@ -73,18 +89,4 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
             CapabilityResult(normalized,BackendKind.NETWORK,"api.open-meteo.com")
         }
     })
-}
-class ReminderWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
-    override suspend fun doWork(): Result {
-        val g=applicationContext.graph; g.ready.await()
-        val id=inputData.getString("id") ?: return Result.failure()
-        val table=JsonTable(g.db,"reminders","reminder_id")
-        val r=table.get(id)?.let { AppJson.decodeFromString(Reminder.serializer(),it) } ?: return Result.failure()
-        if(r.state!="SCHEDULED") return Result.success()
-        val result=g.engine.submit(InvocationRequest(requestId="reminder:$id",agentId="local-automation",capabilityId="notifications.post",
-            arguments=buildJsonObject { put("title",r.title); put("text",r.text) }),Origin.LOCAL_AUTOMATION)
-        val changed=r.copy(state=result.state.name)
-        table.update(ContentValues().apply { put("state",changed.state); put("json",AppJson.encodeToString(Reminder.serializer(),changed)) },"reminder_id=?",arrayOf(id))
-        return if(result.state==RequestState.SUCCEEDED) Result.success() else Result.failure()
-    }
 }

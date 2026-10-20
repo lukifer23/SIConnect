@@ -30,6 +30,7 @@ open class MainActivity: ComponentActivity() {
     private var permissionRevision by mutableIntStateOf(0)
     private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissionRevision++ }
     override fun onResume() { super.onResume(); permissionRevision++ }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent);setIntent(intent);permissionRevision++ }
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         setContent { MaterialTheme(colorScheme=darkColorScheme(primary=Color(0xFF8ADCC3),onPrimary=Color(0xFF062B23),background=Color(0xFF0D1218),surface=Color(0xFF151E27),surfaceVariant=Color(0xFF202D39))) {
@@ -67,14 +68,20 @@ open class MainActivity: ComponentActivity() {
         var inspectedEvents by remember { mutableStateOf(emptyList<Event>()) }
         var labels by remember { mutableStateOf(emptyMap<String,String>()) }
         var openedApproval by remember { mutableStateOf<String?>(null) }
+        var reminders by remember { mutableStateOf(emptyList<dev.siconnect.app.capabilities.Reminder>()) }
+        var reminder by remember { mutableStateOf<dev.siconnect.app.capabilities.Reminder?>(null) }
+        var exactAccess by remember { mutableStateOf(false) }
         var notifications by remember { mutableStateOf(getSystemService(NotificationManager::class.java).areNotificationsEnabled()) }
         fun work(block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: Exception) { note=e.message ?: "Action failed" } finally { busy=false } } }
         LaunchedEffect(changed,health,connection,permissionRevision) {
-            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(50); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); labels=g.agents.all().associate { it.grant.agentId to it.grant.label } } }
+            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(50); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); labels=g.agents.all().associate { it.grant.agentId to it.grant.label }
+                reminders=g.reminders.all().filter { it.state in setOf("SCHEDULED","BLOCKED") }.sortedBy { it.fireAtMs };exactAccess=g.reminders.canScheduleExact()
+                reminder=reminder?.let { g.reminders.get(it.id) }
+            } }
             notifications=getSystemService(NotificationManager::class.java).areNotificationsEnabled()
         }
         LaunchedEffect(Unit) { g.engine.recordUpdates.collect { changed++ } }
-        LaunchedEffect(pending) {
+        LaunchedEffect(pending,permissionRevision) {
             val target=intent.getStringExtra("requestId")
             if(target!=null && target!=openedApproval) pending.firstOrNull { it.requestId==target }?.let { review=it; openedApproval=target }
         }
@@ -141,6 +148,16 @@ open class MainActivity: ComponentActivity() {
                     note="Device test passed. Read real device status and saved the result."
                 } },enabled=!busy,modifier=Modifier.fillMaxWidth().height(52.dp)) { Text(if(busy) "Working…" else "Test this phone") }
                 if(note.isNotBlank()) Text(note,color=MaterialTheme.colorScheme.primary)
+                if(reminders.isNotEmpty()) {
+                    Text("Upcoming reminders",style=MaterialTheme.typography.titleLarge)
+                    reminders.take(5).forEach { r -> Card(Modifier.fillMaxWidth().clickable { reminder=r },shape=RoundedCornerShape(18.dp)) {
+                        Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                            Text(r.title,style=MaterialTheme.typography.titleMedium)
+                            Text(java.time.Instant.ofEpochMilli(r.fireAtMs).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d · h:mm a")))
+                            Text(if(r.state=="BLOCKED") "Needs attention · ${r.error}" else if(r.exact) "Precise time · saved on this phone" else "Flexible delivery · tap for precise time",style=MaterialTheme.typography.labelSmall)
+                        }
+                    } }
+                }
                 if(recent.isNotEmpty()) {
                     Text("Bot activity",style=MaterialTheme.typography.titleLarge)
                     recent.take(8).forEach { r -> Row(Modifier.fillMaxWidth().clickable { inspected=r }.padding(vertical=6.dp)) {
@@ -203,6 +220,23 @@ open class MainActivity: ComponentActivity() {
         allowBot?.let { a -> ShellPermissionDialog(a.grant.label,onClose={allowBot=null},onAllow={
             allowBot=null; work {g.setShellPermissionFromOwner(a.grant.agentId,true);note="Always allowed. Saved on this phone until you revoke it."}
         }) }
+        reminder?.let { r -> AlertDialog(onDismissRequest={reminder=null},title={Text(r.title)},
+            text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                Text(r.text)
+                Text(java.time.Instant.ofEpochMilli(r.fireAtMs).atZone(java.time.ZoneId.systemDefault()).toString())
+                Text(if(r.exact) "Precise timing through Android AlarmManager" else "Flexible timing through Android WorkManager")
+                r.error?.let {Text(it)}
+            }},confirmButton={Column {
+                if(!r.exact || r.state=="BLOCKED") Button(onClick={
+                    if(!exactAccess) startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))
+                    else work {
+                        val result=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="reminders.update",arguments=buildJsonObject {put("id",r.id);put("exact",true)}),Origin.LOCAL_OWNER)
+                        check(result.state==RequestState.SUCCEEDED) {result.errorMessage ?: "Could not schedule precise reminder"}
+                        note="Precise reminder saved. Its time and content are unchanged.";reminder=null
+                    }
+                }) {Text(if(exactAccess) "Use precise time" else "Enable precise reminders")}
+                TextButton(onClick={reminder=null}) {Text("Close")}
+            }}) }
 
     }
 

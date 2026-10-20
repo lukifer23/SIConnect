@@ -170,7 +170,7 @@ class ExecutionEngine(
         val assessment = runCatching { capability.assess(req.arguments) }.getOrElse {
             return fail(record, "ASSESSMENT_FAILED", it.message ?: "assessment failed")
         }
-        val availability = runCatching { capability.availability() }.getOrDefault(Availability.UNKNOWN)
+        val availability = runCatching { capability.availability(req.arguments) }.getOrDefault(Availability.UNKNOWN)
         val grant = agents.grant(req.agentId)?.takeIf { it.agentId == req.agentId }
         val decision = policy.evaluate(
             grant, capability.descriptor, req.arguments, assessment,
@@ -227,7 +227,7 @@ class ExecutionEngine(
         val grant = agents.grant(approved.agentId)
         if (grant?.agentId != approved.agentId) return fail(approved, "POLICY_DENIED", "Authenticated agent no longer exists")
         val decision = policy.evaluate(grant, capability.descriptor, approved.arguments,
-            approved.assessment ?: capability.assess(approved.arguments), capability.availability(), controls(),
+            approved.assessment ?: capability.assess(approved.arguments), runCatching { capability.availability(approved.arguments) }.getOrDefault(Availability.UNKNOWN), controls(),
             Origin.valueOf(approved.origin), now)
         if (decision.outcome == PolicyOutcome.DENY || decision.outcome == PolicyOutcome.UNAVAILABLE)
             return fail(approved, "POLICY_DENIED", decision.reason)

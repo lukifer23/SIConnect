@@ -43,6 +43,7 @@ class RuntimeGraph(val context: Context) {
     val skills = SkillCatalog(db, registry)
     val runner = DurableSkillRunner(engine, skillRuns)
     val scheduler = Scheduler(this)
+    val reminders = dev.siconnect.app.automation.ReminderScheduler(this)
     val gateway = GatewayConnection(this)
     val health = MutableStateFlow("Starting")
     val ready: Deferred<Unit>
@@ -66,6 +67,7 @@ class RuntimeGraph(val context: Context) {
                 output=buildJsonObject { put("device", JsonPrimitive("\${steps.status.output}")); put("battery", JsonPrimitive("\${steps.battery.output}")); put("memory", JsonPrimitive("\${steps.memory.output}")) }))
             events.trim(System.currentTimeMillis() - settings.eventRetentionDays * 86_400_000L)
             scheduler.restore()
+            reminders.restore()
             if (BuildConfig.DEBUG) { local = LocalEndpoint(this@RuntimeGraph).also { it.start() } }
             health.value = "Ready — SQLite schema ${SIConnectDb.VERSION}"
         }
@@ -126,7 +128,7 @@ class RuntimeGraph(val context: Context) {
             ownerDb.beginTransaction()
             try {
                 val agent=requireNotNull(agents.get(r.agentId))
-                val decision=PolicyEngine().evaluate(agent.grant,cap.descriptor,r.arguments,assessment,cap.availability(),settings.controls.value,Origin.valueOf(r.origin),now)
+                val decision=PolicyEngine().evaluate(agent.grant,cap.descriptor,r.arguments,assessment,cap.availability(r.arguments),settings.controls.value,Origin.valueOf(r.origin),now)
                 require(decision.outcome==PolicyOutcome.ALLOW || decision.outcome==PolicyOutcome.REQUIRE_APPROVAL) { decision.reason }
                 val grant=if(broadShell) {
                     require(assessment.shellCommand!=null) { "This is not a shell request" }

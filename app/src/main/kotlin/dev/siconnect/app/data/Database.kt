@@ -73,9 +73,10 @@ class SIConnectDb(context: Context) : SQLiteOpenHelper(context, "siconnect.db", 
             db.execSQL("CREATE TABLE skill_runs (run_id TEXT PRIMARY KEY, state TEXT NOT NULL, revision INTEGER NOT NULL, json TEXT NOT NULL)")
             db.execSQL("CREATE TABLE step_results (run_id TEXT NOT NULL, step_id TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY(run_id, step_id))")
         }
+        if (old < 3) db.execSQL("ALTER TABLE reminders ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
     }
 
-    companion object { const val VERSION = 2 }
+    companion object { const val VERSION = 3 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
