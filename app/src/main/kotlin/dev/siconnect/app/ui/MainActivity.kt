@@ -60,6 +60,10 @@ open class MainActivity: ComponentActivity() {
         var setup by remember { mutableStateOf(false) }
         var controlHelp by remember { mutableStateOf(false) }
         var connectionCode by remember { mutableStateOf("") }
+        var pairName by remember { mutableStateOf("Dots") }
+        var pairError by remember { mutableStateOf("") }
+        var pairDialog by remember { mutableStateOf(false) }
+        var pairCode by remember { mutableStateOf<dev.siconnect.app.transport.PairingInvitation?>(null) }
         var hasBotKey by remember { mutableStateOf(false) }
         var pairedBot by remember { mutableStateOf<AgentRecord?>(null) }
         var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
@@ -184,6 +188,7 @@ open class MainActivity: ComponentActivity() {
                 Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) { Text("Copy address") }
             }
+            OutlinedButton(onClick={pairDialog=true;setup=false},enabled=connection==dev.siconnect.app.transport.ConnectionState.ONLINE) { Text("Pair another bot") }
             if(hasBotKey) Button(onClick={work {
                 val token=requireNotNull(g.botKeyForOwner()) { "This bot key was revoked. Pair a new agent in Advanced." }
                 withContext(Dispatchers.Main) { copyForBot(token,true) }
@@ -204,6 +209,19 @@ open class MainActivity: ComponentActivity() {
             withContext(Dispatchers.Main) { startForegroundService(Intent(this@MainActivity,ConnectionService::class.java)) }
             setup=false; note="Connecting your phone…"
         }},enabled=connectionCode.isNotBlank()) {Text("Connect")}},dismissButton={TextButton(onClick={setup=false}) {Text("Close")}})
+        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text("Pair a bot")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
+            if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
+            if(pairCode==null) {
+                Text("Give this bot a name. It gets its own permission and activity history.")
+                OutlinedTextField(pairName,{pairName=it.take(60)},label={Text("Bot name")},singleLine=true)
+                Text("Then add SIConnect’s MCP address in your bot, choose OAuth, and enter the temporary code on the SIConnect sign-in page.")
+            } else {
+                Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(pairCode!!.expiresAt))}. Works once. Paste it only into your gateway’s SIConnect sign-in page.")
+                Text(pairCode!!.code,style=MaterialTheme.typography.bodySmall)
+                Text("Sensitive actions still ask you first. Manage this bot’s permission in Advanced → Agents.")
+            }
+        }},confirmButton={Button(onClick={if(pairCode==null) work { pairError="";try { pairCode=g.pairing.create(pairName) } catch(e:Exception) { pairError=if(e is TimeoutCancellationException) "Gateway did not save the code. Check connection and try again." else e.message ?: "Could not create pairing code" } } else if(pairCode!!.expiresAt<=System.currentTimeMillis()) {pairCode=null;pairError="Code expired. Create a new code."} else copyForBot(pairCode!!.code,true)},enabled=!busy && pairName.isNotBlank()) {Text(if(pairCode==null) "Create pairing code" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
         review?.let { r -> OwnerApprovalDialog(r,onClose={review=null},onApprove={always,broad ->
             review=null; work { val result=g.approveFromOwner(r.requestId,r.argsHash,always,broad); note="Action ${result.state.name.lowercase()}" }
         }) }

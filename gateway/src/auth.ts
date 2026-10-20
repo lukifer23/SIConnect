@@ -7,6 +7,8 @@ export interface Principal {
 }
 export interface Env {
   DEVICES: DurableObjectNamespace;
+  OAUTH_KV: KVNamespace;
+  PUBLIC_ORIGIN?: string;
   AGENTS_JSON: string;
   DEVICE_ENROLL_TOKEN: string;
 }

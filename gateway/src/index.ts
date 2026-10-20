@@ -3,6 +3,8 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/server/validators/cf-worker';
 import * as z from 'zod';
 import { authenticate, bearer, constantEqual, sha256, type Env } from './auth.js';
+import { oauthFetch } from './oauth.js';
+import type { Invitation, PhoneAuthorization } from './pairing.js';
 
 type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
 type Pending = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -32,7 +34,19 @@ export class DeviceBridge extends DurableObject<Env> {
       pair[1].serializeAttachment({ onlineAt: Date.now() });
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
-    if (path === '/catalog') return json({ online: this.ctx.getWebSockets('device').some(s => s.readyState === 1), capabilities: await this.ctx.storage.get('capabilities') ?? [] });
+    if (path === '/pairing/consume') {
+      const { hash } = await request.json() as { hash: string };
+      if (!/^[a-f0-9]{64}$/.test(hash)) return json({ error: 'INVALID_PAIRING' }, 400);
+      const invitation = await this.ctx.storage.transaction(async storage => {
+        const item = await storage.get<Invitation>('pair:' + hash);
+        if (item) { await storage.delete('pair:' + hash); await storage.put('used:' + hash, item.expiresAt); }
+        return item;
+      });
+      if (!invitation || invitation.expiresAt <= Date.now()) return json({ error: 'INVALID_PAIRING' }, 401);
+      for (const socket of this.ctx.getWebSockets('device')) if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: invitation.agentId }));
+      return json(invitation);
+    }
+    if (path === '/catalog') return json({ protocol: 2, online: this.ctx.getWebSockets('device').some(s => s.readyState === 1), capabilities: await this.ctx.storage.get('capabilities') ?? [] });
     if (path === '/invoke') {
       const body = await request.json() as { agentId: string; agentToken: string; request: Record<string, unknown> };
       const slot = Math.floor(Date.now() / 60_000);
@@ -82,6 +96,23 @@ export class DeviceBridge extends DurableObject<Env> {
           if (!/^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*)+$/.test(cap.descriptor.id)) throw new Error('Invalid capability');
         }
         await this.ctx.storage.put('capabilities', body.capabilities);
+        socket.send(JSON.stringify({ type: 'hello_ack', protocol: 2 }));
+      } else if (body.type === 'pairing') {
+        const item = body.invitation as Invitation;
+        if (!item || !/^[a-f0-9]{64}$/.test(item.hash) || !/^[A-Za-z0-9_-]{1,100}$/.test(item.agentId) ||
+            !Number.isSafeInteger(item.expiresAt) || item.expiresAt <= Date.now() || item.expiresAt > Date.now() + 610_000 ||
+            typeof item.sealed !== 'string' || !/^[A-Za-z0-9_-]{60,2048}$/.test(item.sealed)) throw new Error('Invalid invitation');
+        const used = await this.ctx.storage.list<number>({ prefix: 'used:' });
+        for (const [key, expiry] of used) if (expiry <= Date.now()) await this.ctx.storage.delete(key);
+        if ((used.get('used:' + item.hash) ?? 0) > Date.now()) {
+          socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: item.agentId, hash: item.hash }));
+          return;
+        }
+        const invitations = await this.ctx.storage.list<Invitation>({ prefix: 'pair:' });
+        for (const [key, value] of invitations) if (value.expiresAt <= Date.now()) await this.ctx.storage.delete(key);
+        if ([...invitations.values()].filter(v => v.expiresAt > Date.now()).length >= 32 && !invitations.has('pair:' + item.hash)) throw new Error('Pairing limit');
+        await this.ctx.storage.put('pair:' + item.hash, item);
+        socket.send(JSON.stringify({ type: 'pairing_saved', hash: item.hash }));
       } else if (body.type === 'result' || body.type === 'error') {
         const pending = this.pending.get(body.id);
         if (pending) pending.resolve(body.type === 'result' ? body.record : { error: body.code });
@@ -98,10 +129,10 @@ export class DeviceBridge extends DurableObject<Env> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
-      if (url.pathname === '/health') return json({ service: 'SIConnect', authentication: 'private-bearer', oauth: false });
+      if (url.pathname === '/health') return json({ service: 'SIConnect', authentication: ['oauth', 'private-bearer'], oauth: true });
       const device = /^\/(device|register)\/([A-Za-z0-9_-]{1,100})$/.exec(url.pathname);
       if (device) {
         const bridge = env.DEVICES.get(env.DEVICES.idFromName(device[2]));
@@ -115,11 +146,17 @@ export default {
         }
         return bridge.fetch(new Request('https://internal/socket', request));
       }
-      if (url.pathname !== '/mcp') return json({ error: 'NOT_FOUND' }, 404);
-      const principal = await authenticate(request, env);
-      if (!principal) return json({ error: 'UNAUTHORIZED' }, 401);
+      const principal = ['/mcp','/connection'].includes(url.pathname) ? await authenticate(request, env) : null;
+      if(principal && url.pathname==='/connection') return env.DEVICES.get(env.DEVICES.idFromName(principal.deviceId)).fetch('https://internal/catalog');
+      if (!principal) return oauthFetch(request, env, ctx);
       const token = bearer(request)!;
-      const bridge = env.DEVICES.get(env.DEVICES.idFromName(principal.deviceId));
+      return serveMcp(request, env, { agentId: principal.id, deviceId: principal.deviceId, agentToken: token });
+    } catch { return json({ error: 'INVALID_REQUEST' }, 400); }
+  }
+} satisfies ExportedHandler<Env>;
+
+export async function serveMcp(request: Request, env: Env, authorization: PhoneAuthorization): Promise<Response> {
+      const bridge = env.DEVICES.get(env.DEVICES.idFromName(authorization.deviceId));
       const catalog = await (await bridge.fetch('https://internal/catalog')).json() as { online: boolean; capabilities: Capability[] };
       const handler = createMcpHandler(() => {
         const server = new McpServer({ name: 'SIConnect', version: '0.2.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
@@ -133,7 +170,7 @@ export default {
             const requestId = crypto.randomUUID();
             const response = await bridge.fetch(new Request('https://internal/invoke', {
               method: 'POST', signal: context.mcpReq.signal,
-              body: JSON.stringify({ agentId: principal.id, agentToken: token, request: {
+              body: JSON.stringify({ agentId: authorization.agentId, agentToken: authorization.agentToken, request: {
                 requestId, traceId: requestId, capabilityId: descriptor.id, arguments: args, expiresAtMs: Date.now() + 120_000
               } })
             }));
@@ -145,6 +182,4 @@ export default {
         return server;
       }, { legacy: 'stateless', responseMode: 'json', maxRequestBodySize: 131072 });
       try { return await handler.fetch(request); } finally { await handler.close(); }
-    } catch { return json({ error: 'INVALID_REQUEST' }, 400); }
-  }
-} satisfies ExportedHandler<Env>;
+}

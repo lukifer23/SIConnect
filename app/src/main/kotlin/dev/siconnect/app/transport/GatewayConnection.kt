@@ -24,6 +24,19 @@ class GatewayConnection(private val g: RuntimeGraph) {
     val state=MutableStateFlow(ConnectionState.DISABLED)
     val detail=MutableStateFlow("Remote connection disabled")
     private val client=OkHttpClient.Builder().pingInterval(90,TimeUnit.SECONDS).build()
+    private val pairingAcks=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<Unit>>()
+    suspend fun publishPairing(invitation: PairingInvitation) {
+        check(state.value==ConnectionState.ONLINE) { "Phone is offline" }
+        val hash=dev.siconnect.app.data.Settings.sha256Hex(invitation.code)
+        val ack=CompletableDeferred<Unit>()
+        check(pairingAcks.putIfAbsent(hash,ack)==null) { "Pairing is already being prepared" }
+        try {
+            check(socket?.send(buildJsonObject { put("type","pairing");put("invitation",buildJsonObject {
+                put("hash",hash);put("agentId",invitation.agentId);put("expiresAt",invitation.expiresAt);put("sealed",invitation.sealed)
+            }) }.toString())==true) { "Connection lost" }
+            withTimeout(8_000) { ack.await() }
+        } finally { pairingAcks.remove(hash,ack) }
+    }
     private var loop: Job?=null
     @Volatile private var socket: WebSocket?=null
     fun stop() { loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; state.value=ConnectionState.DISABLED }
@@ -57,8 +70,10 @@ class GatewayConnection(private val g: RuntimeGraph) {
                         state.value=ConnectionState.AUTHENTICATING
                         ws.send(buildJsonObject { put("type","hello"); put("deviceId",g.settings.deviceId)
                             put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses())) }.toString())
-                        state.value=ConnectionState.ONLINE; detail.value="Connected"; attempt=0
-                        g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                        g.scope.launch {
+                            delay(10_000)
+                            if(socket===ws && state.value==ConnectionState.AUTHENTICATING) { detail.value="Gateway did not confirm connection";ws.close(1002,"Handshake timeout");done.complete(Unit) }
+                        }
                     }
                     override fun onMessage(ws: WebSocket,text: String) {
                         if(text.length>131072) { ws.close(1009,"Envelope too large"); return }
@@ -66,7 +81,16 @@ class GatewayConnection(private val g: RuntimeGraph) {
                             runCatching {
                                 val msg=Json.parseToJsonElement(text).jsonObject
                                 val type=msg["type"]?.jsonPrimitive?.content
-                                if(type=="invoke") {
+                                if(type=="hello_ack") {
+                                    require(msg.getValue("protocol").jsonPrimitive.int>=2) { "Gateway update required" }
+                                    state.value=ConnectionState.ONLINE;detail.value="Connected";attempt=0
+                                    g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                                } else if(type=="pairing_saved") {
+                                    pairingAcks[msg.getValue("hash").jsonPrimitive.content]?.complete(Unit)
+                                } else if(type=="pairing_consumed") {
+                                    g.pairing.consumed(msg.getValue("agentId").jsonPrimitive.content)
+                                    msg["hash"]?.jsonPrimitive?.content?.let { pairingAcks[it]?.completeExceptionally(IllegalStateException("This code was already used. Create a new pairing code.")) }
+                                } else if(type=="invoke") {
                                     val correlation=msg.getValue("id").jsonPrimitive.content
                                     val token=msg.getValue("agentToken").jsonPrimitive.content
                                     val result=g.remoteInvoke(msg.getValue("request").jsonObject,token)
@@ -78,6 +102,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     if(g.requests.get(id)?.agentId==agent.grant.agentId) g.engine.cancel(id,agent.grant.agentId)
                                 }
                             }.onFailure { e ->
+                                g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.protocol_error",deviceId=g.settings.deviceId,errorCode=if(e is CapabilityException) e.code else e.javaClass.simpleName,detail="Incoming gateway message could not be processed"))
                                 val id=runCatching { Json.parseToJsonElement(text).jsonObject["id"]?.jsonPrimitive?.content }.getOrNull()
                                 ws.send(buildJsonObject { put("type","error"); put("id",id); put("code",if(e is CapabilityException) e.code else if(e is SecurityException) "UNAUTHORIZED" else "INVALID_REQUEST") }.toString())
                             }

@@ -11,12 +11,12 @@ Updated October 20, 2026. This replaces the initial core-only status.
 | Privileged runtime | Bundled shell/root-only Binder service; shared bounded subprocess executor; optional explicit Shizuku backend | Bundled backend physically returned UID 2000, exit 0; no companion needed for this route |
 | Approvals | Persisted requests, notifications, exact owner review, deny and once/standing/broad permission | Instrumented deny/approve/revoke; actual UI approved browser and Clock operations |
 | Persistent permission | Exact argument/version/backend grants and explicit broad shell; owner-only SQLite changes; revoke controls | Phone UI saved broad grant; process killed and automatically restarted; new unattended shell succeeded |
-| Gateway | Worker, Durable Object, official MCP v2 handler, private bearer auth, device enrollment, outbound socket | Deployed in owner's personal account; real Fold connected; SDK v1/v2 local protocol tests |
+| Gateway | Worker, Durable Object, official MCP v2 handler, OAuth plus private bearer auth, device enrollment, acknowledged outbound socket | Deployed in owner's personal account; real Fold connected; SDK v1/v2 local protocol tests |
 | Grok Bot | Saved secure bearer credential; cloud-hosted MCP relay | Actual connector battery call correlated with phone record; browser and alarm operations executed after UI approval |
-| Result tracking | requests.get / requests.cancel scoped to authenticated requesting agent | Real hosted MCP lookup succeeded; catalog now advertises 30 tools |
+| Result tracking | requests.get / requests.cancel scoped to authenticated requesting agent | Real hosted MCP lookup succeeded; catalog now advertises 31 tools |
 | Scheduling | Versioned reminder records, revision CAS, exact AlarmManager and deferrable WorkManager, same-ID update, reboot restoration | Real exact alarm delivered through policy/engine/notification in instrumentation; longer lifecycle testing pending |
 | Weather | Real Open-Meteo forecast/cache/normalization | Live forecast fetched; existing next-morning reminder updated to exact timing without creating a duplicate |
-| Hermes | Global HTTP MCP connection and reusable device skill | Native Hermes client discovered 30 tools and invoked real device status; credential remains outside Git |
+| Hermes | Global HTTP MCP connection and reusable device skill | Native Hermes client discovered tools and invoked real device status; owner confirms a real self-addressed phone email was sent; credential remains outside Git |
 
 ## Physical evidence
 
@@ -27,7 +27,7 @@ Grok Bot submitted the owner's requested browser and Clock commands. Both waited
 ## Remaining limits
 
 - Two explicitly authorized conversations were exercised through Grok Bot. Exact outgoing messages and Delivered state were verified on the Fold. A date-bounded message review also ran. Private content stays outside Git.
-- Private bearer authentication works with this Grok Bot setup. OAuth and Dots onboarding are not implemented/verified.
+- Private bearer authentication works with this Grok Bot setup. OAuth with PKCE, discovery, CIMD/DCR, refresh and phone-created pairing is implemented/deployed. Dots reached real consent; expired consent/code blocked completion. Final Dots invocation remains unverified.
 - Full device control requires an owner-authorized ADB bootstrap after phone reboot. The Mac is not a runtime server after bootstrap. Phone-only wireless pairing is not implemented.
 - Shizuku integration is optional; its reboot/lifecycle behavior has not been exhaustively tested.
 - Calendar/files families, disposable uninstall, extended background/reboot/network tests and long-duration resource profiling remain outstanding.

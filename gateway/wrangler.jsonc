@@ -3,8 +3,36 @@
   "name": "siconnect-gateway",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-20",
-  "compatibility_flags": ["nodejs_compat"],
-  "durable_objects": {"bindings": [{"name": "DEVICES", "class_name": "DeviceBridge"}]},
-  "migrations": [{"tag": "v1", "new_sqlite_classes": ["DeviceBridge"]}],
-  "observability": {"enabled": false}
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DEVICES",
+        "class_name": "DeviceBridge"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "DeviceBridge"
+      ]
+    }
+  ],
+  "observability": {
+    "enabled": false
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "79800399c0cc4e8e965ef8301340cfe0"
+    }
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://siconnect-gateway.siconnect-gateway.workers.dev"
+  }
 }

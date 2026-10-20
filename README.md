@@ -73,3 +73,5 @@ SIConnect is designed to give software agents powerful control over a device, up
 ## License
 
 [MIT](LICENSE)
+
+OAuth pairing for Dots/ChatGPT is now implemented in the existing gateway; actual hosted onboarding remains in progress. See [gateway setup](docs/gateway-deployment.md) and [client evidence](docs/provider-compatibility.md). Hermes has a reusable [phone-control skill](integrations/skills/siconnect/SKILL.md). Never include live credentials or personal device evidence in issues or commits.

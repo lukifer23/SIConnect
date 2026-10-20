@@ -45,6 +45,7 @@ class RuntimeGraph(val context: Context) {
     val scheduler = Scheduler(this)
     val reminders = dev.siconnect.app.automation.ReminderScheduler(this)
     val gateway = GatewayConnection(this)
+    val pairing = dev.siconnect.app.transport.BotPairing(this)
     val health = MutableStateFlow("Starting")
     val ready: Deferred<Unit>
     private var local: LocalEndpoint? = null
@@ -166,6 +167,7 @@ class RuntimeGraph(val context: Context) {
     suspend fun remoteInvoke(body: JsonObject, token: String): RequestRecord {
         ready.await()
         val agent = authenticate(token) ?: throw SecurityException("Invalid or revoked agent credential")
+        if(settings.pendingPairing()?.agentId==agent.grant.agentId) pairing.consumed(agent.grant.agentId)
         require(body.keys.all { it in setOf("requestId", "traceId", "capabilityId", "arguments", "idempotencyKey", "expiresAtMs") }) { "Unsupported invocation field" }
         return engine.submit(InvocationRequest(
             requestId=(body["requestId"] as? JsonPrimitive)?.content ?: java.util.UUID.randomUUID().toString(),
