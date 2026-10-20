@@ -15,6 +15,7 @@ import java.util.UUID
 class RuntimeDeviceTest {
     private val g=InstrumentationRegistry.getInstrumentation().targetContext.graph
     @Before fun ready()=runBlocking { g.ready.await() }
+    private suspend fun authority() { withTimeout(10000) { while(!g.privileged.available()) delay(50) } }
     @Test fun nativeExecutionIsDurableAndIdempotencyIsBound()=runBlocking {
         val id="physical:${UUID.randomUUID()}"
         val req=InvocationRequest(requestId=id,agentId="local-owner",capabilityId="device.status",idempotencyKey=id)
@@ -29,6 +30,7 @@ class RuntimeDeviceTest {
         Assert.assertTrue(g.events.query(requestId=id).any { it.eventType=="execution.finished" })
     }
     @Test fun bundledBackendActuallyRunsAsShell()=runBlocking {
+        authority()
         g.settings.privilegeBackend="direct"; g.privileged.refresh()
         Assert.assertTrue(g.privileged.detail(),g.privileged.available())
         val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="shell.identity"),Origin.LOCAL_OWNER)
@@ -38,6 +40,7 @@ class RuntimeDeviceTest {
         Assert.assertEquals(0,r.result!!.output.jsonObject.getValue("exitCode").jsonPrimitive.int)
     }
     @Test fun actualShellApprovalDenyApproveAndRevocation()=runBlocking {
+        authority()
         val token=g.createDevelopmentAgent()
         val id="physical:${UUID.randomUUID()}"
         fun body(requestId: String)=buildJsonObject { put("requestId",requestId); put("capabilityId","shell.execute"); putJsonObject("arguments") { put("command","id") } }

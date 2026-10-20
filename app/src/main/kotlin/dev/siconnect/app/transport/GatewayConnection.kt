@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import okhttp3.*
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -30,12 +32,23 @@ class GatewayConnection(private val g: RuntimeGraph) {
         loop=g.scope.launch {
             g.ready.await(); var attempt=0
             while(isActive && g.settings.gateway.value.enabled) {
+                try {
                 val config=g.settings.gateway.value
                 val base=config.baseUrl.trimEnd('/')
                 if(!base.startsWith("https://") && !(dev.siconnect.app.BuildConfig.DEBUG && base.startsWith("http://127.0.0.1:"))) {
                     state.value=ConnectionState.AUTH_FAILED; detail.value="HTTPS gateway required"; break
                 }
                 state.value=ConnectionState.CONNECTING
+                if(!g.settings.enrolled && !g.settings.enrollToken().isNullOrBlank()) {
+                    state.value=ConnectionState.AUTHENTICATING
+                    val registration=withContext(Dispatchers.IO) {
+                        client.newCall(Request.Builder().url(base+"/register/${g.settings.deviceId}")
+                            .header("Authorization","Bearer ${g.settings.enrollToken()}")
+                            .post(buildJsonObject { put("deviceToken",g.settings.deviceSecret()) }.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r -> r.code }
+                    }
+                    if(registration==200) { g.settings.enrolled=true; g.settings.setEnrollToken(null) }
+                    else if(registration!=409) { state.value=ConnectionState.AUTH_FAILED; detail.value="Gateway enrollment failed: $registration"; break }
+                }
                 val done=CompletableDeferred<Unit>()
                 val request=Request.Builder().url(base.replaceFirst("https://","wss://").replaceFirst("http://","ws://")+"/device/${g.settings.deviceId}")
                     .header("Authorization","Bearer ${g.settings.deviceSecret()}").build()
@@ -82,6 +95,12 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 state.value=ConnectionState.BACKOFF
                 val cap=minOf(300_000L,1000L shl attempt.coerceAtMost(8)); attempt++
                 delay(Random.nextLong(cap/2,cap+1))
+                } catch(e: CancellationException) { throw e }
+                  catch(e: Exception) {
+                    state.value=ConnectionState.BACKOFF; detail.value="Connection unavailable: ${e.javaClass.simpleName}"
+                    val cap=minOf(300_000L,1000L shl attempt.coerceAtMost(8));attempt++
+                    delay(Random.nextLong(cap/2,cap+1))
+                }
             }
         }
     }

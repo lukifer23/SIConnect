@@ -44,3 +44,13 @@ The production runtime uses SQLiteOpenHelper, CAS request transitions with trans
 A companion-free privileged Binder service is bundled in the APK and started by the authorized ADB launcher. Its attachment/identity tests are still being debugged; shell functionality is not yet claimed verified. Shizuku remains explicitly selectable with no automatic backend fallback.
 
 Gateway: actual Cloudflare Worker/Durable Object implementation, official MCP SDK 2.3.1 `createMcpHandler`, private bearer authentication, device enrollment, outbound WebSocket routing, bounded concurrency and explicit offline/unknown outcome errors. Five local Worker protocol tests pass using official SDK v1/v2 clients and an explicitly test-only WebSocket peer. No cloud deployment or real-phone MCP result is claimed at this checkpoint. Cloudflare CLI is not authenticated.
+
+### Physical Binder execution verified
+
+The companion-free backend now attaches and executes on the Fold. The first Unix-socket implementation failed cross-process communication; the final implementation uses a shell/root-only provider and Android's external-provider Binder API (the standalone shell has no registered application thread). Both ends check kernel Binder caller identity. Four production-backed instrumentation tests pass: native SQLite execution/idempotency, actual package inspection plus a three-step skill, UID 2000 shell execution, and instrumented approval deny/approve/revoke. Human approval interaction is tracked separately. The simplified Home screen replaces tabs as the default UI; detailed management remains under Advanced.
+
+Cloudflare accepted deployment into the owner's explicitly selected personal/free account. The new workers.dev hostname initially failed TLS during provisioning. Do not claim public reachability or cloud-to-phone execution until subsequent checks pass. Private bearer credentials are generated and stored outside Git; OAuth provider onboarding remains unimplemented.
+
+### Hosted phone integration verified
+
+The deployed HTTPS health endpoint now returns 200. The physical Fold enrolled and opened its own outbound WebSocket. An official MCP SDK v2 client called seven real phone tools through the hosted Worker: device status, battery, memory, storage, network, thermal state and bundled privileged shell identity. All seven returned SUCCEEDED. Observed round trips were 165–522 ms in this short sample. The gateway advertised 28 actual registered tools. A cloud-submitted arbitrary `id` request correctly stopped at AWAITING_APPROVAL; human approval/notification interaction is pending. The gateway runs in Cloudflare, not on the Mac. This is private bearer mode, not OAuth provider integration.
