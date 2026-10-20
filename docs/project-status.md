@@ -28,3 +28,9 @@ None of the app capabilities have been verified on the device yet, because the a
 
 - Galaxy Z Fold 7, Android 17 / One UI 9, connected over wireless debugging.
 - Shizuku 13.5.4 is installed but not running.
+
+## Implementation pass 2 checkpoint — October 20, 2026
+
+Core changes: approvals re-read current grants, scope, revocation, expiry, backend availability and kill switches. Risk approval is not re-requested. Request/key reuse is bound to agent, device, capability/version, canonical arguments, trusted origin, parent and explicit expiry; mismatches raise `IDEMPOTENCY_CONFLICT`. Trace IDs and generated default expiry are excluded from that fingerprint. Execution now requires winning the EXECUTING CAS and registers a lazy job before cancellation can race it. Exceptions during possibly mutating work report UNKNOWN_OUTCOME. Output schemas and bounded schema/payload definitions are validated.
+
+DurableSkillRunner persists a definition snapshot, deadline, cursor, pending child ID and outcomes through SkillRunStore. Stable child IDs prevent replay; startup recovery must run engine recovery first. Android SQLite wiring and physical tests remain in progress. The untracked partial app present at session start has been preserved.

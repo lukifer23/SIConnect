@@ -64,6 +64,7 @@ object SkillValidator {
         val errors = mutableListOf<String>()
         if (!CapabilityRegistry.ID_PATTERN.matches(def.id)) errors += "invalid skill id"
         if (def.version < 1) errors += "version must be >= 1"
+        if (def.timeoutMs !in 1..86_400_000) errors += "invalid skill timeout"
         if (def.steps.isEmpty()) errors += "skill has no steps"
         if (def.steps.size > 32) errors += "too many steps (max 32)"
         runCatching { Schema.checkSupported(def.inputs) }.onFailure { errors += "inputs: ${it.message}" }
@@ -97,51 +98,147 @@ object SkillValidator {
     }
 }
 
-class SkillRunner(private val engine: ExecutionEngine, private val clock: Clock = Clock { System.currentTimeMillis() }) {
+@Serializable
+enum class SkillState { READY, RUNNING, SUCCEEDED, PARTIALLY_SUCCEEDED, FAILED, AWAITING_APPROVAL, CANCELLED, UNKNOWN_OUTCOME }
 
-    suspend fun run(def: SkillDefinition, inputs: JsonObject, ctx: ExecutionContext, origin: Origin): SkillRunResult {
-        val inputErrors = Schema.validate(def.inputs, inputs)
-        if (inputErrors.isNotEmpty()) return SkillRunResult(def.id, def.version, false, emptyList(), JsonNull, "invalid inputs: $inputErrors")
-        val scope = mutableMapOf<String, JsonElement>("input" to withDefaults(def.inputs, inputs),
-            "now" to buildJsonObject { put("epoch_ms", clock.nowMs()) })
-        val stepResults = linkedMapOf<String, JsonObject>()
-        val outcomes = mutableListOf<StepOutcome>()
-        for (step in def.steps) {
-            scope["steps"] = JsonObject(stepResults)
-            val proceed = step.`when`?.let { Conditions.eval(it, scope) } ?: true
-            if (!proceed) {
-                outcomes += StepOutcome(step.id, "SKIPPED", skipped = true)
-                stepResults[step.id] = buildJsonObject { put("state", "SKIPPED"); put("skipped", true) }
-                continue
+@Serializable
+data class SkillExecution(
+    val runId: String, val definition: SkillDefinition, val inputs: JsonObject,
+    val agentId: String, val deviceId: String, val traceId: String, val origin: String,
+    val startedAtMs: Long, val deadlineMs: Long,
+    val state: SkillState = SkillState.READY, val cursor: Int = 0,
+    val steps: List<StepOutcome> = emptyList(), val pendingRequestId: String? = null,
+    val output: JsonElement = JsonNull, val error: String? = null, val revision: Long = 0,
+)
+
+interface SkillRunStore {
+    fun insert(run: SkillExecution): Boolean
+    fun get(runId: String): SkillExecution?
+    fun update(run: SkillExecution, expectedRevision: Long): Boolean
+    fun active(): List<SkillExecution>
+}
+
+/** Persisted cursor plus stable child request IDs: completed steps are never resubmitted. */
+class DurableSkillRunner(private val engine: ExecutionEngine, private val store: SkillRunStore,
+                         private val clock: Clock = Clock { System.currentTimeMillis() }) {
+    suspend fun start(def: SkillDefinition, inputs: JsonObject, ctx: ExecutionContext, origin: Origin): SkillExecution {
+        require(def.timeoutMs in 1..86_400_000) { "Invalid skill timeout" }
+        require(Schema.validate(def.inputs, inputs).isEmpty()) { "Invalid skill inputs" }
+        val r = SkillExecution(ctx.requestId, def, inputs, ctx.agentId, ctx.deviceId, ctx.traceId, origin.name,
+            clock.nowMs(), clock.nowMs() + def.timeoutMs)
+        if (!store.insert(r)) {
+            val old = requireNotNull(store.get(r.runId))
+            require(old.definition == def && old.inputs == inputs && old.agentId == ctx.agentId && old.origin == origin.name) { "Skill run identity conflict" }
+        }
+        return resume(r.runId)
+    }
+
+    private fun save(r: SkillExecution, next: SkillExecution): SkillExecution {
+        val n = next.copy(revision = r.revision + 1)
+        check(store.update(n, r.revision)) { "Skill cursor changed concurrently" }
+        return n
+    }
+
+    suspend fun resume(runId: String): SkillExecution {
+        var r = requireNotNull(store.get(runId))
+        if (r.state !in setOf(SkillState.READY, SkillState.AWAITING_APPROVAL)) return r
+        val claim = r.copy(state = SkillState.RUNNING, revision = r.revision + 1)
+        if (!store.update(claim, r.revision)) return requireNotNull(store.get(runId))
+        r = claim
+        try {
+            while (r.cursor < r.definition.steps.size) {
+                // Cancellation wins over an in-flight cursor update.
+                if (store.get(runId)?.state == SkillState.CANCELLED) return requireNotNull(store.get(runId))
+                if (clock.nowMs() >= r.deadlineMs) {
+                    r.pendingRequestId?.let { engine.cancel(it, "skill timeout") }
+                    val unknown = r.pendingRequestId?.let { engine.request(it)?.state } == RequestState.UNKNOWN_OUTCOME
+                    return save(r, r.copy(state = if (unknown) SkillState.UNKNOWN_OUTCOME else SkillState.FAILED, error = "SKILL_TIMEOUT"))
+                }
+                val step = r.definition.steps[r.cursor]
+                val values = mutableMapOf<String, JsonElement>("input" to withDefaults(r.definition.inputs, r.inputs),
+                    "now" to buildJsonObject { put("epoch_ms", r.startedAtMs) },
+                    "steps" to JsonObject(r.steps.associate { it.id to buildJsonObject {
+                        put("state", it.state); put("skipped", it.skipped); put("output", it.output)
+                    } }))
+                if (r.pendingRequestId == null && step.`when`?.let { !Conditions.eval(it, values) } == true) {
+                    r = save(r, r.copy(cursor = r.cursor + 1, steps = r.steps + StepOutcome(step.id, "SKIPPED", true)))
+                    continue
+                }
+                val childId = "${r.runId}:${step.id}"
+                if (r.pendingRequestId == null) r = save(r, r.copy(pendingRequestId = childId))
+                var record = engine.request(childId) ?: engine.submit(InvocationRequest(requestId = childId,
+                    traceId = r.traceId, agentId = r.agentId, capabilityId = step.capability,
+                    arguments = Templates.resolve(step.args, values) as JsonObject,
+                    expiresAtMs = r.deadlineMs, parentRequestId = r.runId), Origin.valueOf(r.origin))
+                if (!record.state.isTerminal) {
+                    if (step.approvalWaitMs > 0) record = engine.await(childId, minOf(step.approvalWaitMs, r.deadlineMs - clock.nowMs())) ?: record
+                    if (!record.state.isTerminal)
+                        return save(r, r.copy(state = SkillState.AWAITING_APPROVAL))
+                }
+                val outcome = StepOutcome(step.id, record.state.name, false, childId, record.result?.output ?: JsonNull, record.errorCode)
+                r = save(r, r.copy(cursor = r.cursor + 1, steps = r.steps + outcome, pendingRequestId = null))
+                if (record.state == RequestState.UNKNOWN_OUTCOME)
+                    return save(r, r.copy(state = SkillState.UNKNOWN_OUTCOME, error = "Step ${step.id} has an uncertain outcome"))
+                if (record.state == RequestState.CANCELLED)
+                    return save(r, r.copy(state = SkillState.CANCELLED, error = "Step ${step.id} cancelled"))
+                if (record.state != RequestState.SUCCEEDED && step.onError == "fail")
+                    return save(r, r.copy(state = SkillState.FAILED, error = "Step ${step.id}: ${record.state}"))
             }
-            val args = Templates.resolve(step.args, scope) as JsonObject
-            var record = engine.submit(InvocationRequest(
-                requestId = "${ctx.requestId}:${step.id}", traceId = ctx.traceId, agentId = ctx.agentId,
-                capabilityId = step.capability, arguments = args, parentRequestId = ctx.requestId,
-            ), origin)
-            if (record.state == RequestState.AWAITING_APPROVAL && step.approvalWaitMs > 0)
-                record = engine.await(record.requestId, step.approvalWaitMs) ?: record
-            val output = record.result?.output ?: JsonNull
-            val ok = record.state == RequestState.SUCCEEDED
-            outcomes += StepOutcome(step.id, record.state.name, false, record.requestId, output,
-                record.errorMessage?.let { "${record.errorCode}: $it" })
-            stepResults[step.id] = buildJsonObject {
-                put("state", record.state.name); put("skipped", false); put("output", output)
-            }
-            if (!ok && step.onError == "fail") {
-                return SkillRunResult(def.id, def.version, false, outcomes, JsonNull,
-                    "step '${step.id}' ended ${record.state}: ${record.errorMessage ?: ""}".trim())
+            val values = mapOf("input" to withDefaults(r.definition.inputs, r.inputs), "steps" to JsonObject(r.steps.associate {
+                it.id to buildJsonObject { put("state", it.state); put("output", it.output); put("skipped", it.skipped) }
+            }))
+            val partial = r.steps.any { !it.skipped && it.state != RequestState.SUCCEEDED.name }
+            return save(r, r.copy(state = if (partial) SkillState.PARTIALLY_SUCCEEDED else SkillState.SUCCEEDED,
+                output = Templates.resolve(r.definition.output, values)))
+        } catch (e: Exception) {
+            if (store.get(runId)?.state == SkillState.CANCELLED) return requireNotNull(store.get(runId))
+            // A cursor persistence failure is never retried here: startup recovery inspects child requests.
+            throw e
+        }
+    }
+
+    suspend fun cancel(runId: String): SkillExecution {
+        while (true) {
+            val r = requireNotNull(store.get(runId))
+            if (r.state !in setOf(SkillState.READY, SkillState.RUNNING, SkillState.AWAITING_APPROVAL)) return r
+            val n = r.copy(state = SkillState.CANCELLED, revision = r.revision + 1)
+            if (store.update(n, r.revision)) {
+                r.pendingRequestId?.let { engine.cancel(it, "workflow cancelled") }
+                return n
             }
         }
-        scope["steps"] = JsonObject(stepResults)
-        return SkillRunResult(def.id, def.version, true, outcomes, Templates.resolve(def.output, scope))
+    }
+
+    /** Call only during startup, after engine.recover(), before accepting new work. */
+    suspend fun recover() {
+        for (r in store.active()) {
+            if (r.state == SkillState.RUNNING) save(r, r.copy(state = SkillState.READY))
+            resume(r.runId)
+        }
     }
 
     private fun withDefaults(schema: JsonObject, inputs: JsonObject): JsonObject {
-        val props = schema["properties"] as? JsonObject ?: return inputs
         val merged = inputs.toMutableMap()
-        props.forEach { (k, v) -> (v as? JsonObject)?.get("default")?.let { d -> merged.putIfAbsent(k, d) } }
+        (schema["properties"] as? JsonObject)?.forEach { (k, v) -> (v as? JsonObject)?.get("default")?.let { merged.putIfAbsent(k, it) } }
         return JsonObject(merged)
+    }
+}
+
+/** Compatibility API for callers that don't need continuation. Production uses DurableSkillRunner. */
+class SkillRunner(private val engine: ExecutionEngine, private val clock: Clock = Clock { System.currentTimeMillis() }) {
+    suspend fun run(def: SkillDefinition, inputs: JsonObject, ctx: ExecutionContext, origin: Origin): SkillRunResult {
+        val errors = Schema.validate(def.inputs, inputs)
+        if (errors.isNotEmpty()) return SkillRunResult(def.id, def.version, false, emptyList(), JsonNull, "invalid inputs: $errors")
+        val transient = object : SkillRunStore {
+            private var r: SkillExecution? = null
+            override fun insert(run: SkillExecution): Boolean { if (r != null) return false; r = run; return true }
+            override fun get(runId: String) = r
+            override fun update(run: SkillExecution, expectedRevision: Long): Boolean { if (r?.revision != expectedRevision) return false; r = run; return true }
+            override fun active() = listOfNotNull(r)
+        }
+        val r = DurableSkillRunner(engine, transient, clock).start(def, inputs, ctx, origin)
+        return SkillRunResult(def.id, def.version, r.state == SkillState.SUCCEEDED, r.steps +
+            listOfNotNull(r.pendingRequestId?.let { StepOutcome(def.steps[r.cursor].id, "AWAITING_APPROVAL", false, it) }), r.output, r.error)
     }
 }
 

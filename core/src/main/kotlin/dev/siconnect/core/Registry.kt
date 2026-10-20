@@ -18,7 +18,10 @@ class CapabilityRegistry {
         val d = capability.descriptor
         require(ID_PATTERN.matches(d.id)) { "Invalid capability id '${d.id}'" }
         require(d.id !in capabilities) { "Duplicate capability id '${d.id}'" }
+        require(capabilities.values.none { it.descriptor.toolName == d.toolName }) { "Duplicate tool name '${d.toolName}'" }
+        require(d.version > 0 && d.timeoutMs in 1..300_000) { "Invalid version or timeout" }
         Schema.checkSupported(d.inputSchema)
+        d.outputSchema?.let(Schema::checkSupported)
         capabilities[d.id] = capability
     }
 

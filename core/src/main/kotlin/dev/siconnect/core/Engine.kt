@@ -3,6 +3,8 @@ package dev.siconnect.core
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -51,6 +53,7 @@ data class RequestRecord(
     val errorCode: String? = null,
     val errorMessage: String? = null,
     val parentRequestId: String? = null,
+    val operationFingerprint: String = "",
 )
 
 interface RequestStore {
@@ -111,6 +114,9 @@ class ExecutionEngine(
     private val updates = MutableSharedFlow<RequestRecord>(extraBufferCapacity = 256)
     val recordUpdates: SharedFlow<RequestRecord> = updates
     private val running = ConcurrentHashMap<String, Job>()
+    private val executionLock = Any()
+
+    fun request(requestId: String): RequestRecord? = store.get(requestId)
 
     /**
      * Submits a request and runs it to the point where it either finishes or waits for approval.
@@ -118,31 +124,39 @@ class ExecutionEngine(
      */
     suspend fun submit(req: InvocationRequest, origin: Origin = Origin.REMOTE): RequestRecord {
         val now = clock.nowMs()
-        req.idempotencyKey?.let { key ->
-            store.findByIdempotencyKey(req.agentId, key)?.let { existing ->
-                log(existing, "request.duplicate", detail = "idempotency key reuse")
-                return existing
-            }
-        }
-        store.get(req.requestId)?.let { existing ->
-            log(existing, "request.duplicate", detail = "request id reuse")
-            return existing
-        }
         val capability = registry.get(req.capabilityId)
         val version = capability?.descriptor?.version ?: 0
         val capId = capability?.descriptor?.id ?: req.capabilityId
+        require(req.requestId.length in 1..200 && req.agentId.length in 1..200) { "Invalid request identity" }
+        Schema.checkPayload(req.arguments)
+        val fingerprint = Canonical.sha256Hex(Canonical.encode(kotlinx.serialization.json.buildJsonObject {
+            put("agent", kotlinx.serialization.json.JsonPrimitive(req.agentId))
+            put("device", kotlinx.serialization.json.JsonPrimitive(deviceId))
+            put("action", kotlinx.serialization.json.JsonPrimitive(Canonical.actionHash(capId, version, req.arguments)))
+            put("origin", kotlinx.serialization.json.JsonPrimitive(origin.name))
+            put("parent", kotlinx.serialization.json.JsonPrimitive(req.parentRequestId))
+            put("expiry", kotlinx.serialization.json.JsonPrimitive(req.expiresAtMs))
+        }))
+        fun duplicate(existing: RequestRecord): RequestRecord {
+            if (existing.operationFingerprint != fingerprint)
+                throw CapabilityException("IDEMPOTENCY_CONFLICT", "Request identity or key belongs to a different operation")
+            log(existing, "request.duplicate")
+            return existing
+        }
+        store.get(req.requestId)?.let { return duplicate(it) }
+        req.idempotencyKey?.let { key -> store.findByIdempotencyKey(req.agentId, key)?.let { return duplicate(it) } }
         var record = RequestRecord(
             requestId = req.requestId, traceId = req.traceId, agentId = req.agentId, deviceId = deviceId,
             capabilityId = capId, capabilityVersion = version, arguments = req.arguments,
             argsHash = Canonical.actionHash(capId, version, req.arguments), idempotencyKey = req.idempotencyKey,
-            origin = origin.name, state = RequestState.RECEIVED, createdAtMs = now, updatedAtMs = now,
+            operationFingerprint = fingerprint, origin = origin.name, state = RequestState.RECEIVED, createdAtMs = now, updatedAtMs = now,
             expiresAtMs = req.expiresAtMs ?: (now + defaultExpiryMs), parentRequestId = req.parentRequestId,
         )
         if (!store.insert(record)) {
             // Lost a race with a concurrent duplicate; return whatever won.
-            return store.get(req.requestId)
+            return duplicate(store.get(req.requestId)
                 ?: req.idempotencyKey?.let { store.findByIdempotencyKey(req.agentId, it) }
-                ?: error("insert conflict without existing record")
+                ?: error("insert conflict without existing record"))
         }
         log(record, "request.received")
 
@@ -156,8 +170,9 @@ class ExecutionEngine(
             return fail(record, "ASSESSMENT_FAILED", it.message ?: "assessment failed")
         }
         val availability = runCatching { capability.availability() }.getOrDefault(Availability.UNKNOWN)
+        val grant = agents.grant(req.agentId)?.takeIf { it.agentId == req.agentId }
         val decision = policy.evaluate(
-            agents.grant(req.agentId), capability.descriptor, req.arguments, assessment,
+            grant, capability.descriptor, req.arguments, assessment,
             availability, controls(), origin, now,
         )
         record = transition(record, RequestState.VALIDATED, "policy.evaluated", decision = decision) {
@@ -190,7 +205,7 @@ class ExecutionEngine(
     suspend fun resolveApproval(requestId: String, approve: Boolean, approver: String, expectedArgsHash: String): RequestRecord {
         val record = store.get(requestId) ?: throw IllegalArgumentException("No request $requestId")
         if (record.state != RequestState.AWAITING_APPROVAL) return record
-        if (record.argsHash != expectedArgsHash) throw IllegalStateException("Approval does not match the pending action")
+        if (record.argsHash != Canonical.actionHash(record.capabilityId, record.capabilityVersion, record.arguments) || record.argsHash != expectedArgsHash) throw IllegalStateException("Approval does not match the pending action")
         val now = clock.nowMs()
         if (now >= (record.approvalExpiresAtMs ?: record.expiresAtMs)) {
             return transition(record, RequestState.EXPIRED, "approval.expired") { it }.also(approvals::approvalClosed)
@@ -200,31 +215,34 @@ class ExecutionEngine(
                 it.copy(errorCode = "OWNER_DENIED", errorMessage = "Denied by $approver", approvedBy = approver)
             }.also(approvals::approvalClosed)
         }
-        val approved = transition(record, RequestState.APPROVED, "approval.granted") { it.copy(approvedBy = approver) }
+        val approved = transitionBlocking(record, RequestState.APPROVED, "approval.granted") { it.copy(approvedBy = approver) }
+            ?: return store.get(requestId) ?: record
         approvals.approvalClosed(approved)
         val capability = registry.get(approved.capabilityId)
             ?: return fail(approved, "UNKNOWN_CAPABILITY", "Capability disappeared")
         if (capability.descriptor.version != approved.capabilityVersion)
             return fail(approved, "CAPABILITY_CHANGED", "Capability version changed after approval")
-        // Re-check availability and kill switches at execution time; approval does not override them.
-        val c = controls()
-        if (approved.origin == Origin.REMOTE.name && !c.remoteExecutionEnabled)
-            return fail(approved, "EMERGENCY_STOP", "Remote execution disabled")
-        if (capability.descriptor.backend in PolicyEngine.PRIVILEGED && !c.privilegedEnabled)
-            return fail(approved, "PRIVILEGED_DISABLED", "Privileged execution disabled")
-        if (!capability.availability().isExecutable)
-            return fail(approved, "UNAVAILABLE", capability.availabilityDetail() ?: "Capability unavailable")
+        // Approval satisfies the risk gate only. Current eligibility remains authoritative.
+        val grant = agents.grant(approved.agentId)
+        if (grant?.agentId != approved.agentId) return fail(approved, "POLICY_DENIED", "Authenticated agent no longer exists")
+        val decision = policy.evaluate(grant, capability.descriptor, approved.arguments,
+            approved.assessment ?: capability.assess(approved.arguments), capability.availability(), controls(),
+            Origin.valueOf(approved.origin), now)
+        if (decision.outcome == PolicyOutcome.DENY || decision.outcome == PolicyOutcome.UNAVAILABLE)
+            return fail(approved, "POLICY_DENIED", decision.reason)
         return execute(approved, capability)
     }
 
     suspend fun cancel(requestId: String, by: String): RequestRecord? {
-        val record = store.get(requestId) ?: return null
-        return when (record.state) {
+        return synchronized(executionLock) {
+        val record = store.get(requestId) ?: return@synchronized null
+        when (record.state) {
             RequestState.RECEIVED, RequestState.VALIDATED, RequestState.AWAITING_APPROVAL, RequestState.APPROVED ->
                 transition(record, RequestState.CANCELLED, "request.cancelled", detail = "by $by") { it }
                     .also(approvals::approvalClosed)
             RequestState.EXECUTING -> { running[requestId]?.cancel(CancellationException("cancelled by $by")); store.get(requestId) }
             else -> record
+        }
         }
     }
 
@@ -233,7 +251,7 @@ class ExecutionEngine(
         fun done(r: RequestRecord) = r.state.isTerminal || (!untilTerminal && r.state == RequestState.AWAITING_APPROVAL)
         store.get(requestId)?.let { if (done(it)) return it }
         return withTimeoutOrNull(timeoutMs) {
-            updates.first { it.requestId == requestId && done(it) }
+            updates.onSubscription { store.get(requestId)?.let { emit(it) } }.first { it.requestId == requestId && done(it) }
         } ?: store.get(requestId)
     }
 
@@ -273,12 +291,20 @@ class ExecutionEngine(
 
     private suspend fun execute(record: RequestRecord, capability: Capability): RequestRecord {
         if (clock.nowMs() >= record.expiresAtMs) return transition(record, RequestState.EXPIRED, "request.expired") { it }
-        val executing = transition(record, RequestState.EXECUTING, "execution.started", backend = capability.descriptor.backend.name) { it }
+        val job: Job
+        val executing: RequestRecord
+        synchronized(executionLock) {
+        executing = transitionBlocking(record, RequestState.EXECUTING, "execution.started", backend = capability.descriptor.backend.name) { it }
+            ?: return store.get(record.requestId) ?: record
         val ctx = ExecutionContext(executing.requestId, executing.traceId, executing.agentId, deviceId)
         val started = clock.nowMs()
-        val job = scope.launch {
+        job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val result = withTimeout(capability.descriptor.timeoutMs) { capability.execute(executing.arguments, ctx) }
+                capability.descriptor.outputSchema?.let { schema ->
+                    if (Schema.validate(schema, result.output).isNotEmpty())
+                        throw CapabilityException("INVALID_OUTPUT", "Backend result violates output schema")
+                }
                 val state = if (result.verification == VerificationStatus.FAILED) RequestState.FAILED else RequestState.SUCCEEDED
                 transition(executing, state, "execution.finished", backend = result.backend.name,
                     durationMs = clock.nowMs() - started, verification = result.verification.name) {
@@ -290,13 +316,18 @@ class ExecutionEngine(
             } catch (e: CancellationException) {
                 unknownOrFailed(executing, capability, "CANCELLED", e.message ?: "cancelled", started, cancelled = true)
             } catch (e: CapabilityException) {
-                fail(executing, e.code, e.message ?: e.code, clock.nowMs() - started)
+                if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
+                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started)
             } catch (e: Exception) {
-                fail(executing, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", clock.nowMs() - started)
+                if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
+                    unknownOrFailed(executing, capability, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", started)
             }
         }
         running[executing.requestId] = job
-        try { job.join() } finally { running.remove(executing.requestId) }
+        job.invokeOnCompletion { running.remove(executing.requestId, job) }
+        job.start()
+        }
+        job.join()
         return store.get(executing.requestId) ?: executing
     }
 
@@ -304,7 +335,7 @@ class ExecutionEngine(
     private fun unknownOrFailed(
         r: RequestRecord, c: Capability, code: String, msg: String, started: Long, cancelled: Boolean = false,
     ): RequestRecord {
-        val sideEffects = c.descriptor.sideEffects.isNotEmpty() || (r.assessment?.sideEffects?.isNotEmpty() == true) ||
+        val sideEffects = maxOf(c.descriptor.risk, r.assessment?.risk ?: c.descriptor.risk) > RiskClass.READ_ONLY || c.descriptor.sideEffects.isNotEmpty() || (r.assessment?.sideEffects?.isNotEmpty() == true) ||
             r.assessment?.shellCommand != null
         val state = when {
             sideEffects -> RequestState.UNKNOWN_OUTCOME

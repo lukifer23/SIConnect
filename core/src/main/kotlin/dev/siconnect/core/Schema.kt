@@ -24,17 +24,63 @@ import kotlinx.serialization.json.putJsonObject
 object Schema {
     private val SUPPORTED = setOf(
         "type", "properties", "required", "additionalProperties", "enum", "minimum", "maximum",
-        "minLength", "maxLength", "items", "maxItems", "description", "default",
+        "minLength", "maxLength", "items", "minItems", "maxItems", "description", "default",
     )
 
+    /** Global budgets also apply to unconstrained objects and unknown properties. */
+    fun checkPayload(value: JsonElement) {
+        var nodes = 0
+        var chars = 0L
+        fun walk(v: JsonElement, depth: Int) {
+            require(depth <= 24 && ++nodes <= 10_000) { "JSON complexity limit exceeded" }
+            when (v) {
+                is JsonObject -> v.forEach { (k, x) -> chars += k.length; walk(x, depth + 1) }
+                is JsonArray -> v.forEach { walk(it, depth + 1) }
+                is JsonPrimitive -> chars += v.content.length
+            }
+            require(chars <= 512_000) { "JSON size limit exceeded" }
+        }
+        walk(value, 0)
+    }
+
     fun checkSupported(schema: JsonObject, path: String = "$") {
-        for (k in schema.keys) require(k in SUPPORTED) { "Unsupported schema keyword '$k' at $path" }
-        schema["properties"]?.jsonObject?.forEach { (name, sub) -> checkSupported(sub.jsonObject, "$path.$name") }
-        schema["items"]?.let { checkSupported(it.jsonObject, "$path[]") }
+        checkPayload(schema)
+        fun check(s: JsonObject, p: String) {
+            for (k in s.keys) require(k in SUPPORTED) { "Unsupported schema keyword '$k' at $p" }
+            val type = (s["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            require(type in setOf("object", "array", "string", "number", "integer", "boolean", "null")) { "Invalid/missing schema type at $p" }
+            s["description"]?.let { require(it is JsonPrimitive && it.isString) }
+            s["properties"]?.let { props ->
+                require(type == "object" && props is JsonObject) { "properties must be an object" }
+                props.forEach { (k, v) -> require(v is JsonObject); check(v, "$p.$k") }
+            }
+            s["required"]?.let { req ->
+                require(type == "object" && req is JsonArray)
+                val names = req.map { require(it is JsonPrimitive && it.isString); it.content }
+                require(names.distinct().size == names.size && names.all { it in (s["properties"] as? JsonObject ?: JsonObject(emptyMap())) }) { "Invalid required properties" }
+            }
+            s["additionalProperties"]?.let { require(type == "object" && it is JsonPrimitive && !it.isString && it.booleanOrNull != null) { "additionalProperties must be boolean" } }
+            s["items"]?.let { require(type == "array" && it is JsonObject); check(it, "$p[]") }
+            for ((lo, hi, types) in listOf(Triple("minimum", "maximum", setOf("number", "integer")), Triple("minLength", "maxLength", setOf("string")), Triple("minItems", "maxItems", setOf("array")))) {
+                for (key in listOf(lo, hi)) s[key]?.let {
+                    require(type in types && it is JsonPrimitive && !it.isString && it.doubleOrNull?.isFinite() == true) { "Invalid $key" }
+                    if (key !in setOf("minimum", "maximum")) require(it.longOrNull != null && it.longOrNull!! >= 0)
+                }
+                val l = (s[lo] as? JsonPrimitive)?.doubleOrNull
+                val h = (s[hi] as? JsonPrimitive)?.doubleOrNull
+                require(l == null || h == null || l <= h) { "Invalid bounds" }
+            }
+            s["enum"]?.let { require(it is JsonArray && it.isNotEmpty() && it.distinct().size == it.size && it.all { v -> matchesType(type!!, v) }) { "Invalid enum" } }
+            s["default"]?.let { require(validate(JsonObject(s - "default"), it).isEmpty()) { "Invalid default at $p" } }
+        }
+        check(schema, path)
     }
 
     /** Returns a list of violations; empty means valid. */
     fun validate(schema: JsonObject, value: JsonElement, path: String = "$"): List<String> {
+        if (path == "$") {
+            try { checkPayload(value) } catch (e: IllegalArgumentException) { return listOf(e.message ?: "Payload too large") }
+        }
         val errors = mutableListOf<String>()
         val type = (schema["type"] as? JsonPrimitive)?.content
         if (type != null && !matchesType(type, value)) {
@@ -49,11 +95,12 @@ object Schema {
             }
         }
         if (value is JsonPrimitive && value.isString) {
-            val len = value.content.length
+            val len = value.content.codePointCount(0, value.content.length)
             schema["minLength"]?.jsonPrimitive?.longOrNull?.let { if (len < it) errors += "$path: shorter than $it" }
             schema["maxLength"]?.jsonPrimitive?.longOrNull?.let { if (len > it) errors += "$path: longer than $it" }
         }
         if (value is JsonArray) {
+            schema["minItems"]?.jsonPrimitive?.longOrNull?.let { if (value.size < it) errors += "$path: fewer than $it items" }
             schema["maxItems"]?.jsonPrimitive?.longOrNull?.let { if (value.size > it) errors += "$path: more than $it items" }
             schema["items"]?.jsonObject?.let { items ->
                 value.forEachIndexed { i, v -> errors += validate(items, v, "$path[$i]") }
@@ -81,7 +128,7 @@ object Schema {
         "string" -> v is JsonPrimitive && v.isString
         "boolean" -> v is JsonPrimitive && !v.isString && v.booleanOrNull != null
         "integer" -> v is JsonPrimitive && !v.isString && v.longOrNull != null
-        "number" -> v is JsonPrimitive && !v.isString && v.doubleOrNull != null
+        "number" -> v is JsonPrimitive && !v.isString && v.doubleOrNull?.isFinite() == true
         "null" -> v is JsonNull
         else -> false
     }

@@ -32,7 +32,7 @@ data class AgentGrant(
     val agentId: String,
     val label: String,
     /** Capability-id globs this agent may invoke at all, e.g. "device.*", "calendar.list". */
-    val scopes: List<String> = listOf("*"),
+    val scopes: List<String> = listOf("device.*"),
     val denied: List<String> = emptyList(),
     /** Operations at or below this risk run without approval (subject to every other rule). */
     val autoApproveUpTo: RiskClass = RiskClass.READ_ONLY,
@@ -84,6 +84,8 @@ class PolicyEngine {
             return PolicyDecision(PolicyOutcome.UNAVAILABLE, "Privileged execution is disabled by the owner", "privileged_disabled")
 
         val risk = maxOf(descriptor.risk, assessment.risk)
+        if (descriptor.id == "shell.execute" && assessment.shellCommand.isNullOrBlank())
+            return deny("Shell command assessment is required", "shell_assessment_missing")
         if (risk == RiskClass.CRITICAL) return approval("CRITICAL operations always require approval", "critical")
 
         assessment.shellCommand?.let { cmd ->

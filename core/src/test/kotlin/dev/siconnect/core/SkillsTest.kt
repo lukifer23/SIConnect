@@ -19,7 +19,7 @@ class SkillsTest {
     private val notify = CountingCapability("notifications.post", RiskClass.LOW_IMPACT).also(registry::register)
     private val shell = CountingCapability("shell.execute", RiskClass.HIGH_IMPACT, shell = true).also(registry::register)
     private val store = MemoryStore()
-    private val grants = mapOf("a" to AgentGrant("a", "A", autoApproveUpTo = RiskClass.LOW_IMPACT))
+    private val grants = mapOf("a" to AgentGrant("a", "A", scopes = listOf("*"), autoApproveUpTo = RiskClass.LOW_IMPACT))
     private val engine = ExecutionEngine("d", registry, PolicyEngine(), store, {}, RecordingApprovals(), { grants[it] },
         { DeviceControls() }, CoroutineScope(SupervisorJob() + Dispatchers.Default))
     private val ctx = ExecutionContext("skillreq", "trace", "a", "d")

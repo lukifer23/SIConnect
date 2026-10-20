@@ -18,7 +18,7 @@ class EngineTest {
     private var controls = DeviceControls()
     private val grants = mutableMapOf(
         "reader" to AgentGrant("reader", "Reader"),
-        "writer" to AgentGrant("writer", "Writer", autoApproveUpTo = RiskClass.MODERATE_IMPACT),
+        "writer" to AgentGrant("writer", "Writer", scopes = listOf("*"), autoApproveUpTo = RiskClass.MODERATE_IMPACT),
     )
     private val read = CountingCapability("device.status", RiskClass.READ_ONLY).also(registry::register)
     private val write = CountingCapability("apps.uninstall", RiskClass.HIGH_IMPACT, sideEffects = listOf("removes package")).also(registry::register)
