@@ -16,10 +16,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 
-private class Operation(override val descriptor: CapabilityDescriptor,
+private class Operation(private val baseDescriptor: CapabilityDescriptor,
     val available: () -> Availability = { Availability.IMPLEMENTED }, val detail: () -> String? = { null },
     val assessment: ((JsonObject) -> RiskAssessment)? = null,
+    val selectedBackend: (() -> BackendKind)? = null,
     val body: suspend (JsonObject, ExecutionContext) -> CapabilityResult) : Capability {
+    override val descriptor: CapabilityDescriptor get() = selectedBackend?.let { baseDescriptor.copy(backend=it()) } ?: baseDescriptor
     override fun availability() = available()
     override fun availabilityDetail() = detail()
     override fun assess(args: JsonObject) = assessment?.invoke(args) ?: super.assess(args)
@@ -38,6 +40,16 @@ fun registerCapabilities(g: RuntimeGraph) {
         g.registry.register(Operation(CapabilityDescriptor(id, title = title, description = title, inputSchema = schema,
             backend = BackendKind.NATIVE, risk = risk, sideEffects = if (risk > RiskClass.READ_ONLY) listOf(title) else emptyList()), available, detail,
             body = { a, ctx -> native(body(a, ctx)) }))
+    }
+    op("requests.get", "Inspect your own request", objectSchema { string("requestId", "Request ID", true, maxLength=200) }) { a, ctx ->
+        val record=g.requests.get(a.str("requestId")) ?: throw CapabilityException("NOT_FOUND", "Unknown request")
+        if(record.agentId!=ctx.agentId) throw CapabilityException("POLICY_DENIED", "Request belongs to another agent")
+        AppJson.encodeToJsonElement(RequestRecord.serializer(),record)
+    }
+    op("requests.cancel", "Cancel your own request", objectSchema { string("requestId", "Request ID", true, maxLength=200) }, RiskClass.LOW_IMPACT) { a,ctx ->
+        val record=g.requests.get(a.str("requestId")) ?: throw CapabilityException("NOT_FOUND", "Unknown request")
+        if(record.agentId!=ctx.agentId) throw CapabilityException("POLICY_DENIED", "Request belongs to another agent")
+        AppJson.encodeToJsonElement(RequestRecord.serializer(),requireNotNull(g.engine.cancel(record.requestId,ctx.agentId)))
     }
     op("device.status", "Device status") { _, _ -> buildJsonObject {
         put("model", Build.MODEL); put("manufacturer", Build.MANUFACTURER); put("android", Build.VERSION.RELEASE)
@@ -94,12 +106,13 @@ fun registerCapabilities(g: RuntimeGraph) {
             assessment={ a -> RiskAssessment(risk, title, target=(a["package"] ?: a["key"])?.jsonPrimitive?.content,
                 shellCommand=if (id == "shell.execute") a.str("command") else null,
                 sideEffects=if (risk > RiskClass.READ_ONLY) listOf(title) else emptyList()) },
+            selectedBackend={ g.privileged.kind },
             body={ a, ctx ->
                 val result = g.privileged.execute(command(a).copy(execId=ctx.requestId))
-                if (result.cancelled || result.timedOut || result.error != null)
-                    throw CapabilityException(if (result.timedOut) "TIMEOUT" else "SHELL_INTERRUPTED", result.error ?: "Shell interrupted; external effects may have occurred")
-                if (result.exitCode != 0) throw CapabilityException("SHELL_EXIT", "Command exited ${result.exitCode}; external effects may have occurred")
-                CapabilityResult(AppJson.encodeToJsonElement(ShellResult.serializer(), result), g.privileged.kind, result.identity)
+                val code=when {result.timedOut->"TIMEOUT";result.cancelled->"CANCELLED";result.error!=null->"SHELL_ERROR";result.exitCode!=0->"SHELL_EXIT";else->null}
+                CapabilityResult(AppJson.encodeToJsonElement(ShellResult.serializer(), result), g.privileged.kind, result.identity,
+                    verification=if(code==null) VerificationStatus.NOT_APPLICABLE else VerificationStatus.FAILED,
+                    verificationDetail=code?.let { "Shell did not finish successfully; effects may have occurred" },errorCode=code)
             }))
     }
     shell("shell.execute", "Execute arbitrary privileged shell", objectSchema {

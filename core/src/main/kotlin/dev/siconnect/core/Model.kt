@@ -97,6 +97,7 @@ data class CapabilityResult(
     val identity: String? = null,
     val verification: VerificationStatus = VerificationStatus.NOT_APPLICABLE,
     val verificationDetail: String? = null,
+    val errorCode: String? = null,
 )
 
 @Serializable

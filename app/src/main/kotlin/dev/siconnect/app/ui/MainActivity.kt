@@ -27,7 +27,9 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
 open class MainActivity: ComponentActivity() {
-    private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+    private var permissionRevision by mutableIntStateOf(0)
+    private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissionRevision++ }
+    override fun onResume() { super.onResume(); permissionRevision++ }
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         setContent { MaterialTheme(colorScheme=darkColorScheme(primary=Color(0xFF8ADCC3),onPrimary=Color(0xFF062B23),background=Color(0xFF0D1218),surface=Color(0xFF151E27),surfaceVariant=Color(0xFF202D39))) {
@@ -57,14 +59,35 @@ open class MainActivity: ComponentActivity() {
         var setup by remember { mutableStateOf(false) }
         var controlHelp by remember { mutableStateOf(false) }
         var connectionCode by remember { mutableStateOf("") }
+        var hasBotKey by remember { mutableStateOf(false) }
+        var pairedBot by remember { mutableStateOf<AgentRecord?>(null) }
+        var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
         var review by remember { mutableStateOf<RequestRecord?>(null) }
+        var inspected by remember { mutableStateOf<RequestRecord?>(null) }
+        var inspectedEvents by remember { mutableStateOf(emptyList<Event>()) }
+        var labels by remember { mutableStateOf(emptyMap<String,String>()) }
+        var openedApproval by remember { mutableStateOf<String?>(null) }
         var notifications by remember { mutableStateOf(getSystemService(NotificationManager::class.java).areNotificationsEnabled()) }
         fun work(block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: Exception) { note=e.message ?: "Action failed" } finally { busy=false } } }
-        LaunchedEffect(changed,health,connection) {
-            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(8); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)) } }
+        LaunchedEffect(changed,health,connection,permissionRevision) {
+            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(50); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); labels=g.agents.all().associate { it.grant.agentId to it.grant.label } } }
             notifications=getSystemService(NotificationManager::class.java).areNotificationsEnabled()
         }
         LaunchedEffect(Unit) { g.engine.recordUpdates.collect { changed++ } }
+        LaunchedEffect(pending) {
+            val target=intent.getStringExtra("requestId")
+            if(target!=null && target!=openedApproval) pending.firstOrNull { it.requestId==target }?.let { review=it; openedApproval=target }
+        }
+        LaunchedEffect(inspected) { inspectedEvents=withContext(Dispatchers.IO) { inspected?.let { g.events.query(requestId=it.requestId,limit=30) } ?: emptyList() } }
+        LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null; pairedBot=key?.let(g::authenticate) } }
+        fun copyForBot(value: String, secret: Boolean) {
+            val clip=android.content.ClipData.newPlainText(if(secret) "SIConnect bot key" else "SIConnect MCP address",value)
+            if(secret && android.os.Build.VERSION.SDK_INT>=33) clip.description.extras=android.os.PersistableBundle().apply {
+                putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true)
+            }
+            getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(clip)
+            note=if(secret) "Bot key copied. Paste it into your bot's secure token field." else "MCP address copied."
+        }
         if(advanced) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
                 TextButton(onClick={advanced=false}) { Text("← Back to connection") }
@@ -79,29 +102,11 @@ open class MainActivity: ComponentActivity() {
                     Column(Modifier.weight(1f)) { Text("SIConnect",style=MaterialTheme.typography.headlineLarge); Text("Your phone. Your bots.",color=MaterialTheme.colorScheme.onSurfaceVariant) }
                     Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "● CONNECTED" else "● SETUP",color=MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelMedium)
                 }
-                Card(shape=RoundedCornerShape(24.dp)) { Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Ready for your bot" else "Connect your phone",style=MaterialTheme.typography.headlineSmall)
-                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Requests run on this phone. You approve sensitive actions here." else "Enable access, then connect your bot. Every action is checked and logged.",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick={setup=true},modifier=Modifier.fillMaxWidth().height(52.dp)) { Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connection details" else "Connect a bot") }
-                    if(config.baseUrl.isNotBlank()) Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
-                } }
-                Text("Access",style=MaterialTheme.typography.titleLarge)
-                Card(shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment=Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text("Notifications",style=MaterialTheme.typography.titleMedium); Text(if(notifications) "Allowed" else "For approvals and reminders",color=MaterialTheme.colorScheme.onSurfaceVariant) }
-                        TextButton(onClick={ if(android.os.Build.VERSION.SDK_INT>=33) permission.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName)); changed++ }) { Text(if(notifications) "Settings" else "Enable") }
-                    }
-                    HorizontalDivider()
-                    Row(verticalAlignment=Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text("Device control",style=MaterialTheme.typography.titleMedium); Text(if(g.privileged.available()) "Ready · built into SIConnect" else "Native tools ready · full control needs setup",color=MaterialTheme.colorScheme.onSurfaceVariant) }
-                        TextButton(onClick={work { g.privileged.refresh(); if(!g.privileged.available()) controlHelp=true }}) { Text(if(g.privileged.available()) "Check" else "Enable") }
-                    }
-                } }
                 if(pending.isNotEmpty()) {
                     Text("Needs your approval",style=MaterialTheme.typography.titleLarge)
                     pending.forEach { r -> Card(shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                        Text(r.agentId,style=MaterialTheme.typography.labelLarge)
-                        Text(r.assessment?.shellCommand ?: r.capabilityId,style=MaterialTheme.typography.titleMedium)
+                        Text(labels[r.agentId] ?: r.agentId,style=MaterialTheme.typography.labelLarge)
+                        Text(r.assessment?.shellCommand ?: r.capabilityId,style=MaterialTheme.typography.titleMedium,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         Text(r.assessment?.sideEffects?.joinToString() ?: "Review the exact action before allowing it")
                         Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                             Button(onClick={review=r}) { Text("Review") }
@@ -109,6 +114,27 @@ open class MainActivity: ComponentActivity() {
                         }
                     } } }
                 }
+                Card(shape=RoundedCornerShape(24.dp)) { Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Ready for your bot" else "Connect your phone",style=MaterialTheme.typography.headlineSmall)
+                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Requests run on this phone. You approve sensitive actions here." else "Enable access, then connect your bot. Every action is checked and logged.",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    recent.firstOrNull { it.origin==Origin.REMOTE.name }?.let { last ->
+                        Text("Last bot request: ${java.time.Instant.ofEpochMilli(last.createdAtMs).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm:ss a"))}",style=MaterialTheme.typography.labelLarge)
+                    }
+                    Button(onClick={setup=true},modifier=Modifier.fillMaxWidth().height(52.dp)) { Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connection details" else "Connect a bot") }
+                    if(config.baseUrl.isNotBlank()) Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
+                } }
+                Text("Access",style=MaterialTheme.typography.titleLarge)
+                Card(shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Text("Notifications",style=MaterialTheme.typography.titleMedium); Text(if(notifications) "Allowed" else "For approvals and reminders",color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                        TextButton(onClick={ if(android.os.Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED) permission.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName)); changed++ }) { Text(if(notifications) "Settings" else "Enable") }
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Text("Device control",style=MaterialTheme.typography.titleMedium); Text(if(g.privileged.available()) "Ready · built into SIConnect" else "Native tools ready · full control needs setup",color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                        TextButton(onClick={work { g.privileged.refresh(); if(!g.privileged.available()) controlHelp=true }}) { Text(if(g.privileged.available()) "Check" else "Enable") }
+                    }
+                } }
                 Button(onClick={ work {
                     val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.status"),Origin.LOCAL_OWNER)
                     check(r.state==RequestState.SUCCEEDED) { r.errorMessage ?: "Device test failed" }
@@ -116,9 +142,9 @@ open class MainActivity: ComponentActivity() {
                 } },enabled=!busy,modifier=Modifier.fillMaxWidth().height(52.dp)) { Text(if(busy) "Working…" else "Test this phone") }
                 if(note.isNotBlank()) Text(note,color=MaterialTheme.colorScheme.primary)
                 if(recent.isNotEmpty()) {
-                    Text("Recent activity",style=MaterialTheme.typography.titleLarge)
-                    recent.take(4).forEach { r -> Row(Modifier.fillMaxWidth()) {
-                        Column(Modifier.weight(1f)) { Text(r.capabilityId,style=MaterialTheme.typography.bodyMedium); Text(r.agentId,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Text("Bot activity",style=MaterialTheme.typography.titleLarge)
+                    recent.take(8).forEach { r -> Row(Modifier.fillMaxWidth().clickable { inspected=r }.padding(vertical=6.dp)) {
+                        Column(Modifier.weight(1f)) { Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId,style=MaterialTheme.typography.bodyMedium); Text("${labels[r.agentId] ?: r.agentId} · ${java.time.Instant.ofEpochMilli(r.createdAtMs).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm:ss a"))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
                         Text(when(r.state) {RequestState.SUCCEEDED->"Completed";RequestState.AWAITING_APPROVAL->"Waiting";RequestState.UNKNOWN_OUTCOME->"Check outcome";else->r.state.name.lowercase().replaceFirstChar { it.uppercase() }},style=MaterialTheme.typography.labelMedium)
                     } }
                 }
@@ -137,8 +163,20 @@ open class MainActivity: ComponentActivity() {
             dismissButton={TextButton(onClick={controlHelp=false}) {Text("Later")}})
         if(setup) AlertDialog(onDismissRequest={setup=false},title={Text("Connect your bot")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Your gateway is connected. Add the MCP address and your agent key to your bot." else "Paste your SIConnect setup code. It connects this phone to your private gateway.")
-            OutlinedTextField(connectionCode,{connectionCode=it},label={Text("Setup code")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),maxLines=3)
-            if(config.baseUrl.isNotBlank()) Text(config.baseUrl.trimEnd('/')+"/mcp")
+            if(config.baseUrl.isNotBlank()) {
+                Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) { Text("Copy address") }
+            }
+            if(hasBotKey) Button(onClick={work {
+                val token=requireNotNull(g.botKeyForOwner()) { "This bot key was revoked. Pair a new agent in Advanced." }
+                withContext(Dispatchers.Main) { copyForBot(token,true) }
+            }},enabled=!busy) { Text("Copy bot key") }
+            pairedBot?.let { a ->
+                Text(if(a.grant.shellMode==ShellMode.BROAD) "Device control: always allowed" else "Device control: ask each time")
+                if(a.grant.shellMode!=ShellMode.BROAD) OutlinedButton(onClick={allowBot=a}) {Text("Always allow device control…")}
+                else TextButton(onClick={work {g.setShellPermissionFromOwner(a.grant.agentId,false)}}) {Text("Ask each time again")}
+            }
+            if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE) OutlinedTextField(connectionCode,{connectionCode=it},label={Text("Setup code")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),maxLines=3)
         }},confirmButton={TextButton(onClick={work {
             val text=if(connectionCode.trim().startsWith("{")) connectionCode.trim() else String(android.util.Base64.decode(connectionCode.trim(),android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP))
             val code=Json.parseToJsonElement(text).jsonObject
@@ -149,10 +187,23 @@ open class MainActivity: ComponentActivity() {
             withContext(Dispatchers.Main) { startForegroundService(Intent(this@MainActivity,ConnectionService::class.java)) }
             setup=false; note="Connecting your phone…"
         }},enabled=connectionCode.isNotBlank()) {Text("Connect")}},dismissButton={TextButton(onClick={setup=false}) {Text("Close")}})
-        review?.let { r -> AlertDialog(onDismissRequest={review=null},title={Text("Allow this action once?")},
-            text={Text("${r.agentId}\n\n${r.assessment?.shellCommand ?: r.arguments}\n\n${r.assessment?.sideEffects?.joinToString()}")},
-            confirmButton={Button(onClick={review=null;work { val result=g.engine.resolveApproval(r.requestId,true,"local-owner",r.argsHash); note="Action ${result.state.name.lowercase()}" }}) {Text("Allow once")}},
-            dismissButton={TextButton(onClick={review=null}) {Text("Back")}}) }
+        review?.let { r -> OwnerApprovalDialog(r,onClose={review=null},onApprove={always,broad ->
+            review=null; work { val result=g.approveFromOwner(r.requestId,r.argsHash,always,broad); note="Action ${result.state.name.lowercase()}" }
+        }) }
+        inspected?.let { r -> AlertDialog(onDismissRequest={inspected=null},title={Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId)},
+            text={Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                Text("${r.state} · ${labels[r.agentId] ?: r.agentId}")
+                Text("Request: ${r.requestId}\nBackend: ${r.result?.backend ?: r.selectedBackend ?: "not executed"}")
+                r.assessment?.shellCommand?.let { Text(it) }
+                r.errorMessage?.let { Text(it) }
+                r.result?.let { Text(it.output.toString(),style=MaterialTheme.typography.bodySmall) }
+                HorizontalDivider(); Text("Audit trail",style=MaterialTheme.typography.titleMedium)
+                inspectedEvents.reversed().forEach { Text("${it.eventType} · ${it.policyDecision ?: it.executionStatus ?: it.errorCode ?: ""}",style=MaterialTheme.typography.bodySmall) }
+            }},confirmButton={TextButton(onClick={inspected=null}) { Text("Close") }}) }
+        allowBot?.let { a -> ShellPermissionDialog(a.grant.label,onClose={allowBot=null},onAllow={
+            allowBot=null; work {g.setShellPermissionFromOwner(a.grant.agentId,true);note="Always allowed. Saved on this phone until you revoke it."}
+        }) }
+
     }
 
     @Composable private fun Management() {
@@ -286,9 +337,37 @@ open class MainActivity: ComponentActivity() {
             }
             TextButton(onClick={refresh++}) { Text("Refresh runtime state") }
         }
-        approve?.let { r -> AlertDialog(onDismissRequest={approve=null},title={Text("Approve exact action once?")},
-            text={Text("${r.agentId}\n${r.assessment?.shellCommand ?: r.arguments}\n${r.assessment?.sideEffects?.joinToString()}")},
-            confirmButton={Button(onClick={approve=null; action { val result=g.engine.resolveApproval(r.requestId,true,"local-owner",r.argsHash); message="${result.state}: ${result.errorCode ?: "completed"}" } }) { Text("Approve this action") }},
-            dismissButton={TextButton(onClick={approve=null}) { Text("Back") }}) }
+        approve?.let { r -> OwnerApprovalDialog(r,onClose={approve=null},onApprove={always,broad ->
+            approve=null; action { val result=g.approveFromOwner(r.requestId,r.argsHash,always,broad); message="${result.state}: ${result.errorCode ?: "completed"}" }
+        }) }
     }
+}
+
+/** Shared owner review: one path for Home and detailed management. */
+@Composable private fun OwnerApprovalDialog(r: RequestRecord,onClose:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
+    var broad by remember(r.requestId) { mutableStateOf(false) }
+    val critical=r.assessment?.risk==RiskClass.CRITICAL
+    AlertDialog(onDismissRequest=onClose,title={Text(if(broad) "Always allow shell commands?" else "Allow this action?")},
+        text={Column(Modifier.heightIn(max=340.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Text(r.agentId)
+            if(broad) Text("This bot may run any command using this phone's privileged shell without asking again. This can change apps, settings and data. Critical operations still require approval. You can revoke this in Advanced → Agents.")
+            else {
+                Text(r.assessment?.shellCommand ?: r.arguments.toString())
+                Text("Risk: ${r.assessment?.risk}\n${r.assessment?.sideEffects?.joinToString() ?: ""}")
+                Text("Always allow this action saves only these exact arguments and this backend. Other actions still follow your policy.",style=MaterialTheme.typography.bodySmall)
+            }
+        }},confirmButton={Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.End) {
+            if(broad) Button(onClick={onApprove(false,true)}) { Text("Always allow shell commands") }
+            else {
+                Button(onClick={onApprove(false,false)}) {Text("Allow once")}
+                if(!critical) OutlinedButton(onClick={onApprove(true,false)}) {Text("Always allow this action")}
+                if(!critical && r.assessment?.shellCommand!=null) TextButton(onClick={broad=true}) {Text("Allow all shell commands…")}
+            }
+        }},dismissButton={TextButton(onClick={if(broad) broad=false else onClose()}) {Text("Back")}})
+}
+
+@Composable private fun ShellPermissionDialog(label: String,onClose:()->Unit,onAllow:()->Unit) {
+    AlertDialog(onDismissRequest=onClose,title={Text("Always allow device control?")},
+        text={Text("$label will be allowed to run arbitrary shell commands and read its request results without asking each time. This can change apps, settings and data. Critical operations still require approval.\n\nThis choice is saved on your phone across app restarts. Emergency stop and agent revocation still apply. You can switch back to asking each time in Connection details.")},
+        confirmButton={Button(onClick=onAllow) {Text("Always allow")}},dismissButton={TextButton(onClick=onClose) {Text("Back")}})
 }

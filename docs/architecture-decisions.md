@@ -2,15 +2,9 @@
 
 Short records of decisions and the alternatives that were rejected. Newest last.
 
-## ADR-001: Privileged backend is Shizuku UserService (not a custom ADB-started daemon)
+## ADR-001: Bundled privileged Binder service; optional Shizuku
 
-- **Context:** The device is stock: locked bootloader, `ro.debuggable=0`, SELinux enforcing, no `su`. An APK does not inherit ADB privileges.
-- **Decision:** Run a Shizuku `UserService` (AIDL `IPrivilegedShell`) inside the Shizuku server process as `uid=2000(shell)`.
-- **Why:** Shizuku already solves starting a process as shell via wireless debugging, binder hand-off, permission prompts and service-death notification. Shizuku 13.6+ supports non-root auto-start on Android 13+ when the device is on a trusted Wi-Fi network.
-- **Rejected:**
-  - A custom `app_process` daemon started over ADB. It duplicates Shizuku, still needs re-launching after reboot and adds its own IPC and authentication surface.
-  - `Shizuku.newProcess`, which is private and deprecated, with removal planned in API 14.
-- **Consequence:** After a reboot, privileged capabilities report `PRIVILEGE_REQUIRED` until Shizuku is running again. Native capabilities keep working.
+Updated after physical testing and the owner's companion-free requirement. The APK includes an `app_process` service bootstrapped through authorized ADB. A DUMP-protected provider additionally checks kernel caller UID; the daemon checks the app caller UID on every Binder method and links app death. The external-provider Android API is required because a standalone shell has no registered application thread. The final Binder route physically executed as UID 2000 on the Fold. No network shell listener is exposed. Both direct and optional Shizuku paths use the same subprocess executor and policy engine; backend selection is explicit. Privilege ends at reboot and requires setup again. Phone-only pairing remains unfinished.
 
 ## ADR-002: Gateway is a Cloudflare Worker + SQLite-backed Durable Object
 
@@ -27,28 +21,13 @@ Short records of decisions and the alternatives that were rejected. Newest last.
   - Push-only (FCM). It would need a Firebase project and is best-effort. It remains a possible wake hint later.
 - **Consequence:** The gateway sees plaintext requests and results. It keeps only routing metadata, queued requests until they expire, and recent results for a bounded TTL.
 
-## ADR-003: MCP served "dual-era" by a hand-written handler
+## ADR-003: Official MCP TypeScript SDK v2
 
-- **Context:** The current MCP revision, `2026-07-28`, is stateless: no `initialize`, `_meta` on every request, `server/discover`, required `Mcp-Method` headers. Most deployed clients still speak the 2025-era protocol (`initialize`, `2025-11-25`, `2025-06-18`).
-- **Decision:**
-  - Answer `initialize` for `2025-11-25`, `2025-06-18` and `2025-03-26`.
-  - Serve `2026-07-28` requests statelessly, including `server/discover`.
-  - Use plain `application/json` responses without SSE, and return 405 for GET and DELETE.
-- **Why:** A minimal, auditable JSON-RPC surface fits a Worker. Compatibility is tested against the official SDK clients (v1 for 2025-11-25 and v2 for 2026-07-28) rather than assumed.
-- **Rejected:** Pulling in a full server SDK whose Workers compatibility is unverified.
+The initial hand-written dual-era proposal is superseded. SDK 2.3.1 `createMcpHandler` works in Workers with its Cloudflare JSON validator. Actual v1/v2 clients passed local Worker integration tests; v2 and Grok Bot subsequently called the real phone through the deployed Worker. Keep stateless Streamable HTTP compatibility in the maintained SDK.
 
-## ADR-004: Authentication is OAuth 2.1 for ChatGPT-class clients, bearer for API clients
+## ADR-004: Private bearer delivered; OAuth remains required work
 
-- ChatGPT connectors support only no-auth or OAuth (with protected resource metadata). They cannot send static bearer keys.
-- The OpenAI Responses API and the xAI API send a caller-supplied `Authorization` value.
-- **Decision:** The gateway is a minimal OAuth 2.1 authorization server with:
-  - RFC 9728 protected resource metadata and RFC 8414 metadata.
-  - PKCE S256.
-  - Client ID metadata documents and dynamic registration.
-  - Short-lived access tokens with audience binding.
-  - A consent page where the owner proves possession of a device-issued agent pairing code.
-- Static agent bearer tokens remain for API clients and are labeled as a non-spec-conformant private mode.
-- Agent credentials are issued by the phone. The gateway stores only their hashes, and the phone re-checks agent identity and revocation on every call.
+Current production code validates configured private bearer hashes, authenticated principal/device bindings, expiry and revocation. The phone independently authenticates the forwarded bearer and its current grant. Grok Bot accepted its secure secret form and connected. A compromised gateway can impersonate a bearer it forwards; independent signatures are not implemented. OAuth 2.1 authorization/protected-resource endpoints and Dots onboarding remain unimplemented. Do not describe the intended OAuth design as delivered.
 
 ## ADR-005: Framework SQLite instead of Room
 

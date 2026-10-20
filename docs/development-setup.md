@@ -15,7 +15,8 @@ sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 ## Build and test
 
 ```sh
-./gradlew :core:test            # platform-independent logic, no device needed
+./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :app:assembleDebugAndroidTest
 ```
 
 ## Device connection
@@ -54,3 +55,7 @@ keyPassword=...
 ```
 
 Debug builds use the standard Android debug key.
+
+## Installed runtime
+
+See [device testing](device-testing.md) for exact install/start/instrumentation commands and [gateway deployment](gateway-deployment.md) for authenticated hosted MCP setup. Double-click `Start SIConnect.command` or run `tools/start_builtin.py --serial <serial>` to start the bundled privileged service after authorized ADB setup. Use `--restart` after an APK update. This is a bootstrap, not a Mac runtime server. Native tools do not require it.

@@ -6,19 +6,19 @@ It is not a chatbot and not a local LLM. External agents decide *what* to do. SI
 
 ```
 External agents (ChatGPT, Codex, Grok, OpenAI/xAI APIs, any MCP client)
-        |  MCP over HTTPS (OAuth 2.1 or bearer)
+        |  MCP over HTTPS (private bearer mode)
         v
 SIConnect gateway (Cloudflare Worker + Durable Object, self-hosted)
         |  authenticated outbound WebSocket opened by the phone
         v
 SIConnect Android app
    capability registry -> policy engine -> approvals -> execution backends
-   (native APIs, Shizuku shell uid, app shell)    -> verification -> audit log
+   (native APIs, bundled ADB Binder service, optional Shizuku)    -> verification -> audit log
 ```
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: early development.** The platform-independent core (registry, policy, approvals state machine, execution engine, skills) is implemented and unit-tested. The Android app and the gateway are being built now. See [docs/project-status.md](docs/project-status.md) for the current state. Nothing below that is marked *planned* works yet.
+> **Status: working development runtime.** The APK is installed on the Galaxy Z Fold 7. Real Grok Bot calls through the deployed personal Cloudflare gateway have executed native diagnostics, opened apple.com and created a verified Clock alarm. SQLite requests, approvals and owner-selected standing permissions are integrated. OAuth, phone-only privileged bootstrap and extended lifecycle validation remain unfinished. See [project status](docs/project-status.md) and [device testing](docs/device-testing.md).
 
 ## Design principles
 
@@ -34,8 +34,8 @@ The phone opens the connection outward, so the phone does not need a public addr
 | Path | Contents |
 | --- | --- |
 | `core/` | Pure Kotlin/JVM: models, capability registry, JSON-schema subset validator, policy engine, execution engine, skill runtime. Host-testable. |
-| `app/` | Android application (Kotlin, Jetpack Compose): backends, capabilities, persistence, approvals, transport, UI. *(in progress)* |
-| `gateway/` | MCP gateway for Cloudflare Workers. *(in progress)* |
+| `app/` | Android application (Kotlin, Jetpack Compose): backends, capabilities, persistence, approvals, transport, UI. |
+| `gateway/` | MCP gateway for Cloudflare Workers. |
 | `tools/` | Mac-side tooling: ADB audit harness, diagnostics analyzer. |
 | `docs/` | Architecture, decisions, device audit, security model, status and handoff. |
 

@@ -25,6 +25,9 @@ data class StandingGrant(
     val maxRisk: RiskClass = RiskClass.MODERATE_IMPACT,
     val expiresAtMs: Long? = null,
     val note: String? = null,
+    /** Exact reviewed capability version and canonical arguments. Null retains constrained-grant semantics. */
+    val actionHash: String? = null,
+    val backend: BackendKind? = null,
 )
 
 @Serializable
@@ -88,6 +91,10 @@ class PolicyEngine {
             return deny("Shell command assessment is required", "shell_assessment_missing")
         if (risk == RiskClass.CRITICAL) return approval("CRITICAL operations always require approval", "critical")
 
+        agent.standing.firstOrNull {
+            (assessment.shellCommand == null || it.actionHash != null) && matchesStanding(it, descriptor, args, risk, nowMs)
+        }?.let { return allow("Standing grant for ${it.capabilityId}", "standing_grant") }
+
         assessment.shellCommand?.let { cmd ->
             return when (agent.shellMode) {
                 ShellMode.BROAD -> allow("Agent holds a broad shell grant", "shell_broad")
@@ -98,15 +105,14 @@ class PolicyEngine {
             }
         }
 
-        agent.standing.firstOrNull { matchesStanding(it, descriptor.id, args, risk, nowMs) }?.let {
-            return allow("Standing grant for ${it.capabilityId}", "standing_grant")
-        }
         if (risk <= agent.autoApproveUpTo) return allow("Risk $risk within agent auto-approve level", "auto_risk")
         return approval("Risk $risk exceeds agent auto-approve level ${agent.autoApproveUpTo}", "risk_threshold")
     }
 
-    private fun matchesStanding(g: StandingGrant, capId: String, args: JsonObject, risk: RiskClass, now: Long): Boolean {
-        if (g.capabilityId != capId) return false
+    private fun matchesStanding(g: StandingGrant, descriptor: CapabilityDescriptor, args: JsonObject, risk: RiskClass, now: Long): Boolean {
+        if (g.capabilityId != descriptor.id) return false
+        if (g.backend != null && g.backend != descriptor.backend) return false
+        if (g.actionHash != null && g.actionHash != Canonical.actionHash(descriptor.id, descriptor.version, args)) return false
         if (g.expiresAtMs != null && now >= g.expiresAtMs) return false
         if (risk > g.maxRisk) return false
         return g.constraints.all { (k, v) -> args[k] == v }

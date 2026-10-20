@@ -1,56 +1,35 @@
 # Project status
 
-Last updated: 2026-10-20 (initial commit).
+Updated October 20, 2026. This replaces the initial core-only status.
 
-## Implemented
-
-| Component | State | Evidence |
+| Subsystem | Implemented | Evidence / limits |
 | --- | --- | --- |
-| Gradle build (Gradle 9.8.2, AGP 9.4.1, Kotlin 2.4.21, JDK 21 daemon) | Done | `./gradlew :core:test` |
-| `core`: models, risk classes, availability, request state machine | Done | `EngineTest` |
-| `core`: capability registry and schema-subset validator | Done | `EngineTest` |
-| `core`: policy engine (scopes, denylist, emergency stop, shell modes, standing grants, risk thresholds) | Done | `EngineTest` |
-| `core`: execution engine (idempotency, CAS transitions, approvals bound to args hash, expiry, cancellation, timeout to `UNKNOWN_OUTCOME`, recovery) | Done | `EngineTest` (17 tests) |
-| `core`: skill runtime (templates, conditions, validation, no escalation) | Done | `SkillsTest` (7 tests) |
-| ADB audit harness (read-only, explicit target, redaction) | Done | Ran against the Fold 7; see `docs/adb-audit.md` |
-| CI (host-only) | Done | `.github/workflows/ci.yml` |
+| Core authorization | Current grant/scope/expiry/revocation, backend and kill-switch revalidation after approval | Host tests plus real device revocation test |
+| Idempotency | Scoped immutable-operation fingerprint; conflicts explicit; CAS execution ownership | Concurrent host submissions; actual SQLite test |
+| Durable skills | Persisted cursor, stable child IDs, pending approvals, partial/unknown outcomes, recovery | Four-step approval continuation on host; real three-step native skill on phone |
+| Android runtime | Compose UI, SQLiteOpenHelper v2, Keystore secrets, permissions, lifecycle, native registry | Debug APK built, installed and launched repeatedly on Fold 7 |
+| Privileged runtime | Bundled shell/root-only Binder service; shared bounded subprocess executor; optional explicit Shizuku backend | Bundled backend physically returned UID 2000, exit 0; no companion needed for this route |
+| Approvals | Persisted requests, notifications, exact owner review, deny and once/standing/broad permission | Instrumented deny/approve/revoke; actual UI approved browser and Clock operations |
+| Persistent permission | Exact argument/version/backend grants and explicit broad shell; owner-only SQLite changes; revoke controls | Phone UI saved broad grant; process killed and automatically restarted; new unattended shell succeeded |
+| Gateway | Worker, Durable Object, official MCP v2 handler, private bearer auth, device enrollment, outbound socket | Deployed in owner's personal account; real Fold connected; SDK v1/v2 local protocol tests |
+| Grok Bot | Saved secure bearer credential; cloud-hosted MCP relay | Actual connector battery call correlated with phone record; browser and alarm operations executed after UI approval |
+| Result tracking | requests.get / requests.cancel scoped to authenticated requesting agent | Real hosted MCP lookup succeeded; catalog now advertises 30 tools |
+| Scheduling | Persistent AlarmManager/WorkManager adapters, reboot receiver, configured local automation identity | Foundation implemented; unattended scheduler validation incomplete |
+| Weather | Real Open-Meteo request/cache/normalization implementation | Production forecast and complete weather workflow not physically verified |
 
-## In progress
+## Physical evidence
 
-- `app`: Android app with SQLite persistence, native and Shizuku backends, capabilities, approval notifications, foreground-service transport and Compose UI.
-- `gateway`: Cloudflare Worker and Durable Object, serving dual-era MCP with OAuth 2.1 and bearer authentication.
+Four production-backed Android instrumentation tests passed: native execution/persistence/idempotency, package query and skill, bundled shell identity, and approval deny/approve/revoke. An additional real-device gateway setup test passed. Official MCP SDK v2 invoked seven real phone tools through the hosted gateway. Grok Bot then independently called device status, shell identity and battery; matching REMOTE request records were read from the phone's database-backed endpoint.
 
-## Physical-device verification
+Grok Bot submitted the owner's requested browser and Clock commands. Both waited for local approval, then completed with exit 0. Physical Chrome showed apple.com; Samsung Clock showed the named test alarm at the requested 6:08 PM. AlarmManager independently returned the same trigger time. This validates alarm creation, not an unattended scheduler guarantee. Private screenshots and outputs stay outside Git.
 
-None of the app capabilities have been verified on the device yet, because the app is not yet installed. The only device-verified item so far is the read-only audit.
+## Remaining limits
 
-## Device state
+- An explicitly authorized message was sent through Grok Bot device UI; exact recipient, content and Delivered state were verified on the Fold. Further conversational and weather/reminder scenarios are in progress.
+- Private bearer authentication works with this Grok Bot setup. OAuth and Dots onboarding are not implemented/verified.
+- Full device control requires an owner-authorized ADB bootstrap after phone reboot. The Mac is not a runtime server after bootstrap. Phone-only wireless pairing is not implemented.
+- Shizuku integration is optional; its reboot/lifecycle behavior has not been exhaustively tested.
+- Calendar/files families, disposable uninstall, extended background/reboot/network tests and long-duration resource profiling remain outstanding.
+- Request/result data can contain sensitive content. Do not export raw device evidence to this public repository.
 
-- Galaxy Z Fold 7, Android 17 / One UI 9, connected over wireless debugging.
-- Shizuku 13.5.4 is installed but not running.
-
-## Implementation pass 2 checkpoint — October 20, 2026
-
-Core changes: approvals re-read current grants, scope, revocation, expiry, backend availability and kill switches. Risk approval is not re-requested. Request/key reuse is bound to agent, device, capability/version, canonical arguments, trusted origin, parent and explicit expiry; mismatches raise `IDEMPOTENCY_CONFLICT`. Trace IDs and generated default expiry are excluded from that fingerprint. Execution now requires winning the EXECUTING CAS and registers a lazy job before cancellation can race it. Exceptions during possibly mutating work report UNKNOWN_OUTCOME. Output schemas and bounded schema/payload definitions are validated.
-
-DurableSkillRunner persists a definition snapshot, deadline, cursor, pending child ID and outcomes through SkillRunStore. Stable child IDs prevent replay; startup recovery must run engine recovery first. Android SQLite wiring and physical tests remain in progress. The untracked partial app present at session start has been preserved.
-
-### Android and gateway checkpoint
-
-The app now compiles with the pinned AGP/Gradle/Kotlin toolchain and SDK 37. `:app:assembleDebug`, `:app:assembleDebugAndroidTest`, `:app:lintDebug` pass. The debug APK has been installed repeatedly on the Fold 7 and launched. Native execution, actual package inspection, a three-step native skill and persistence through a reopened SQLite connection passed device instrumentation. Startup exposed an Android ICU incompatibility in the original template regex; escaping the closing brace fixed it.
-
-The production runtime uses SQLiteOpenHelper, CAS request transitions with transactional transition history, Keystore-encrypted credentials, native approval notifications, a non-exported owner review UI, and an authenticated debug-only loopback endpoint. The UI is being simplified following owner feedback.
-
-A companion-free privileged Binder service is bundled in the APK and started by the authorized ADB launcher. Its attachment/identity tests are still being debugged; shell functionality is not yet claimed verified. Shizuku remains explicitly selectable with no automatic backend fallback.
-
-Gateway: actual Cloudflare Worker/Durable Object implementation, official MCP SDK 2.3.1 `createMcpHandler`, private bearer authentication, device enrollment, outbound WebSocket routing, bounded concurrency and explicit offline/unknown outcome errors. Five local Worker protocol tests pass using official SDK v1/v2 clients and an explicitly test-only WebSocket peer. No cloud deployment or real-phone MCP result is claimed at this checkpoint. Cloudflare CLI is not authenticated.
-
-### Physical Binder execution verified
-
-The companion-free backend now attaches and executes on the Fold. The first Unix-socket implementation failed cross-process communication; the final implementation uses a shell/root-only provider and Android's external-provider Binder API (the standalone shell has no registered application thread). Both ends check kernel Binder caller identity. Four production-backed instrumentation tests pass: native SQLite execution/idempotency, actual package inspection plus a three-step skill, UID 2000 shell execution, and instrumented approval deny/approve/revoke. Human approval interaction is tracked separately. The simplified Home screen replaces tabs as the default UI; detailed management remains under Advanced.
-
-Cloudflare accepted deployment into the owner's explicitly selected personal/free account. The new workers.dev hostname initially failed TLS during provisioning. Do not claim public reachability or cloud-to-phone execution until subsequent checks pass. Private bearer credentials are generated and stored outside Git; OAuth provider onboarding remains unimplemented.
-
-### Hosted phone integration verified
-
-The deployed HTTPS health endpoint now returns 200. The physical Fold enrolled and opened its own outbound WebSocket. An official MCP SDK v2 client called seven real phone tools through the hosted Worker: device status, battery, memory, storage, network, thermal state and bundled privileged shell identity. All seven returned SUCCEEDED. Observed round trips were 165–522 ms in this short sample. The gateway advertised 28 actual registered tools. A cloud-submitted arbitrary `id` request correctly stopped at AWAITING_APPROVAL; human approval/notification interaction is pending. The gateway runs in Cloudflare, not on the Mac. This is private bearer mode, not OAuth provider integration.
+Ordinary process-death check: the owner-enabled app process was killed with its own UID (not force-stop). Android restarted the service, the Binder backend reattached, and a new arbitrary shell request succeeded without approval in 1.65 seconds. This is a single recovery measurement, not long-duration lifecycle evidence.

@@ -79,6 +79,10 @@ class Settings(context: Context) {
     fun enrollToken(): String? = getSecret("enroll_token")
     fun setEnrollToken(token: String?) = if (token.isNullOrBlank()) secretPrefs.edit().remove("enroll_token").apply() else putSecret("enroll_token", token.trim())
 
+    /** Owner-accessible pairing credential, encrypted with the same non-exportable Keystore key. */
+    fun botToken(): String? = getSecret("bot_token")
+    fun setBotToken(token: String) { require(token.length in 20..300); putSecret("bot_token", token) }
+
     var enrolled: Boolean
         get() = prefs.getBoolean("enrolled", false)
         set(v) = prefs.edit().putBoolean("enrolled", v).apply()

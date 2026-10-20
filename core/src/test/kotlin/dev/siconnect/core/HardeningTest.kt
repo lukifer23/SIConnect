@@ -5,6 +5,25 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class HardeningTest {
+    @Test fun durableExactApprovalsBindArgumentsVersionBackendAndCurrentAuthority() {
+        val descriptor=CapabilityDescriptor("shell.execute",1,"Shell","test",objectSchema(),backend=BackendKind.ADB_SERVICE,risk=RiskClass.HIGH_IMPACT)
+        val original=args("command" to "id", "cwd" to "/")
+        val assessment=RiskAssessment(RiskClass.HIGH_IMPACT,"Shell",shellCommand="id")
+        val saved=StandingGrant("shell.execute",maxRisk=RiskClass.HIGH_IMPACT,actionHash=Canonical.actionHash("shell.execute",1,original),backend=BackendKind.ADB_SERVICE)
+        val grant=AgentGrant("a","Bot",scopes=listOf("shell.*"),standing=listOf(saved))
+        fun decision(g:AgentGrant=grant,d:CapabilityDescriptor=descriptor,a:JsonObject=original,c:DeviceControls=DeviceControls(),risk:RiskClass=RiskClass.HIGH_IMPACT)=
+            PolicyEngine().evaluate(g,d,a,assessment.copy(risk=risk),Availability.IMPLEMENTED,c,Origin.REMOTE,100)
+        assertEquals(PolicyOutcome.ALLOW,decision().outcome)
+        assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(a=args("command" to "id", "cwd" to "/data/local/tmp")).outcome)
+        assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(d=descriptor.copy(version=2)).outcome)
+        assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(d=descriptor.copy(backend=BackendKind.SHIZUKU)).outcome)
+        assertEquals(PolicyOutcome.DENY,decision(g=grant.copy(revoked=true)).outcome)
+        assertEquals(PolicyOutcome.DENY,decision(g=grant.copy(scopes=emptyList())).outcome)
+        assertEquals(PolicyOutcome.DENY,decision(c=DeviceControls(remoteExecutionEnabled=false)).outcome)
+        assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(g=grant.copy(shellMode=ShellMode.BROAD),risk=RiskClass.CRITICAL).outcome)
+        val restored=SkillJson.json.decodeFromString(AgentGrant.serializer(),SkillJson.json.encodeToString(AgentGrant.serializer(),grant))
+        assertEquals(PolicyOutcome.ALLOW,decision(g=restored).outcome)
+    }
     @Test fun pendingApprovalRechecksEveryCurrentEligibilityRule() = runBlocking {
         for (change in listOf("revoked", "expired", "scope", "denylist", "stop", "privilege", "permission", "version")) {
             val store = MemoryStore(); val registry = CapabilityRegistry(); val clock = FakeClock()

@@ -54,6 +54,7 @@ data class RequestRecord(
     val errorMessage: String? = null,
     val parentRequestId: String? = null,
     val operationFingerprint: String = "",
+    val selectedBackend: BackendKind? = null,
 )
 
 interface RequestStore {
@@ -149,7 +150,7 @@ class ExecutionEngine(
             requestId = req.requestId, traceId = req.traceId, agentId = req.agentId, deviceId = deviceId,
             capabilityId = capId, capabilityVersion = version, arguments = req.arguments,
             argsHash = Canonical.actionHash(capId, version, req.arguments), idempotencyKey = req.idempotencyKey,
-            operationFingerprint = fingerprint, origin = origin.name, state = RequestState.RECEIVED, createdAtMs = now, updatedAtMs = now,
+            operationFingerprint = fingerprint, selectedBackend = capability?.descriptor?.backend, origin = origin.name, state = RequestState.RECEIVED, createdAtMs = now, updatedAtMs = now,
             expiresAtMs = req.expiresAtMs ?: (now + defaultExpiryMs), parentRequestId = req.parentRequestId,
         )
         if (!store.insert(record)) {
@@ -220,7 +221,7 @@ class ExecutionEngine(
         approvals.approvalClosed(approved)
         val capability = registry.get(approved.capabilityId)
             ?: return fail(approved, "UNKNOWN_CAPABILITY", "Capability disappeared")
-        if (capability.descriptor.version != approved.capabilityVersion)
+        if (capability.descriptor.version != approved.capabilityVersion || (approved.selectedBackend != null && approved.selectedBackend != capability.descriptor.backend))
             return fail(approved, "CAPABILITY_CHANGED", "Capability version changed after approval")
         // Approval satisfies the risk gate only. Current eligibility remains authoritative.
         val grant = agents.grant(approved.agentId)
@@ -305,11 +306,14 @@ class ExecutionEngine(
                     if (Schema.validate(schema, result.output).isNotEmpty())
                         throw CapabilityException("INVALID_OUTPUT", "Backend result violates output schema")
                 }
-                val state = if (result.verification == VerificationStatus.FAILED) RequestState.FAILED else RequestState.SUCCEEDED
+                val state = if (result.verification == VerificationStatus.FAILED) {
+                    if (capability.descriptor.risk > RiskClass.READ_ONLY || capability.descriptor.sideEffects.isNotEmpty() || executing.assessment?.shellCommand != null)
+                        RequestState.UNKNOWN_OUTCOME else RequestState.FAILED
+                } else RequestState.SUCCEEDED
                 transition(executing, state, "execution.finished", backend = result.backend.name,
                     durationMs = clock.nowMs() - started, verification = result.verification.name) {
-                    it.copy(result = result, errorCode = if (state == RequestState.FAILED) "VERIFICATION_FAILED" else null,
-                        errorMessage = if (state == RequestState.FAILED) result.verificationDetail else null)
+                    it.copy(result = result, errorCode = if (state != RequestState.SUCCEEDED) result.errorCode ?: "VERIFICATION_FAILED" else null,
+                        errorMessage = if (state != RequestState.SUCCEEDED) result.verificationDetail else null)
                 }
             } catch (e: TimeoutCancellationException) {
                 unknownOrFailed(executing, capability, "TIMEOUT", "Exceeded ${capability.descriptor.timeoutMs} ms", started)
