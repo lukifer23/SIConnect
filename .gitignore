@@ -1,0 +1,55 @@
+# Build outputs
+build/
+.gradle/
+.kotlin/
+*.apk
+*.aab
+*.ap_
+*.dex
+out/
+gateway/node_modules/
+gateway/.wrangler/
+gateway/dist/
+tools/**/node_modules/
+
+# Local SDK / IDE state
+local.properties
+.idea/
+*.iml
+.vscode/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing material and secrets (never commit)
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+signing.properties
+.env
+.env.*
+!.env.example
+gateway/.dev.vars
+secrets/
+*.secret
+*.token
+
+# Device captures, audits, diagnostics, runtime data (may contain personal data)
+audit*.json
+raw-audit/
+device-captures/
+*.siconnect-diag.json
+diagnostics/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.hprof
+*.trace
+bugreport*.zip
+logcat*.txt
+screenshots/
+pairing/
