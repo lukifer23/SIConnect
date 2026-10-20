@@ -117,7 +117,7 @@ class PolicyEngine {
     private fun deny(r: String, rule: String) = PolicyDecision(PolicyOutcome.DENY, r, rule)
 
     companion object {
-        val PRIVILEGED = setOf(BackendKind.SHIZUKU, BackendKind.ROOT)
+        val PRIVILEGED = setOf(BackendKind.SHIZUKU, BackendKind.ADB_SERVICE, BackendKind.ROOT)
 
         fun globMatches(pattern: String, id: String): Boolean {
             if (pattern == "*") return true

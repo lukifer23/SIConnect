@@ -57,7 +57,7 @@ object SkillJson {
 
 object SkillValidator {
     private val STEP_ID = Regex("^[a-z][a-z0-9_]{0,31}$")
-    private val REF = Regex("""\$\{([^}]+)}""")
+    private val REF = Regex("""\$\{([^}]+)\}""")
 
     /** Returns validation errors; capabilities must exist in [registry] at install time. */
     fun validate(def: SkillDefinition, registry: CapabilityRegistry): List<String> {
@@ -243,8 +243,8 @@ class SkillRunner(private val engine: ExecutionEngine, private val clock: Clock 
 }
 
 object Templates {
-    private val WHOLE = Regex("""^\$\{([^}]+)}$""")
-    private val PART = Regex("""\$\{([^}]+)}""")
+    private val WHOLE = Regex("""^\$\{([^}]+)\}$""")
+    private val PART = Regex("""\$\{([^}]+)\}""")
 
     fun resolve(e: JsonElement, scope: Map<String, JsonElement>): JsonElement = when (e) {
         is JsonPrimitive -> if (!e.isString) e else {

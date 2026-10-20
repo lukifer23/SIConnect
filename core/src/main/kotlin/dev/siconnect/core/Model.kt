@@ -29,7 +29,7 @@ enum class PolicyOutcome { ALLOW, REQUIRE_APPROVAL, DENY, UNAVAILABLE }
 
 /** Execution identity that actually performs an operation. Reported verbatim in results. */
 @Serializable
-enum class BackendKind { NATIVE, APP_SHELL, SHIZUKU, ACCESSIBILITY, NETWORK, ROOT }
+enum class BackendKind { NATIVE, APP_SHELL, SHIZUKU, ADB_SERVICE, ACCESSIBILITY, NETWORK, ROOT }
 
 @Serializable
 enum class RequestState {

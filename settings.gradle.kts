@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "SIConnect"
-include(":core")
+include(":core", ":app")
