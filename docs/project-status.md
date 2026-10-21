@@ -116,3 +116,5 @@ Final host checks passed: 30 core, three app JVM, seven gateway and four Python 
 Storage cleanup removed 77.6 MiB of reproducible Android intermediates/temporary build output and Worker staging output. Current APKs/reports/dependencies/private evidence were retained. The disposable instrumentation package and one temporary device UI dump were removed; the production package, credentials, database/history and personal reminders were preserved.
 
 Legacy Grok/Hermes private-bearer use still shares one principal. Independent per-client revocation requires deliberately pairing/migrating separate identities; no silent credential rotation or grant copying occurred. OAuth same-name connections remain distinct.
+
+Concrete security review limit: no remote grant/approval API exists, but broad shell can automate unlocked management UI. Independent owner-presence authentication for those choices is not implemented; the security model now states this explicitly. Native protected confirmation is a next hardening priority, without removing owner-selected broad/background execution.
