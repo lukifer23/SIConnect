@@ -7,7 +7,7 @@ Updated October 20, 2026. This replaces the initial core-only status.
 | Core authorization | Current grant/scope/expiry/revocation, backend and kill-switch revalidation after approval | Host tests plus real device revocation test |
 | Idempotency | Scoped immutable-operation fingerprint; conflicts explicit; CAS execution ownership | Concurrent host submissions; actual SQLite test |
 | Durable skills | Persisted cursor, stable child IDs, pending approvals, partial/unknown outcomes, recovery | Four-step approval continuation on host; real three-step native skill on phone |
-| Android runtime | Compose UI, SQLiteOpenHelper v4, Keystore secrets, permissions, lifecycle, native registry | Debug APK built, installed and launched repeatedly on Fold 7 |
+| Android runtime | Compose UI, SQLiteOpenHelper v6, Keystore secrets, permissions, lifecycle, native registry | Debug APK built, installed and launched repeatedly on Fold 7 |
 | Privileged runtime | Bundled shell/root-only Binder service; shared bounded subprocess executor; optional explicit Shizuku backend | Bundled backend physically returned UID 2000, exit 0; no companion needed for this route |
 | Approvals | Persisted requests, notifications, exact owner review, deny and once/standing/broad permission | Instrumented deny/approve/revoke; actual UI approved browser and Clock operations |
 | Persistent permission | Exact argument/version/backend grants and explicit broad shell; owner-only SQLite changes; revoke controls | Phone UI saved broad grant; process killed and automatically restarted; new unattended shell succeeded |
@@ -20,7 +20,27 @@ Updated October 20, 2026. This replaces the initial core-only status.
 | Dots/ChatGPT | OAuth, phone-created pairing, separate authenticated agent, real native and shell calls | Actual calls correlated with SQLite; app-install test denied by local scope; correct agent’s permission saved by owner and verified in SQLite; subsequent official-app install and final bounded verification succeeded |
 | Owner management UI | Bot cards, durable Apps permission, revocation, exact blocked-agent review, disambiguated duplicate labels | APK built/linted/installed; physical hierarchy shows the correct Dots permission card; permission review stayed open for 20 seconds; owner saved the correct grant; longer/configuration-change checks remain pending |
 
-## Engineering pass 3 (in progress)
+## Engineering pass 4 checkpoint
+
+Starting commit `8fb7b42` (the reviewed `7a720ca` is preserved). Existing recovery tags and gateway identity are retained. No device identity, OAuth resource, bearer credential or existing remote grant was rotated. Android 0.4.0 was installed in place and passed ten targeted physical cases. Android 0.4.1 (code 4, SQLite v6) has also been built, installed in place and reached the existing hosted endpoint; seven fresh official-client native/shell calls succeeded with 69 registry tools. Further provider/UI checks are in progress, not claimed complete here.
+
+Implemented:
+
+- Generic automation slots persist definition/input snapshots, reconcile existing skill runs, retain unfinished approval states and advance only after a terminal run. Configuration edits do not strand an owned slot. Unknown outcomes pause future dispatch. AlarmManager/WorkManager scheduling errors remain visible and startup reconciliation retries dispatch separately from SQLite commits.
+- Typed daily, selected-weekday, weekly, monthly and fixed-interval recurrence uses explicit timezones. Legacy intervals retain their anchored interpretation. Missed-run policy and relevance windows are explicit. Generic exact alarms dispatch WorkManager; they do not promise exact skill execution.
+- Cooperative SQLite-backed screen leases coordinate structured `apps.launch`; unrelated native operations continue. Four authenticated lease tools use the actual invoking identity. Arbitrary broad shell can bypass cooperative coordination and is deliberately retained.
+- Shell results cross Binder using bounded reliable file-descriptor pipes. Optional output encoding avoids duplicate binary/text output when requested; legacy small results remain compatible. `requests.output` returns protected bounded record chunks, while `requests.recent` helps recover an ID lost with an HTTP response. Client transport cancellation no longer means execution cancellation.
+- Nine real Calendar Provider tools require Android permission, explicit calendar selection and ordinary capability grants. Local readback is distinguished from unverified account synchronization/invitation delivery. Permission behavior is physically tested; a dedicated-calendar write round trip is not yet verified.
+- Nine real SAF document tools use owner-selected persisted tree grants and opaque root handles. Managed files remain separate. No arbitrary raw URI authorization, app-private access or MediaStore implementation is claimed. Owner-selected document round trip remains pending.
+- `weather.commute_check` is an installed declarative skill over actual forecast, calculation, notification and reminder capabilities. Evening schedules use the generic scheduler and explicit fallback wake time/timezone. Enabling its additional local-automation scopes is an explicit owner action. Missing/stale forecasts suppress actions, and native deduplication keys avoid blind repeated notifications/reminders.
+- Android strong-biometric/device-credential authentication protects UI approval, standing/broad grants, permission expansion and selected management actions. Cancellation/recreation never approves an action. This requires owner-interactive verification; it is not a claim of isolation from all broadly authorized shell behavior.
+- System/light/dark palettes, safer system-bar/keyboard insets, scrollable grant explanations and an on-demand health card improve owner visibility. The health card invokes the same native runtime capability; no continuous profiler starts when it opens.
+
+Physical checkpoint: ten targeted 0.4.0 cases passed (scheduler three, screen coordination one, transport two, calendar permission one, package inspection one, managed files one, shell identity one). The initial command named one test class incorrectly; its initialization failure was corrected and the actual transport cases subsequently passed. Real scheduler crash-boundary fixtures use SQLite; they are not mislabeled as an arbitrary live process-kill campaign. Extended wall-clock DST calculations are pure JVM tests. Calendar/shared-document writes, owner biometric interaction, reboot and full provider matrix remain pending. A Gradle daemon retained references to externally removed cache artifacts; restarting it restored successful pinned-toolchain builds. A later UI locale lint error was corrected without suppressing the check.
+
+The prior sparse collection was observed at five samples/fifteen successful calls, then its output was deleted during cleanup. That interval is not reported as a completed retained soak. A new collection uses the existing connection configuration and a new standard Application Support output file; its result is a separate interval.
+
+## Engineering pass 3 (historical checkpoint)
 
 Starting source: `abfefc5`, preserving the reviewed `b474f3d` work and the existing three remote principals. The annotated recovery tag is `siconnect-working-multiagent-2026-10-20`. Fresh baseline core/Android builds and gateway checks passed before modification. Live credentials and the database were preserved.
 

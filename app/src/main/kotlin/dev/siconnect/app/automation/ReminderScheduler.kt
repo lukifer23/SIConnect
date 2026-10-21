@@ -34,6 +34,15 @@ class ReminderScheduler(private val g: RuntimeGraph) {
     private fun pending(r: Reminder)=PendingIntent.getBroadcast(g.context,r.id.hashCode(),
         Intent(g.context,ReminderAlarmReceiver::class.java).setData(Uri.parse("siconnect:reminder/${r.id}")).putExtra("id",r.id),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    @Synchronized fun createDeduplicated(r:Reminder):Reminder {
+        val old=get(r.id)
+        if(old!=null) {
+            if(old.agentId!=r.agentId || old.fireAtMs!=r.fireAtMs || old.title!=r.title || old.text!=r.text || old.exact!=r.exact)
+                throw dev.siconnect.core.CapabilityException("IDEMPOTENCY_CONFLICT","Reminder key belongs to different arguments; inspect the existing reminder and update explicitly",noSideEffects=true)
+            return old // Includes delivered/unknown/cancelled: creation never re-arms them.
+        }
+        return put(r)
+    }
     fun put(r: Reminder): Reminder {
         require(r.fireAtMs>System.currentTimeMillis()) { "Reminder must be in the future" }
         require(!r.exact || canScheduleExact()) { "Enable precise reminders in Android settings" }
@@ -80,13 +89,18 @@ class ReminderScheduler(private val g: RuntimeGraph) {
                     else runCatching { schedule(r);if(r.state=="BLOCKED") transition(r,r.copy(state="SCHEDULED",error=null)) }
                         .onFailure { transition(r,r.copy(state="BLOCKED",error=it.javaClass.simpleName)) }
                 }
-                "FIRING" -> {
+                "FIRING","AWAITING_APPROVAL" -> {
                     val record=g.requests.get("reminder:${r.id}")
                     if(record?.state?.isTerminal==true) transition(r,r.copy(state=record.state.name,error=record.errorCode))
                     else enqueueDelivery(g.context,r.id)
                 }
             }
         }
+    }
+    fun onRequestUpdated(record:RequestRecord) {
+        if(!record.state.isTerminal || !record.requestId.startsWith("reminder:")) return
+        val r=get(record.requestId.removePrefix("reminder:")) ?: return
+        if(r.state in setOf("FIRING","AWAITING_APPROVAL")) transition(r,r.copy(state=record.state.name,error=record.errorCode))
     }
     suspend fun deliver(id: String): RequestState? {
         g.ready.await()

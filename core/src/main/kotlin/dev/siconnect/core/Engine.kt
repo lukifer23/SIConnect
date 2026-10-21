@@ -305,7 +305,8 @@ class ExecutionEngine(
         val started = clock.nowMs()
         job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val result = withTimeout(capability.descriptor.timeoutMs) { capability.execute(executing.arguments, ctx) }
+                val budget=minOf(capability.descriptor.timeoutMs,(executing.expiresAtMs-clock.nowMs()).coerceAtLeast(1))
+                val result = withTimeout(budget) { capability.execute(executing.arguments, ctx) }
                 capability.descriptor.outputSchema?.let { schema ->
                     if (Schema.validate(schema, result.output).isNotEmpty())
                         throw CapabilityException("INVALID_OUTPUT", "Backend result violates output schema")
@@ -320,12 +321,12 @@ class ExecutionEngine(
                         errorMessage = if (state != RequestState.SUCCEEDED) result.verificationDetail else null)
                 }
             } catch (e: TimeoutCancellationException) {
-                unknownOrFailed(executing, capability, "TIMEOUT", "Exceeded ${capability.descriptor.timeoutMs} ms", started)
+                unknownOrFailed(executing, capability, "TIMEOUT", "Capability timeout or request deadline reached", started)
             } catch (e: CancellationException) {
                 unknownOrFailed(executing, capability, "CANCELLED", e.message ?: "cancelled", started, cancelled = true)
             } catch (e: CapabilityException) {
                 if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
-                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started)
+                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started, noSideEffects=e.noSideEffects)
             } catch (e: Exception) {
                 if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
                     unknownOrFailed(executing, capability, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", started)
@@ -341,12 +342,12 @@ class ExecutionEngine(
 
     /** Side-effecting work interrupted midway may have partly happened: report UNKNOWN_OUTCOME, never success. */
     private fun unknownOrFailed(
-        r: RequestRecord, c: Capability, code: String, msg: String, started: Long, cancelled: Boolean = false,
+        r: RequestRecord, c: Capability, code: String, msg: String, started: Long, cancelled: Boolean = false, noSideEffects: Boolean = false,
     ): RequestRecord {
         val sideEffects = maxOf(c.descriptor.risk, r.assessment?.risk ?: c.descriptor.risk) > RiskClass.READ_ONLY || c.descriptor.sideEffects.isNotEmpty() || (r.assessment?.sideEffects?.isNotEmpty() == true) ||
             r.assessment?.shellCommand != null
         val state = when {
-            sideEffects -> RequestState.UNKNOWN_OUTCOME
+            sideEffects && !noSideEffects -> RequestState.UNKNOWN_OUTCOME
             cancelled -> RequestState.CANCELLED
             else -> RequestState.FAILED
         }

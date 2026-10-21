@@ -13,3 +13,13 @@ Current pass: preserve the working endpoint and existing bot identities/grants. 
 9. Add legitimate phone-only privileged bootstrap/recovery; preserve the bundled service and optional explicit Shizuku backend. A physical reboot needs separate owner authorization and has not been tested in this pass.
 10. Finish the full provider/revocation/lifecycle matrix and fresh Dots/Grok application regression. Keep prior successful personal messages/emails/installations as evidence; use disposable resources for new tests. Maintain SQLite migrations and a compatible recovery checkpoint.
 11. Review durable result reconciliation across gateway restarts and storage failure after external effects. The phone remains authoritative; no delayed offline destructive queue or automatic unknown-outcome retry is implemented. Per-agent credential rotation and end-to-end signatures need deliberate compatible designs.
+
+## After the Pass 4 checkpoint
+
+1. Complete owner-interactive biometric approval and permission-expansion checks on folded/unfolded layouts; verify cancellation/recreation keeps the exact action pending.
+2. Select a disposable calendar and document root, then run the opt-in native round trips. MediaStore, document copy/move and calendar recurring exceptions remain separate missing functionality.
+3. Exercise the configured commute skill against a real forecast and verify native deduplication/delivery, without changing personal Clock alarms or default location.
+4. Recheck each actual provider, including the owner-requested Grokbot → Telegram → Hermes → SIConnect chain; do not infer provider success from local SDK fixtures.
+5. Run ordinary process-death scheduler scenarios beyond persisted-boundary fixtures, network loss/restoration, then an owner-authorized reboot. Keep unknown mutations paused.
+6. Continue the new sparse collection, preserving current output. Measure comparable foreground/background/locked intervals before attributing savings or battery drain.
+7. Separate legacy shared bearer identities only through an owner-coordinated migration. Extend protected owner-management coverage and investigate legitimate phone-only bootstrap.

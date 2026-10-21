@@ -14,7 +14,7 @@ class ShizukuBackend(context: Context, private val scope: CoroutineScope) {
     val status = MutableStateFlow("Shizuku is not running")
     @Volatile private var service: IPrivilegedShell? = null
     private val args = Shizuku.UserServiceArgs(ComponentName(context, PrivilegedShellService::class.java))
-        .tag("siconnect.shell").version(2).daemon(false).processNameSuffix("privileged")
+        .tag("siconnect.shell").version(3).daemon(false).processNameSuffix("privileged")
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = IPrivilegedShell.Stub.asInterface(binder)
@@ -41,13 +41,8 @@ class ShizukuBackend(context: Context, private val scope: CoroutineScope) {
         status.value = "Binding UserService"
         runCatching { Shizuku.bindUserService(args, connection) }.onFailure { status.value = "Bind failed: ${it.javaClass.simpleName}" }
     }
-    suspend fun execute(request: ShellRequest): ShellResult = coroutineScope {
+    suspend fun execute(request: ShellRequest): ShellResult {
         val remote = service?.takeIf { available() } ?: throw CapabilityException("PRIVILEGE_REQUIRED", status.value)
-        val call = async(Dispatchers.IO) { remote.exec(AppJson.encodeToString(ShellRequest.serializer(), request)) }
-        try { AppJson.decodeFromString(ShellResult.serializer(), call.await()) }
-        catch (e: CancellationException) {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { remote.cancel(request.execId) } }
-            throw e
-        }
+        return ShellTransport.execute(remote,request)
     }
 }

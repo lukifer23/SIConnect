@@ -18,9 +18,9 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime, Android 0.3.0.** Grok Bot, Dots/ChatGPT and Hermes have operated the actual Fold through the existing hosted gateway. This pass adds explicit pairing identities, verified package metadata, shell/process recovery, paginated activity, managed files and time-window weather. Hermes also completed disposable file operations and delivered an exact reminder while the Fold remained locked with its screen off. Generic third-party app navigation still uses the shared screen. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [capability coverage](docs/capability-coverage.md).
+> **Status: working development runtime, Android 0.4.1.** Grok Bot, Dots/ChatGPT and Hermes have operated the actual Fold through the existing hosted gateway. This pass adds explicit pairing identities, verified package metadata, shell/process recovery, paginated activity, managed files and time-window weather. Hermes also completed disposable file operations and delivered an exact reminder while the Fold remained locked with its screen off. Generic third-party app navigation still uses the shared screen. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [capability coverage](docs/capability-coverage.md).
 
-A real sparse 24-hour hosted observation is underway; no completed soak or battery-life conclusion is claimed. Phone-only privileged bootstrap, native calendar/SAF/MediaStore integration, broad background lifecycle validation and shared-screen coordination remain unfinished.
+A real sparse 24-hour hosted observation is underway; no completed soak or battery-life conclusion is claimed. Pass 4 adds recoverable automation slots, wall-clock recurrence, cooperative screen leases, bounded Binder results, native Calendar Provider and owner-selected SAF tools. Calendar/SAF writes still require owner setup and physical verification. Phone-only privileged bootstrap, MediaStore integration and broad background lifecycle validation remain unfinished.
 
 ## Design principles
 

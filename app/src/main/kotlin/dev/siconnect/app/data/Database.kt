@@ -78,9 +78,22 @@ class SIConnectDb(context: Context) : SQLiteOpenHelper(context, "siconnect.db", 
             db.execSQL("CREATE INDEX requests_history ON requests(updated_at DESC,request_id DESC)")
             db.execSQL("CREATE INDEX agents_credential ON agents(token_sha256)")
         }
+        if (old < 5) {
+            db.execSQL("ALTER TABLE automations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE automation_runs ADD COLUMN automation_json TEXT")
+            db.execSQL("ALTER TABLE automation_runs ADD COLUMN skill_json TEXT")
+            db.execSQL("ALTER TABLE automation_runs ADD COLUMN error_code TEXT")
+            db.execSQL("ALTER TABLE automation_runs ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("CREATE INDEX automation_runs_reconcile ON automation_runs(state,automation_id)")
+            db.execSQL("CREATE TABLE ui_lease (singleton INTEGER PRIMARY KEY CHECK(singleton=1), json TEXT NOT NULL)")
+        }
+        if (old < 6) {
+            db.execSQL("CREATE TABLE document_roots (root_id TEXT PRIMARY KEY, tree_uri TEXT NOT NULL UNIQUE, label TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE notification_dedup (agent_id TEXT NOT NULL, key_hash TEXT NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(agent_id,key_hash))")
+        }
     }
 
-    companion object { const val VERSION = 4 }
+    companion object { const val VERSION = 6 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->

@@ -88,7 +88,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     }
                     override fun onMessage(ws: WebSocket,text: String) {
                         if(generation.get()!=epoch) return
-                        if(text.length>131072) { ws.close(1009,"Envelope too large"); return }
+                        if(text.toByteArray(Charsets.UTF_8).size>131072) { ws.close(1009,"Envelope too large"); return }
                         g.scope.launch {
                             if(generation.get()!=epoch) return@launch
                             runCatching {
@@ -108,7 +108,10 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     val correlation=msg.getValue("id").jsonPrimitive.content
                                     val token=msg.getValue("agentToken").jsonPrimitive.content
                                     val result=g.remoteInvoke(msg.getValue("request").jsonObject,token)
-                                    ws.send(buildJsonObject { put("type","result"); put("id",correlation); put("record",AppJson.encodeToJsonElement(RequestRecord.serializer(),result)) }.toString())
+                                    if(!ws.send(ResultEnvelope.result(correlation,result))) {
+                                        runCatching {g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.result_delivery_failed",requestId=result.requestId,traceId=result.traceId,agentId=result.agentId,deviceId=g.settings.deviceId,capabilityId=result.capabilityId,errorCode="RESULT_NOT_DELIVERED",executionStatus=result.state.name,detail="Stored request remains authoritative; retrieve the original request ID"))}
+                                        ws.cancel();done.complete(Unit)
+                                    }
                                 } else if(type=="cancel") {
                                     val token=msg.getValue("agentToken").jsonPrimitive.content
                                     val agent=g.authenticate(token) ?: throw SecurityException()
@@ -116,9 +119,11 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     if(g.requests.get(id)?.agentId==agent.grant.agentId) g.engine.cancel(id,agent.grant.agentId)
                                 }
                             }.onFailure { e ->
-                                g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.protocol_error",deviceId=g.settings.deviceId,errorCode=if(e is CapabilityException) e.code else e.javaClass.simpleName,detail="Incoming gateway message could not be processed"))
-                                val id=runCatching { Json.parseToJsonElement(text).jsonObject["id"]?.jsonPrimitive?.content }.getOrNull()
-                                ws.send(buildJsonObject { put("type","error"); put("id",id); put("code",if(e is CapabilityException) e.code else if(e is SecurityException) "UNAUTHORIZED" else "INVALID_REQUEST") }.toString())
+                                if(e is CancellationException) throw e
+                                val code=when(e) {is CapabilityException->e.code;is SecurityException->"UNAUTHORIZED";is IllegalArgumentException->"INVALID_REQUEST";else->"UNKNOWN_OUTCOME"}
+                                runCatching {g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.protocol_error",deviceId=g.settings.deviceId,errorCode=code,detail="Incoming gateway message could not be processed"))}
+                                val id=runCatching {Json.parseToJsonElement(text).jsonObject["id"]?.jsonPrimitive?.content}.getOrNull()
+                                ws.send(buildJsonObject {put("type","error");put("id",id);put("requestId",id);put("code",code)}.toString())
                             }
                         }
                     }

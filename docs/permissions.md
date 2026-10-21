@@ -20,10 +20,11 @@ A denied request stays denied. After changing permission, ask the bot to submit 
 | Package visibility | Manifest visibility declarations | Native package results follow Android visibility limits; privileged queries require the selected backend |
 | Privileged device control | Owner-authorized ADB bootstrap of bundled Binder service | No companion app required; actual UID 2000 verified; bootstrap required again after phone reboot |
 | Optional Shizuku | Separate installed service and its permission flow | Explicit alternative backend; never automatically substituted |
-| Calendar | Runtime access is exposed in advanced settings | Calendar capability family is not implemented; granting permission does not add tools |
+| Calendar | Native runtime read/write permission in Settings | Nine real tools; bot Calendar scope is independently selected; never automatically chooses the first calendar |
+| Selected folders | Android document-tree picker and persisted URI grant | Owner chooses each root; bots need documents scope; disconnect revokes the stored grant |
 | Battery/background settings | Android/Samsung settings | Owner guidance exists; uninterrupted idle execution and battery cost are not yet established |
 
-The app is sideloaded. Do not claim special access is an ordinary runtime dialog. Biometric approval and phone-only privileged pairing remain unfinished.
+The app is sideloaded. Do not claim special access is an ordinary runtime dialog. Strong-biometric/device-credential confirmation is implemented for approval and permission expansion; owner-interactive validation is pending. Phone-only privileged pairing remains unfinished.
 
 ## New bot, resume and reconnect
 
@@ -32,3 +33,7 @@ Pair another bot creates a fresh independent identity. Identical names do not sh
 Managed files is a separate owner-selected bot scope for the new `files.*` family. It covers SIConnect's own managed directory; it does not grant unrestricted phone storage or another app's private files. File mutations still follow risk/approval policy. New and existing agents do not gain this family automatically.
 
 Capabilities now distinguish background execution from actions that use the shared screen. Live runtime reports screen/keyguard/device-lock state. Hermes package inspection, disposable approved-shell file operations and exact reminder delivery were verified while locked/screen off. This does not make visible-app navigation a background action or guarantee Doze connectivity indefinitely.
+
+Pass 4 owner authentication uses Android's actual strong biometric or screen-lock credential prompt, with no cached approval. Cancelling leaves the request/grant unchanged. The callback binds the selected request/hash or agent action and engine authorization is rechecked afterward. Emergency stop, denial, revocation and permission reduction remain immediately available. Ordinary background calls under existing standing grants do not prompt again.
+
+Settings → Choose a folder opens Android's actual picker after owner authentication. A root handle grants no extra bot scope; permit Selected folders separately. Access revocation/provider disappearance is reported explicitly. Calendar and document tests require a deliberately designated disposable resource; do not select personal data just to prove writes.

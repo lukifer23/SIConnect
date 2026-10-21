@@ -39,9 +39,12 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
     register("reminders.create",objectSchema {
         string("title","Title",true,maxLength=150);string("text","Text",true,maxLength=1000)
         integer("fireAtMs","Delivery time in epoch milliseconds",true,min=1);boolean("exact","Precise time using AlarmManager; requires special access")
+        string("deduplicationKey","Optional stable per-agent reminder identity; changed arguments require explicit update",maxLength=200)
     },RiskClass.LOW_IMPACT,::availability) { a,ctx ->
-        val r=Reminder(ctx.requestId,a.long("fireAtMs",0),a.str("title"),a.str("text"),ctx.agentId,exact=exact(a))
-        AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.put(r))
+        val key=a["deduplicationKey"]?.jsonPrimitive?.content
+        val id=if(key==null) ctx.requestId else "dedup:"+Settings.sha256Hex(ctx.agentId+":"+key)
+        val r=Reminder(id,a.long("fireAtMs",0),a.str("title"),a.str("text"),ctx.agentId,exact=exact(a))
+        AppJson.encodeToJsonElement(Reminder.serializer(),if(key==null) g.reminders.put(r) else g.reminders.createDeduplicated(r))
     }
     register("reminders.update",objectSchema {
         string("id","Existing reminder ID",true,maxLength=200);integer("fireAtMs","Replacement delivery time",min=1)

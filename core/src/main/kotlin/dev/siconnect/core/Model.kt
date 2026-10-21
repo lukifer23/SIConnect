@@ -109,7 +109,9 @@ data class CapabilityResult(
 enum class VerificationStatus { NOT_APPLICABLE, VERIFIED, NOT_VERIFIED, FAILED }
 
 /** Thrown by capabilities for expected failures; carries a stable machine-readable code. */
-class CapabilityException(val code: String, message: String, val retryable: Boolean = false) : Exception(message)
+/** noSideEffects is asserted only when the backend rejects before attempting any external action. */
+class CapabilityException(val code: String, message: String, val retryable: Boolean = false,
+                          val noSideEffects: Boolean = false) : Exception(message)
 
 data class ExecutionContext(
     val requestId: String,

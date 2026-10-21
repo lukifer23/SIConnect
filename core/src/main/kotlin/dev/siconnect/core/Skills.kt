@@ -121,6 +121,10 @@ interface SkillRunStore {
 /** Persisted cursor plus stable child request IDs: completed steps are never resubmitted. */
 class DurableSkillRunner(private val engine: ExecutionEngine, private val store: SkillRunStore,
                          private val clock: Clock = Clock { System.currentTimeMillis() }) {
+    private val updates = kotlinx.coroutines.flow.MutableSharedFlow<SkillExecution>(extraBufferCapacity=64,
+        onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val runUpdates: kotlinx.coroutines.flow.SharedFlow<SkillExecution> = updates
+
     suspend fun start(def: SkillDefinition, inputs: JsonObject, ctx: ExecutionContext, origin: Origin): SkillExecution {
         require(def.timeoutMs in 1..86_400_000) { "Invalid skill timeout" }
         require(Schema.validate(def.inputs, inputs).isEmpty()) { "Invalid skill inputs" }
@@ -136,6 +140,7 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
     private fun save(r: SkillExecution, next: SkillExecution): SkillExecution {
         val n = next.copy(revision = r.revision + 1)
         check(store.update(n, r.revision)) { "Skill cursor changed concurrently" }
+        updates.tryEmit(n)
         return n
     }
 
@@ -145,11 +150,15 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
         val claim = r.copy(state = SkillState.RUNNING, revision = r.revision + 1)
         if (!store.update(claim, r.revision)) return requireNotNull(store.get(runId))
         r = claim
+        updates.tryEmit(r)
         try {
             while (r.cursor < r.definition.steps.size) {
                 // Cancellation wins over an in-flight cursor update.
                 if (store.get(runId)?.state == SkillState.CANCELLED) return requireNotNull(store.get(runId))
-                if (clock.nowMs() >= r.deadlineMs) {
+                // Reconcile an already-finished child even if result delivery was delayed past
+                // the deadline. The deadline still prevents starting any remaining step.
+                val completedChild=r.pendingRequestId?.let {engine.request(it)?.state?.isTerminal}==true
+                if (clock.nowMs() >= r.deadlineMs && !completedChild) {
                     r.pendingRequestId?.let { engine.cancel(it, "skill timeout") }
                     val unknown = r.pendingRequestId?.let { engine.request(it)?.state } == RequestState.UNKNOWN_OUTCOME
                     return save(r, r.copy(state = if (unknown) SkillState.UNKNOWN_OUTCOME else SkillState.FAILED, error = "SKILL_TIMEOUT"))
@@ -192,7 +201,12 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                 output = Templates.resolve(r.definition.output, values)))
         } catch (e: Exception) {
             if (store.get(runId)?.state == SkillState.CANCELLED) return requireNotNull(store.get(runId))
-            // A cursor persistence failure is never retried here: startup recovery inspects child requests.
+            // Yield ownership after cancellation/failure. Stable pending child IDs reconcile any
+            // already-started action; the caller must not replay it under a new identity.
+            val latest=store.get(runId)
+            if(latest?.state==SkillState.RUNNING && latest.revision==r.revision) {
+                runCatching {save(latest,latest.copy(state=SkillState.READY))}
+            }
             throw e
         }
     }
@@ -204,6 +218,7 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
             val n = r.copy(state = SkillState.CANCELLED, revision = r.revision + 1)
             if (store.update(n, r.revision)) {
                 r.pendingRequestId?.let { engine.cancel(it, "workflow cancelled") }
+                updates.tryEmit(n)
                 return n
             }
         }

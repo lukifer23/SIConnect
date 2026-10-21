@@ -26,7 +26,7 @@ Prefer typed tools and request status lookup over repeated screen capture. A com
 
 ## Package inspection output is truncated
 
-`apps.inspect_privileged` currently returns a bounded raw Android package dump. For packages with large resolver tables, truncation can occur before version and per-user state. `SUCCEEDED`/exit 0 means the dump command ran; it does not prove that omitted metadata was verified. A typed bounded result remains required. The real Dots install was verified using a bounded privileged package query and an independent user-0 check, rather than treating a truncated dump as complete evidence.
+`apps.inspect_privileged` currently returns a bounded raw Android package dump. For packages with large resolver tables, truncation can occur before version and per-user state. `SUCCEEDED`/exit 0 means the dump command ran; it does not prove that omitted metadata was verified. Use the implemented apps.inspect_detailed for typed bounded metadata. The real Dots install was verified using a bounded privileged package query and an independent user-0 check, rather than treating a truncated dump as complete evidence.
 
 Reopening an owner review must consume each incoming intent rather than permanently suppressing a request ID. The installed activity now supports closing and reopening the same stored action, including a terminal result. A bounded review layout keeps its action controls outside the scrollable text region. Instrumentation that inspects Compose dialogs should traverse their actual accessibility window children; framework find-by-text can omit the virtual nodes on the tested runtime.
 
@@ -37,3 +37,19 @@ After Android instrumentation finishes, relaunch SIConnect and wait for its ackn
 If an idle/locked request encounters DEVICE_REPLACED_UNKNOWN_OUTCOME, retain its request ID and use `requests_get` after reconnection. This was exercised through the actual Hermes connection: the original read had completed durably. Do not resend a message, installation or other mutation to discover its result.
 
 New managed-file tools are confined to SIConnect storage. A Files-family scope denial is separate from Android storage permissions. Weather LOCATION_REQUIRED means configure or explicitly supply a confirmed location; it does not select an arbitrary default. The owner-enabled gateway service now restores on APK replacement/boot; if Android blocks that start, inspect `gateway.recovery.blocked` and open SIConnect. Privileged reboot bootstrap remains a separate limitation.
+
+## Automation waiting or blocked
+
+AWAITING_APPROVAL has no finish time and retains the original slot/run. Approve or deny the stored child request, then inspect the same run. UNKNOWN_OUTCOME pauses future dispatch; reconcile the original action before re-enabling anything. BLOCKED includes dispatch or missing-skill errors; startup reconciliation repairs dispatch from SQLite without inventing execution success. Editing an active slot changes future configuration; its frozen skill/input snapshot remains the owned run.
+
+## Build cache was cleaned during development
+
+If Gradle/Kotlin references a removed transforms snapshot or reports missing known dependencies immediately after cache cleanup, stop the daemon with `./gradlew --stop` and rebuild with the pinned versions. Do not remove dependencies, change toolchains or disable lint to conceal stale cache references. Avoid deleting caches/logs while active builds/measurements are using them.
+
+## Large result or lost response
+
+Use the original request ID with requests_get. If too large, requests_output returns bounded base64 JSON-byte chunks with offsets/hash. If HTTP vanished before an ID arrived, requests_recent lists only this authenticated agent's recent metadata. Inspect and correlate the original action; never infer a clean failure or resend a mutation merely because response delivery failed.
+
+## Appearance and layout
+
+Settings offers System, Light and Dark. Android font scaling remains active. Dialog explanations scroll independently of action buttons, and the main content accounts for system bars/keyboard. Folded/unfolded and large-font verification remains a separate device check. Bridge health → Check now collects one native sample; it does not start continuous polling or establish battery drain.

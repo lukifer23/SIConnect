@@ -19,10 +19,6 @@ class PrivilegedBackend(private val settings: Settings, val shizuku: ShizukuBack
     suspend fun execute(req: ShellRequest): ShellResult {
         if(kind==BackendKind.SHIZUKU) return shizuku.execute(req)
         val service=DirectAuthority.service ?: throw CapabilityException("PRIVILEGE_REQUIRED",detail())
-        return coroutineScope {
-            val call=async(Dispatchers.IO) { service.exec(AppJson.encodeToString(ShellRequest.serializer(),req)) }
-            try { AppJson.decodeFromString(ShellResult.serializer(),call.await()) }
-            catch(e: CancellationException) { withContext(NonCancellable+Dispatchers.IO) { runCatching { service.cancel(req.execId) } }; throw e }
-        }
+        return ShellTransport.execute(service,req)
     }
 }

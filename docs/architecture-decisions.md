@@ -55,3 +55,9 @@ The gateway remains trusted: it handles the forwarding credential and plaintext 
 Display labels are presentation only. New pairings allocate random principals; renewal selects the persisted invitation principal; reconnect requires owner selection of one stable agent ID. Existing credentials/grants are preserved. Package installation verification uses two bounded framework PackageManager queries rather than inferring metadata from truncated dumps. Raw dumps and arbitrary shell remain available for intentional diagnostics.
 
 Gateway generations persist in socket attachments and Durable Object storage. In-flight routing remains bounded and transient; device SQLite remains the durable execution authority. A reconnect does not imply an old mutation should be submitted again.
+
+## Pass 4 — explicit recurrence and dispatch recovery
+
+Use a typed recurrence subset rather than an incomplete RRULE parser for Android automations. Existing interval records keep fixed epoch anchors. Wall-clock rules pin an IANA timezone, shift nonexistent times by the DST gap, select the earlier overlapping offset once, and skip invalid monthly dates. Device travel does not silently change the pinned timezone. AlarmManager cannot be part of SQLite's transaction; persisted configuration/run cursors are reconciled with OS dispatch after startup and explicit time changes.
+
+Use bounded reliable Binder PFD pipes for new shell replies, retaining the old transaction API with a smaller explicit capture budget. Keep text/base64 compatibility by default and expose explicit encoding for efficient callers. Large general request records use existing authenticated capability routing for chunk retrieval.

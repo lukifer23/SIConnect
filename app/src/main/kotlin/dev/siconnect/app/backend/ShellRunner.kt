@@ -11,13 +11,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 @Serializable
 data class ShellRequest(val execId: String, val argv: List<String>? = null, val command: String? = null,
     val cwd: String? = null, val env: Map<String, String> = emptyMap(), val stdin: String? = null,
-    val timeoutMs: Long = 30_000, val maxOutputBytes: Int = 128 * 1024)
+    val timeoutMs: Long = 30_000, val maxOutputBytes: Int = 128 * 1024,
+    val outputEncoding: String = "legacy")
 
 @Serializable
 data class ShellResult(val execId: String, val exitCode: Int?, val stdout: String, val stderr: String,
     val stdoutTruncated: Boolean, val stderrTruncated: Boolean, val timedOut: Boolean, val cancelled: Boolean,
     val durationMs: Long, val identity: String, val error: String? = null,
-    val stdoutBase64: String = "", val stderrBase64: String = "")
+    val stdoutBase64: String = "", val stderrBase64: String = "",
+    val outputEncoding: String = "legacy", val stdoutBytesCaptured: Int = 0, val stderrBytesCaptured: Int = 0,
+    val stdoutBytesObserved: Long = 0, val stderrBytesObserved: Long = 0,
+    val stdoutTextTruncated: Boolean = false, val stderrTextTruncated: Boolean = false,
+    val stdoutUtf8Valid: Boolean = true, val stderrUtf8Valid: Boolean = true)
 
 /** Each execution holds its session leader alive until its entire process group is cleaned up. */
 object ShellRunner {
@@ -82,8 +87,9 @@ object ShellRunner {
         return true
     }
     fun cancelAll() {running.keys.toList().forEach(::cancel)}
-    fun run(req:ShellRequest,identity:String):ShellResult {
+    fun run(req:ShellRequest,identity:String,envelopeBytes:Int=ShellOutput.MAX_RESULT_BYTES):ShellResult {
         require(req.execId.length in 1..200 && req.timeoutMs in 1..120_000 && req.maxOutputBytes in 1..131072)
+        require(req.outputEncoding in setOf("legacy","text","base64")) {"Unsupported output encoding"}
         require((req.argv!=null) xor (req.command!=null)) {"Choose argv or command"}
         require(req.env.size<=32 && req.env.all {(k,v)-> k.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && v.length<=4096 && '\u0000' !in v})
         require((req.stdin?.length ?: 0)<=65536)
@@ -140,17 +146,30 @@ object ShellRunner {
             process?.let {runCatching {it.inputStream.close()};runCatching {it.errorStream.close()}}
             running.remove(req.execId,owned);cancelledBeforeStart.remove(req.execId);capacity.release()
         }
+        val stdout=out?.snapshot() ?: ByteArray(0);val stderr=err?.snapshot() ?: ByteArray(0)
+        val budget=ShellOutput.textBudget(stdout.size,stderr.size,req.outputEncoding,envelopeBytes)
+        val stdoutView=ShellOutput.representation(stdout,req.outputEncoding,budget)
+        val stderrView=ShellOutput.representation(stderr,req.outputEncoding,budget)
         return ShellResult(req.execId,if(timedOut || owned.cancelled.get()) null else exitCode,
-            out?.text() ?: "",err?.text() ?: "",out?.truncated ?: false,err?.truncated ?: false,timedOut,owned.cancelled.get(),
-            (System.nanoTime()-start)/1_000_000,identity,failure,out?.base64() ?: "",err?.base64() ?: "")
+            stdoutView.text,stderrView.text,(out?.truncated ?: false) || stdoutView.textTruncated,
+            (err?.truncated ?: false) || stderrView.textTruncated,timedOut,owned.cancelled.get(),
+            (System.nanoTime()-start)/1_000_000,identity,failure,stdoutView.base64,stderrView.base64,
+            req.outputEncoding,stdout.size,stderr.size,out?.observed ?: 0,err?.observed ?: 0,
+            stdoutView.textTruncated,stderrView.textTruncated,stdoutView.validUtf8,stderrView.validUtf8)
     }
     private class Collector(private val input:InputStream,private val limit:Int,private val marker:String?=null,
                             private val completed:CompletableFuture<Int>?=null):Thread("siconnect-shell-io") {
         private val bytes=ByteArrayOutputStream()
         @Volatile var truncated=false
+        @Volatile var observed=0L
         init {isDaemon=true}
         private fun append(b:ByteArray,n:Int=b.size) = synchronized(bytes) {
+            observed+=n
             val room=limit-bytes.size();if(room>0) bytes.write(b,0,minOf(n,room));if(n>room) truncated=true
+        }
+        private fun appendByte(b:Int) = synchronized(bytes) {
+            observed++
+            if(bytes.size()<limit) bytes.write(b) else truncated=true
         }
         override fun run() {
             try {input.use {stream->
@@ -167,17 +186,16 @@ object ShellRunner {
                         else if(size>prefix.size && b==10) {
                             val code=pending.toString("UTF-8").removePrefix(marker).toIntOrNull()
                             if(code!=null && code in 0..255) {completed!!.complete(code);pending.reset()}
-                            else {append(pending.toByteArray());pending.reset();append(byteArrayOf(b.toByte()))}
+                            else {if(pending.size()>0) append(pending.toByteArray());pending.reset();appendByte(b)}
                         } else {
-                            append(pending.toByteArray());pending.reset()
-                            if(b==prefix[0].toInt()) pending.write(b) else append(byteArrayOf(b.toByte()))
+                            if(pending.size()>0) append(pending.toByteArray());pending.reset()
+                            if(b==prefix[0].toInt()) pending.write(b) else appendByte(b)
                         }
                     }
                     if(pending.size()>0) append(pending.toByteArray())
                 }
             }} catch(_:IOException) {} finally {if(completed?.isDone==false) completed.completeExceptionally(EOFException("Supervisor pipe ended before exit status"))}
         }
-        fun text():String=synchronized(bytes) {bytes.toString("UTF-8")}
-        fun base64():String=synchronized(bytes) {android.util.Base64.encodeToString(bytes.toByteArray(),android.util.Base64.NO_WRAP)}
+        fun snapshot():ByteArray=synchronized(bytes) {bytes.toByteArray()}
     }
 }

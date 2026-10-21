@@ -46,6 +46,10 @@ class Settings(context: Context) {
         prefs.edit().putString("device_id", it).apply()
     }
 
+    private val _appearance=MutableStateFlow(prefs.getString("appearance","SYSTEM")?.takeIf {it in setOf("SYSTEM","LIGHT","DARK")} ?: "SYSTEM")
+    val appearance:StateFlow<String> = _appearance
+    fun setAppearance(value:String) {require(value in setOf("SYSTEM","LIGHT","DARK"));prefs.edit().putString("appearance",value).apply();_appearance.value=value}
+
     var privilegeBackend: String
         get() = prefs.getString("privilege_backend", "direct")!!
         set(v) { require(v in setOf("direct", "shizuku")); prefs.edit().putString("privilege_backend", v).apply() }

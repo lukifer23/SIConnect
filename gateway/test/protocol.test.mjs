@@ -18,6 +18,34 @@ const base='http://127.0.0.1:8788';
 let dir, worker, socket;
 let executions=0;
 let output='';
+const storedResults=new Map();
+let cancellationMessages=0;
+const capabilities=()=>[
+  {descriptor:{id:'test.echo',version:1,title:'Fixture echo',description:'Test-only protocol peer',risk:'READ_ONLY',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}},availability:'IMPLEMENTED'},
+  {descriptor:{id:'test.write',version:1,title:'Fixture write',description:'Test-only disposable memory record',risk:'LOW_IMPACT',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}},availability:'IMPLEMENTED'},
+  {descriptor:{id:'requests.get',version:1,title:'Fixture stored request',description:'Test-only result reconciliation',risk:'READ_ONLY',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},availability:'IMPLEMENTED'}
+];
+function respond(peer) {
+  peer.on('message',raw=>{
+    const m=JSON.parse(raw);
+    if(m.type==='cancel') cancellationMessages++;
+    if(m.type!=='invoke') return;
+    executions++;
+    const output=m.request.capabilityId==='requests.get'?storedResults.get(m.request.arguments.requestId):{value:m.request.arguments.value};
+    const record={requestId:m.id,state:'SUCCEEDED',result:{output,backend:'TEST_ONLY'}};
+    if(m.request.capabilityId==='test.write') storedResults.set(m.id,record);
+    if(m.request.arguments.value==='lose-after-commit') {peer.close();return;}
+    if(m.request.arguments.value==='hold-after-commit') return;
+    peer.send(JSON.stringify({type:'result',id:m.id,record}));
+  });
+}
+async function reconnectPeer() {
+  const peer=new WebSocket(base.replace('http:','ws:')+'/device/test-device',{headers:{Authorization:`Bearer ${device}`}});
+  await new Promise((resolve,reject)=>{peer.once('open',resolve);peer.once('error',reject)});
+  const ack=new Promise(resolve=>peer.on('message',raw=>{if(JSON.parse(raw).type==='hello_ack') resolve()}));
+  peer.send(JSON.stringify({type:'hello',capabilities:capabilities()}));
+  await ack;respond(peer);socket=peer;return peer;
+}
 before(async()=>{
   dir=await mkdtemp(join(tmpdir(),'siconnect-protocol-'));
   const config={name:'siconnect-protocol-test',main:resolve('src/index.ts'),compatibility_date:'2026-10-20',compatibility_flags:['nodejs_compat','global_fetch_strictly_public'],
@@ -34,8 +62,8 @@ before(async()=>{
   assert.equal(registered.status,200);
   socket=new WebSocket(base.replace('http:','ws:')+'/device/test-device',{headers:{Authorization:`Bearer ${device}`}});
   await new Promise((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject)});
-  socket.send(JSON.stringify({type:'hello',deviceId:'test-device',capabilities:[{descriptor:{id:'test.echo',version:1,title:'Fixture echo',description:'Test-only protocol peer',risk:'READ_ONLY',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}},availability:'IMPLEMENTED'}]}));
-  socket.on('message',raw=>{const m=JSON.parse(raw);if(m.type==='invoke'){executions++;socket.send(JSON.stringify({type:'result',id:m.id,record:{requestId:m.request.requestId,state:'SUCCEEDED',result:{output:{value:m.request.arguments.value},backend:'TEST_ONLY'}}}))}});
+  socket.send(JSON.stringify({type:'hello',deviceId:'test-device',capabilities:capabilities()}));
+  respond(socket);
   await new Promise(r=>setTimeout(r,100));
 });
 after(async()=>{socket?.close();worker?.kill('SIGTERM');if(dir) await rm(dir,{recursive:true,force:true});});
@@ -58,7 +86,7 @@ test('official v1 client initializes 2025-era, lists and calls structured tools'
 test('official v2 client discovers statelessly and handles concurrent calls',async()=>{
   const c=await client();
   try {
-    assert.equal((await c.listTools()).tools.length,1);
+    assert.equal((await c.listTools()).tools.length,3);
     const before=executions;
     const values=await Promise.all([1,2,3,4].map(n=>c.callTool({name:'test_echo',arguments:{value:String(n)}})));
     assert.equal(executions-before,4);assert.equal(values[2].structuredContent.result.output.value,'3');
@@ -126,12 +154,58 @@ test('authenticated socket replacement rejects old in-flight ownership and requi
   assert.equal(result.structuredContent.recovery.doNotResubmitMutation,true);
   assert.equal((await (await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).json()).online,false);
   const ack=new Promise(resolve=>next.on('message',raw=>{if(JSON.parse(raw).type==='hello_ack') resolve()}));
-  next.send(JSON.stringify({type:'hello',capabilities:[{descriptor:{id:'test.echo',version:1,title:'Fixture echo',description:'Test-only peer',risk:'READ_ONLY',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}},availability:'IMPLEMENTED'}]}));
-  await ack;
-  next.on('message',raw=>{const m=JSON.parse(raw);if(m.type==='invoke') next.send(JSON.stringify({type:'result',id:m.id,record:{requestId:m.id,state:'SUCCEEDED',result:{output:{value:m.request.arguments.value}}}}))});
+  next.send(JSON.stringify({type:'hello',capabilities:capabilities()}));
+  await ack;respond(next);
   socket=next;
   assert.equal((await c.callTool({name:'test_echo',arguments:{value:'new-session'}})).structuredContent.result.output.value,'new-session');
   await c.close();
+});
+test('client transport abort does not issue execution cancellation after fixture commit', {timeout:5000}, async()=>{
+  const c=await client();const controller=new AbortController();const peer=socket;
+  const received=new Promise(resolve=>{
+    const listener=raw=>{const m=JSON.parse(raw);if(m.type==='invoke' && m.request.arguments.value==='hold-after-commit'){peer.off('message',listener);resolve(m)}};
+    peer.on('message',listener);
+  });
+  try {
+    const call=c.callTool({name:'test_write',arguments:{value:'hold-after-commit'}},{signal:controller.signal});
+    const rejected=assert.rejects(call);
+    const invocation=await received;controller.abort();await rejected;
+    await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(cancellationMessages,0);
+    peer.send(JSON.stringify({type:'result',id:invocation.id,record:storedResults.get(invocation.id)}));
+    const lookup=await c.callTool({name:'requests_get',arguments:{requestId:invocation.id}});
+    assert.equal(lookup.structuredContent.result.output.state,'SUCCEEDED');
+    assert.equal(lookup.structuredContent.result.output.requestId,invocation.id);
+  } finally {await c.close()}
+});
+test('lost mutation result reconciles the original stored record without a second write',async()=>{
+  const c=await client();const before=storedResults.size;
+  try {
+    const result=await c.callTool({name:'test_write',arguments:{value:'lose-after-commit'}});
+    assert.equal(result.isError,true);
+    assert.equal(result.structuredContent.error,'DEVICE_DISCONNECTED_UNKNOWN_OUTCOME');
+    const original=result.structuredContent.requestId;
+    assert.equal(result.structuredContent.recovery.arguments.requestId,original);
+    assert.equal(storedResults.size,before+1);
+    await reconnectPeer();
+    const lookup=await c.callTool({name:'requests_get',arguments:{requestId:original}});
+    assert.equal(lookup.structuredContent.result.output.requestId,original);
+    assert.equal(lookup.structuredContent.result.output.state,'SUCCEEDED');
+    assert.equal(storedResults.size,before+1);
+    assert.equal(cancellationMessages,0);
+  } finally {await c.close()}
+});
+test('device output error preserves original request ID and bounded retrieval guidance',async()=>{
+  const c=await client();const peer=socket;
+  peer.removeAllListeners('message');
+  peer.on('message',raw=>{const m=JSON.parse(raw);if(m.type==='invoke') peer.send(JSON.stringify({type:'error',id:m.id,requestId:m.id,code:'RESULT_TOO_LARGE',executionState:'SUCCEEDED',recovery:{tool:'requests_output',arguments:{requestId:m.id,offset:0},doNotResubmitMutation:true}}))});
+  try {
+    const result=await c.callTool({name:'test_echo',arguments:{value:'oversize'}});
+    assert.equal(result.isError,true);assert.equal(result.structuredContent.error,'RESULT_TOO_LARGE');
+    assert.equal(result.structuredContent.executionState,'SUCCEEDED');
+    assert.equal(result.structuredContent.recovery.tool,'requests_output');
+    assert.equal(result.structuredContent.recovery.arguments.requestId,result.structuredContent.requestId);
+  } finally {peer.removeAllListeners('message');respond(peer);await c.close()}
 });
 test('device disconnect is reported as offline rather than synthetic success',async()=>{
   socket.close();await new Promise(r=>setTimeout(r,100));

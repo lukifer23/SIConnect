@@ -34,6 +34,10 @@ private fun native(out: JsonElement) = CapabilityResult(out, BackendKind.NATIVE,
 
 fun registerCapabilities(g: RuntimeGraph) {
     registerFileCapabilities(g)
+    registerDocumentCapabilities(g)
+    registerCalendarCapabilities(g)
+    registerUiCapabilities(g.registry,g.ui)
+    g.registry.register(RequestOutputCapability(g))
     g.registry.register(PackageInspectionCapability(g.context))
     val c = g.context
     fun op(id: String, title: String, schema: JsonObject = objectSchema(), risk: RiskClass = RiskClass.READ_ONLY,
@@ -48,6 +52,11 @@ fun registerCapabilities(g: RuntimeGraph) {
         if(record.agentId!=ctx.agentId) throw CapabilityException("POLICY_DENIED", "Request belongs to another agent")
         AppJson.encodeToJsonElement(RequestRecord.serializer(),record)
     }
+    op("requests.recent", "Find your recent original request IDs after a lost response", objectSchema {
+        integer("limit","Maximum recent metadata rows",min=1,max=50)
+    }) {a,ctx -> JsonArray(g.requests.historyPage(limit=a.long("limit",20).toInt(),agentId=ctx.agentId).map {r->buildJsonObject {
+        put("requestId",r.requestId);put("capabilityId",r.capabilityId);put("state",r.state.name);put("createdAtMs",r.createdAtMs);put("updatedAtMs",r.updatedAtMs)
+    }}) }
     op("requests.cancel", "Cancel your own request", objectSchema { string("requestId", "Request ID", true, maxLength=200) }, RiskClass.LOW_IMPACT) { a,ctx ->
         val record=g.requests.get(a.str("requestId")) ?: throw CapabilityException("NOT_FOUND", "Unknown request")
         if(record.agentId!=ctx.agentId) throw CapabilityException("POLICY_DENIED", "Request belongs to another agent")
@@ -78,6 +87,11 @@ fun registerCapabilities(g: RuntimeGraph) {
             put("appUidRxBytes",android.net.TrafficStats.getUidRxBytes(Process.myUid()))
             put("appUidTxBytes",android.net.TrafficStats.getUidTxBytes(Process.myUid()))
             put("databaseBytes",dbFile.length());put("databaseWalBytes",java.io.File(dbFile.path+"-wal").length())
+            try {
+                val storage=c.getSystemService(android.app.usage.StorageStatsManager::class.java)
+                    .queryStatsForUid(c.applicationInfo.storageUuid,Process.myUid())
+                put("appCodeBytes",storage.appBytes);put("appDataBytes",storage.dataBytes);put("appCacheBytes",storage.cacheBytes)
+            } catch(e:Exception) {put("storageStatsError",e.javaClass.simpleName)}
             put("screenInteractive",c.getSystemService(PowerManager::class.java).isInteractive)
             put("keyguardLocked",c.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
             put("deviceLocked",c.getSystemService(KeyguardManager::class.java).isDeviceLocked)
@@ -108,18 +122,18 @@ fun registerCapabilities(g: RuntimeGraph) {
         val p = (if (Build.VERSION.SDK_INT >= 33) c.packageManager.getPackageInfo(a.str("package"), PackageManager.PackageInfoFlags.of(0)) else c.packageManager.getPackageInfo(a.str("package"), 0))
         buildJsonObject { put("packageName", p.packageName); put("versionName", p.versionName); put("versionCode", p.longVersionCode); put("enabled", p.applicationInfo?.enabled) }
     }
-    op("apps.launch", "Launch package", objectSchema { string("package", "Package name", true, maxLength=200) }, RiskClass.LOW_IMPACT) { a, _ ->
+    op("apps.launch", "Launch package", objectSchema { string("package", "Package name", true, maxLength=200); string("leaseId", "Optional owned UI lease", maxLength=100) }, RiskClass.LOW_IMPACT) { a, ctx ->
         val i = c.packageManager.getLaunchIntentForPackage(a.str("package")) ?: throw CapabilityException("NO_LAUNCH_INTENT", "Package has no launch activity")
-        c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); buildJsonObject { put("dispatched", true) }
+        g.ui.withScreen(ctx,a.str("package"),(a["leaseId"] as? JsonPrimitive)?.content) {
+            c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); buildJsonObject { put("dispatched", true);put("verifiedForeground",false) }
+        }
     }
     op("alarms.next", "Next owner alarm") { _, _ -> val alarm = c.getSystemService(AlarmManager::class.java).nextAlarmClock
         buildJsonObject { put("triggerAtMs", alarm?.triggerTime?.let(::JsonPrimitive) ?: JsonNull); put("visible", alarm != null) } }
     val notifyAvailable = { if (c.getSystemService(NotificationManager::class.java).areNotificationsEnabled()) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED }
-    op("notifications.post", "Post SIConnect notification", objectSchema { string("title", "Title", true, maxLength=150); string("text", "Body", true, maxLength=1000) }, RiskClass.LOW_IMPACT,
+    op("notifications.post", "Post SIConnect notification", objectSchema { string("title", "Title", true, maxLength=150); string("text", "Body", true, maxLength=1000); string("deduplicationKey","Optional per-agent stable alert key; never repeats a previously claimed post",maxLength=200) }, RiskClass.LOW_IMPACT,
         notifyAvailable, { "Allow SIConnect notifications in Android settings" }) { a, ctx ->
-        val n = Notification.Builder(c, "messages").setSmallIcon(R.drawable.ic_stat).setContentTitle(a.str("title")).setContentText(a.str("text")).setAutoCancel(true).build()
-        c.getSystemService(NotificationManager::class.java).notify(ctx.requestId.hashCode(), n)
-        buildJsonObject { put("notificationId", ctx.requestId.hashCode()) }
+        postNotification(g,a,ctx)
     }
     val listenerAvailable = { if (NotificationCaptureService.instance != null) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED }
     op("notifications.list", "Active notification metadata", available = listenerAvailable, detail = { "Enable notification listener access; notification bodies are excluded" }) { _, _ ->
@@ -151,10 +165,11 @@ fun registerCapabilities(g: RuntimeGraph) {
         string("command", "Exact command; arbitrary commands require approval by default", true, maxLength=16000)
         string("cwd", "Working directory", maxLength=1000); obj("env", "Environment variables")
         string("stdin", "UTF-8 input", maxLength=65536); integer("timeoutMs", "Timeout", min=1, max=120000)
-        integer("maxOutputBytes", "Per-stream output limit; base64 preserves binary", min=1, max=131072)
+        integer("maxOutputBytes", "Per-stream captured-byte limit; output is drained and previews may be bounded further for transport", min=1, max=131072)
+        string("outputEncoding", "legacy preserves small text and base64 fields; text avoids binary duplication; base64 preserves exact captured bytes", enum=listOf("legacy","text","base64"))
     }) { a -> ShellRequest("", command=a.str("command"), cwd=(a["cwd"] as? JsonPrimitive)?.content,
         env=(a["env"] as? JsonObject)?.mapValues { it.value.jsonPrimitive.content } ?: emptyMap(),
-        stdin=(a["stdin"] as? JsonPrimitive)?.content, timeoutMs=a.long("timeoutMs", 30000), maxOutputBytes=a.long("maxOutputBytes", 65536).toInt()) }
+        stdin=(a["stdin"] as? JsonPrimitive)?.content, timeoutMs=a.long("timeoutMs", 30000), maxOutputBytes=a.long("maxOutputBytes", 65536).toInt(), outputEncoding=(a["outputEncoding"] as? JsonPrimitive)?.content ?: "legacy") }
     shell("shell.identity", "Actual privileged identity", objectSchema(), RiskClass.READ_ONLY) { ShellRequest("", argv=listOf("/system/bin/id")) }
     shell("shell.health", "Privileged process health", objectSchema(), RiskClass.READ_ONLY) { ShellRequest("", argv=listOf("/system/bin/id")) }
     shell("apps.list_privileged", "Packages in Android user 0", objectSchema(), RiskClass.READ_ONLY) { ShellRequest("", argv=listOf("/system/bin/pm", "list", "packages", "--user", "0")) }

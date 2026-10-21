@@ -36,6 +36,7 @@ class RuntimeGraph(val context: Context) {
     val registry = CapabilityRegistry()
     val shizuku = ShizukuBackend(context, scope)
     val privileged = PrivilegedBackend(settings, shizuku)
+    val ui = dev.siconnect.app.coordination.UiLeaseCoordinator(dev.siconnect.app.coordination.SqlUiLeaseStore(db),events,settings.deviceId)
     val approvals = AndroidApprovals(context)
     val engine = ExecutionEngine(settings.deviceId, registry, PolicyEngine(), requests, events, approvals,
         agents, { settings.controls.value }, scope)
@@ -57,15 +58,18 @@ class RuntimeGraph(val context: Context) {
             NotificationChannel("connection", "Remote connection", NotificationManager.IMPORTANCE_LOW)))
         registerCapabilities(this)
         registerAutomationCapabilities(this)
+        dev.siconnect.app.capabilities.registerWeatherCommuteCapabilities(this)
         ready = scope.async {
             check(db.readableDatabase.rawQuery("PRAGMA quick_check", null).use { it.moveToFirst() && it.getString(0) == "ok" }) { "SQLite integrity check failed; database preserved for recovery" }
             if (agents.get("local-owner") == null) agents.put(AgentRecord(AgentGrant("local-owner", "Device owner", scopes=listOf("*"), autoApproveUpTo=RiskClass.LOW_IMPACT), "", System.currentTimeMillis(), tokenHint="local only"))
             if (agents.get("local-automation") == null) agents.put(AgentRecord(AgentGrant("local-automation", "Local automations", scopes=listOf("device.*", "alarms.next", "weather.forecast", "notifications.post"), autoApproveUpTo=RiskClass.LOW_IMPACT), "", System.currentTimeMillis(), tokenHint="scheduler only"))
+            ui.recover()
             privileged.refresh()
             engine.recover(); runner.recover()
             if (skills.get("diagnostics.snapshot") == null) skills.install(SkillDefinition("diagnostics.snapshot", 1, "Real native device snapshot", steps=listOf(
                 SkillStep("status", "device.status"), SkillStep("battery", "device.battery"), SkillStep("memory", "device.memory")),
                 output=buildJsonObject { put("device", JsonPrimitive("\${steps.status.output}")); put("battery", JsonPrimitive("\${steps.battery.output}")); put("memory", JsonPrimitive("\${steps.memory.output}")) }))
+            if(skills.get("weather.commute_check")==null) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
             events.trim(System.currentTimeMillis() - settings.eventRetentionDays * 86_400_000L)
             scheduler.restore()
             reminders.restore()
@@ -74,13 +78,20 @@ class RuntimeGraph(val context: Context) {
         }
         scope.launch {
             ready.await()
+            runner.runUpdates.collect {runCatching {scheduler.reconcileRun(it.runId)}.onFailure {android.util.Log.e("SIConnect","Automation reconciliation failed: ${it.javaClass.simpleName}")} }
+        }
+        scope.launch {
+            ready.await()
             engine.recordUpdates.collect { record ->
-                if (record.state.isTerminal) skillRuns.active().filter { it.pendingRequestId == record.requestId }.forEach { runner.resume(it.runId) }
+                if (record.state.isTerminal) {
+                    reminders.onRequestUpdated(record)
+                    skillRuns.active().filter { it.pendingRequestId == record.requestId }.forEach {runCatching {runner.resume(it.runId)}}
+                }
             }
         }
         scope.launch {
             ready.await()
-            while (isActive) { delay(60_000); engine.expireStale(); skillRuns.active().filter { it.deadlineMs <= System.currentTimeMillis() }.forEach { runner.resume(it.runId) } }
+            while (isActive) { delay(60_000); scheduler.reconcileActive(); engine.expireStale(); skillRuns.active().filter { it.deadlineMs <= System.currentTimeMillis() || it.pendingRequestId?.let {id->requests.get(id)?.state?.isTerminal}==true }.forEach {runCatching {runner.resume(it.runId)}} }
         }
         scope.launch {ready.await();privileged.directStatus.collect {gateway.refreshCatalog()}}
         scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}
@@ -160,6 +171,17 @@ class RuntimeGraph(val context: Context) {
             events.emit(Event(System.currentTimeMillis(),eventType=if(always) "grant.shell_broad.allowed" else "grant.standing.cleared",agentId=agentId,deviceId=settings.deviceId,detail="Local owner changed persistent shell permission"))
             w.setTransactionSuccessful()
         } finally { w.endTransaction() }
+    }
+    /** Explicit owner action, only low-impact native weather calculations/reminders; no shell authority. */
+    fun enableWeatherAutomationFromOwner() {
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val a=requireNotNull(agents.get("local-automation"))
+            val needed=listOf("weather.commute_plan","weather.commute_decide","reminders.create")
+            agents.put(a.copy(grant=a.grant.copy(scopes=(a.grant.scopes+needed).distinct())))
+            events.emit(Event(System.currentTimeMillis(),eventType="automation.weather.authorized",agentId="local-automation",detail="Local owner enabled native commute checks and reminder scheduling"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
     }
     /** Owner-selected capability family; every invocation still passes the shared policy engine. */
     fun setCapabilityFamilyFromOwner(agentId:String,family:String,enabled:Boolean) {

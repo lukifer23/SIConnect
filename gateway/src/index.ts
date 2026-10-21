@@ -9,6 +9,7 @@ import type { Invitation, PhoneAuthorization } from './pairing.js';
 type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
 type SocketState = { epoch: string; ready: boolean };
 type Pending = { epoch: string; resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
+const encoder = new TextEncoder();
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 
 export class DeviceBridge extends DurableObject<Env> {
@@ -66,19 +67,23 @@ export class DeviceBridge extends DurableObject<Env> {
       if (this.pending.has(id)) return json({ error: 'REQUEST_IN_FLIGHT' }, 409);
       const expiry = Number(body.request.expiresAtMs);
       if (!Number.isFinite(expiry) || expiry <= Date.now()) return json({ error: 'EXPIRED' }, 408);
+      // Transport cancellation is not execution cancellation: the action may already
+      // have committed. Only the authenticated requests.cancel tool asks the device
+      // to stop work. A client must reconcile the original record after losing HTTP.
+      let dispatched = false;
       const aborted = () => {
-        const entry = this.pending.get(id);
-        if (entry) {
-          socket.send(JSON.stringify({ type: 'cancel', requestId: id, agentToken: body.agentToken }));
-          entry.reject(new Error('CLIENT_CANCELLED'));
-        }
+        this.pending.get(id)?.reject(new Error(dispatched ? 'CLIENT_DISCONNECTED_UNKNOWN_OUTCOME' : 'CLIENT_DISCONNECTED_NOT_DISPATCHED'));
       };
       try {
         const result = await new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('GATEWAY_TIMEOUT_UNKNOWN_OUTCOME')), Math.min(expiry - Date.now(), 130_000));
           this.pending.set(id, { epoch, resolve, reject, timer });
           request.signal.addEventListener('abort', aborted, { once: true });
-          socket.send(JSON.stringify({ type: 'invoke', id, agentToken: body.agentToken, request: body.request }));
+          if (request.signal.aborted) { aborted(); return; }
+          const envelope = JSON.stringify({ type: 'invoke', id, agentToken: body.agentToken, request: body.request });
+          if (encoder.encode(envelope).byteLength > 131072) { reject(new Error('REQUEST_TOO_LARGE_NOT_DISPATCHED')); return; }
+          socket.send(envelope);
+          dispatched = true;
         });
         return json(result);
       } catch (error) { return json({ error: (error as Error).message, requestId: id, recovery: { tool: 'requests_get', arguments: { requestId: id }, doNotResubmitMutation: true } }, 504); }
@@ -92,7 +97,7 @@ export class DeviceBridge extends DurableObject<Env> {
     return json({ error: 'NOT_FOUND' }, 404);
   }
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== 'string' || message.length > 1_048_576) { socket.close(1009, 'Envelope too large'); return; }
+    if (typeof message !== 'string' || encoder.encode(message).byteLength > 1_048_576) { socket.close(1009, 'Envelope too large'); return; }
     try {
       const attachment = socket.deserializeAttachment() as SocketState | null;
       if (!attachment?.epoch || attachment.epoch !== await this.ctx.storage.get<string>('socketEpoch')) { socket.close(1008, 'Stale device session'); return; }
@@ -126,7 +131,12 @@ export class DeviceBridge extends DurableObject<Env> {
         const pending = this.pending.get(body.id);
         if (pending?.epoch === attachment.epoch) {
           if (body.type === 'result' && body.record?.requestId !== body.id) throw new Error('Result correlation mismatch');
-          pending.resolve(body.type === 'result' ? body.record : { error: body.code });
+          if (body.type === 'error' && body.requestId && body.requestId !== body.id) throw new Error('Error correlation mismatch');
+          pending.resolve(body.type === 'result' ? body.record : {
+            error: typeof body.code === 'string' ? body.code : 'DEVICE_ERROR', requestId: body.id,
+            ...(typeof body.executionState === 'string' ? { executionState: body.executionState } : {}),
+            recovery: body.recovery ?? { tool: 'requests_get', arguments: { requestId: body.id }, doNotResubmitMutation: true }
+          });
         }
       }
     } catch { socket.close(1008, 'Invalid device envelope'); }

@@ -86,3 +86,11 @@ Pass 3 device sockets carry persisted generation/readiness attachments. In-fligh
 SQLite v4 adds history-order and credential-hash indexes without modifying existing records. Production request creation/state transition and their audit insert now share a database transaction; record update notifications are emitted after commit. A failed audit insert cannot leave an EXECUTING record before backend registration. Persistent storage failure after external side effects can still prevent recording a definitive outcome; do not infer safe failure from missing output.
 
 InteractionMode is registry metadata independent of privilege: BACKGROUND, SCREEN, MAY_OPEN_SCREEN, UNSPECIFIED. Native app launch is explicitly SCREEN; arbitrary approved shell may use the screen. Device runtime reports actual interactive/keyguard/device-lock state. Owner-enabled package-update recovery starts the connection service without opening MainActivity. Managed-file paths are canonical and confined to the app-owned managed directory; no universal storage permission is implied.
+
+## Pass 4 runtime additions
+
+Automation configuration is independent from a slot's frozen skill/input snapshot. A unique `(automation_id, slot_at)` record owns each run; its skill cursor and child requests remain authoritative after interruption. Skill-state events trigger scheduler reconciliation, with startup and bounded periodic reconciliation for missed updates. Nonterminal approval waits have no finish timestamp. Slot completion and next-cursor advancement share SQLite; Android dispatch is acknowledged/reconciled outside that transaction.
+
+A single SQLite screen lease covers cooperative structured screen actions. It is not a global registry lock and cannot isolate arbitrary privileged shell. Binder result data uses reliable PFD streams rather than large reply transactions. Device SQLite keeps the original result; authenticated chunks and recent metadata provide bounded recovery through the same engine.
+
+Calendar Provider, managed files and SAF documents are distinct backend surfaces under the same registry/policy/engine. SAF roots are locally selected persisted URI grants, never caller-created raw URI authority. The commute workflow is an ordinary SkillDefinition and generic automation, not a second weather scheduler.
