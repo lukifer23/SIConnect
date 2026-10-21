@@ -15,7 +15,7 @@
 | Threat | Mitigation |
 | --- | --- |
 | Unauthorized MCP client | MCP requires a validated OAuth access token or configured private bearer. The phone independently validates the forwarded credential and current grant, revocation and expiry. |
-| Stolen agent credential | Per-agent grants limit the damage. Credentials can be revoked or rotated on the phone. The emergency stop denies new remote work. Gateway bearer expiration is configured independently. |
+| Stolen agent credential | Per-agent grants limit the damage. Credentials can be revoked on the phone. Controlled per-agent credential rotation is not yet exposed. The emergency stop denies new remote work. Gateway bearer expiration is configured independently. |
 | Replay | Request IDs are unique, idempotency keys deduplicate retries, every request has an expiry, and expired requests are rejected even if delivered late. |
 | Gateway compromise | The gateway can forge an agent's identity, but only for agents that exist on the device, and only within those agents' grants. It cannot approve anything: approvals happen on the device. Plaintext is visible to the gateway, so we do not claim end-to-end encryption. |
 | Approval substitution | An approval is bound to the SHA-256 of capability, version and canonical arguments. Execution uses only the stored arguments, so a different command needs a new approval. |
@@ -52,6 +52,6 @@ The maintained OAuth provider enforces the authorization-code/PKCE and resource-
 
 Owner changes to Apps-family scope and revocation are SQLite transactions with audit events. They are not remote tools. An app-scope grant permits policy evaluation of app operations; it does not remove high/critical risk approval requirements. A broad shell grant deliberately permits arbitrary shell within the chosen critical policy, so narrower structured-tool scopes do not make broad shell harmless.
 
-A blocked-request permission link uses the stored request's authenticated agent ID. Same-name clients are displayed separately; no name-based grant migration or automatic grant copying occurs. Pairing retries can reuse an existing stored credential and preserve its grant, while existing distinct clients remain distinct. Keystore-wrapped credential persistence is committed before the invitation is published.
+A blocked-request permission link uses the stored request's authenticated agent ID. Same-name clients are displayed separately; no name-based grant migration or automatic grant copying occurs. New pairings never search by label. Reconnection reuses a credential only after explicit selection of its stable agent ID; renewal targets the persisted invitation ID. Existing distinct clients remain distinct. Keystore-wrapped credential persistence is committed before the invitation is published.
 
 Owner approval uses immutable PendingIntents and non-exported components. The pending notification is ongoing until resolution/expiry, but Android controls the transient heads-up banner duration. The in-app review stays open until explicit Close, displays expiry/resolved state and still requires engine revalidation. Notification failure never means approval. Biometric authentication for these choices is not yet implemented.

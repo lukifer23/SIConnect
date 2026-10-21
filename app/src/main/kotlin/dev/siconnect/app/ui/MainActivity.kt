@@ -107,6 +107,9 @@ open class MainActivity: ComponentActivity() {
             }
         }
         LaunchedEffect(inspected) { inspectedEvents=withContext(Dispatchers.IO) { inspected?.let { g.events.query(requestId=it.requestId,limit=30) } ?: emptyList() } }
+        LaunchedEffect(pairDialog) { if(pairDialog) withContext(Dispatchers.IO) {
+            g.ready.await();pairCode=g.settings.pendingPairing();pairCode?.let {pairName=it.label}
+        } }
         LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null; pairedBot=key?.let(g::authenticate) } }
         fun copyForBot(value: String, secret: Boolean) {
             val clip=android.content.ClipData.newPlainText(if(secret) "SIConnect bot key" else "SIConnect MCP address",value)
@@ -229,6 +232,10 @@ open class MainActivity: ComponentActivity() {
             Text("Permissions are saved on this phone. This screen stays open until you tap Done. Ask your bot to retry after changing a permission. Previously denied requests stay denied.")
             if(bot.grant.shellMode==ShellMode.BROAD) OutlinedButton(onClick={manageBotId=null;work {g.setShellPermissionFromOwner(bot.grant.agentId,false)}}) {Text("Ask before device control")}
             else OutlinedButton(onClick={manageBotId=null;allowBot=bot}) {Text("Always allow device control…")}
+            if(bot.grant.agentId.startsWith("bot_")) OutlinedButton(onClick={work {
+                pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label
+                manageBotId=null;pairError="";pairDialog=true
+            }},enabled=!busy) {Text("Reconnect this bot")}
             TextButton(onClick={manageBotId=null;work {g.revokeAgentFromOwner(bot.grant.agentId)}}) {Text("Revoke this bot",color=MaterialTheme.colorScheme.error)}
         }},confirmButton={TextButton(onClick={manageBotId=null}) {Text("Done")}}) }
         if(controlHelp) AlertDialog(onDismissRequest={controlHelp=false},title={Text("Enable full device control")},
@@ -262,19 +269,31 @@ open class MainActivity: ComponentActivity() {
             withContext(Dispatchers.Main) { startForegroundService(Intent(this@MainActivity,ConnectionService::class.java)) }
             setup=false; note="Connecting your phone…"
         }},enabled=connectionCode.isNotBlank()) {Text("Connect")}},dismissButton={TextButton(onClick={setup=false}) {Text("Close")}})
-        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text("Pair a bot")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair a new bot" else "Continue pairing ${pairCode!!.label}")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
             if(pairCode==null) {
-                Text("Give this bot a name. It gets its own permission and activity history.")
+                Text("Creates a separate bot with its own permissions, even when another bot has the same name. To preserve an existing bot’s permissions, open its card and choose Reconnect this bot.")
                 OutlinedTextField(pairName,{pairName=it.take(60)},label={Text("Bot name")},singleLine=true)
-                Text("Then add SIConnect’s MCP address in your bot, choose OAuth, and enter the temporary code on the SIConnect sign-in page.")
+                Text("Add SIConnect’s MCP address in your bot, choose OAuth, and enter the temporary code on the SIConnect sign-in page.")
             } else {
+                Text("Bot ID: …${pairCode!!.agentId.takeLast(8)}")
                 Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(pairCode!!.expiresAt))}. Works once. Paste it only into your gateway’s SIConnect sign-in page.")
                 Text(pairCode!!.code,style=MaterialTheme.typography.bodySmall)
-                Text("Sensitive actions still ask you first. Tap this bot under Your bots to manage its permissions.")
+                Text("Closing this screen preserves the invitation. Renewing an expired code preserves this exact bot and its permissions.")
+                TextButton(onClick={work {g.pairing.dismissInvitation(pairCode!!.agentId);pairCode=null;pairError=""}},enabled=!busy) {Text("Dismiss invitation (published code expires normally)")}
             }
-        }},confirmButton={Button(onClick={if(pairCode==null) work { pairError="";try { pairCode=g.pairing.create(pairName) } catch(e:Exception) { pairError=if(e is TimeoutCancellationException) "Gateway did not save the code. Check connection and try again." else e.message ?: "Could not create pairing code" } } else if(pairCode!!.expiresAt<=System.currentTimeMillis()) {pairCode=null;pairError="Code expired. Create a new code."} else copyForBot(pairCode!!.code,true)},enabled=!busy && pairName.isNotBlank()) {Text(if(pairCode==null) "Create pairing code" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
+        }},confirmButton={Button(onClick={work {
+            pairError=""
+            try {
+                val current=pairCode
+                pairCode=if(current==null) g.pairing.create(pairName) else g.pairing.renew(current.agentId)
+                if(current!=null) withContext(Dispatchers.Main) {copyForBot(requireNotNull(pairCode).code,true)}
+            } catch(e:Exception) {
+                pairCode=g.settings.pendingPairing()
+                pairError=if(e is TimeoutCancellationException) "Gateway did not confirm the code. Check connection and retry this invitation." else e.message ?: "Could not prepare invitation"
+            }
+        }},enabled=!busy && pairName.isNotBlank()) {Text(if(pairCode==null) "Create new bot" else if(pairCode!!.expiresAt<=System.currentTimeMillis()) "Renew and copy code" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
         review?.let { r -> OwnerApprovalDialog(r,busy=busy,error=note,onClose={reviewId=null;review=null},onDeny={work {review=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
             work { review=g.approveFromOwner(r.requestId,r.argsHash,always,broad) }
         }) }

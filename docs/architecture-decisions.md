@@ -49,3 +49,9 @@ The gateway remains trusted: it handles the forwarding credential and plaintext 
 - `specialUse` with a declared subtype is the honest type for a sideloaded app.
 - The service is optional: the owner can disable remote connectivity, and local automations keep running through AlarmManager and WorkManager.
 - Whether a foreground service keeps network access in Doze is ambiguous in the documentation. It will be measured on the device, and a battery-optimization exemption is requested explicitly.
+
+## ADR-008: Explicit identity selection and bounded package inspection
+
+Display labels are presentation only. New pairings allocate random principals; renewal selects the persisted invitation principal; reconnect requires owner selection of one stable agent ID. Existing credentials/grants are preserved. Package installation verification uses two bounded framework PackageManager queries rather than inferring metadata from truncated dumps. Raw dumps and arbitrary shell remain available for intentional diagnostics.
+
+Gateway generations persist in socket attachments and Durable Object storage. In-flight routing remains bounded and transient; device SQLite remains the durable execution authority. A reconnect does not imply an old mutation should be submitted again.

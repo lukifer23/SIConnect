@@ -33,6 +33,7 @@ fun JsonObject.long(key: String, default: Long): Long = (get(key) as? JsonPrimit
 private fun native(out: JsonElement) = CapabilityResult(out, BackendKind.NATIVE, "uid=${Process.myUid()}")
 
 fun registerCapabilities(g: RuntimeGraph) {
+    g.registry.register(PackageInspectionCapability(g.context))
     val c = g.context
     fun op(id: String, title: String, schema: JsonObject = objectSchema(), risk: RiskClass = RiskClass.READ_ONLY,
            available: () -> Availability = { Availability.IMPLEMENTED }, detail: () -> String? = { null },
@@ -55,6 +56,23 @@ fun registerCapabilities(g: RuntimeGraph) {
         put("model", Build.MODEL); put("manufacturer", Build.MANUFACTURER); put("android", Build.VERSION.RELEASE)
         put("api", Build.VERSION.SDK_INT); put("deviceId", g.settings.deviceId); put("uptimeMs", SystemClock.elapsedRealtime())
     } }
+    op("device.runtime", "SIConnect process and connection resource measurements") { _, _ ->
+        val memory=Debug.MemoryInfo().also(Debug::getMemoryInfo)
+        val dbFile=c.getDatabasePath("siconnect.db")
+        buildJsonObject {
+            put("observedAtMs",System.currentTimeMillis());put("elapsedRealtimeMs",SystemClock.elapsedRealtime())
+            put("processStartedAtElapsedMs",Process.getStartElapsedRealtime());put("processCpuMs",Process.getElapsedCpuTime())
+            put("appPssKiB",memory.totalPss);put("appPrivateDirtyKiB",memory.totalPrivateDirty)
+            put("appUidRxBytes",android.net.TrafficStats.getUidRxBytes(Process.myUid()))
+            put("appUidTxBytes",android.net.TrafficStats.getUidTxBytes(Process.myUid()))
+            put("databaseBytes",dbFile.length());put("databaseWalBytes",java.io.File(dbFile.path+"-wal").length())
+            put("screenInteractive",c.getSystemService(PowerManager::class.java).isInteractive)
+            put("charging",c.getSystemService(BatteryManager::class.java).isCharging)
+            put("gatewayState",g.gateway.state.value.name);put("privilegedBackend",g.privileged.kind.name)
+            put("privilegedAvailable",g.privileged.available())
+            put("gatewayConnectEvents",g.db.readableDatabase.rawQuery("SELECT count(*) FROM events WHERE event_type='gateway.connected'",null).use {it.moveToFirst();it.getLong(0)})
+        }
+    }
     op("device.battery", "Battery") { _, _ ->
         val b = c.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val manager = c.getSystemService(BatteryManager::class.java)

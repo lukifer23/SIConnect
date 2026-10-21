@@ -80,3 +80,5 @@ SQLiteOpenHelper v3 stores requests, transitions, events, agents, skills, skill 
 - `gateway` shares only the wire contract with the device. It never imports device code.
 
 Home activity uses a bounded SQLite column projection. Large argument/output JSON is decoded only for an explicitly opened result; pending approval and recent app-denial records remain separately loaded for their owner review. The view subscribes to runtime changes rather than polling full history. Existing detailed management remains available.
+
+Pass 3 device sockets carry persisted generation/readiness attachments. In-flight gateway requests are owned by their accepting socket generation; replacement/disconnect returns an explicit uncertain outcome and original request lookup guidance. This does not provide a durable gateway result cache or offline mutation queue. Socket state survives hibernation through attachments/storage; pending promises do not. Interrupted reminders have durable reconciliation work and consult the original device execution record before any delivery attempt.

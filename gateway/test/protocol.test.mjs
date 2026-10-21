@@ -111,6 +111,28 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   assert.equal((await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'})).status,400);
   const old=tokens.access_token;assert.equal(await auth(provider,{serverUrl:base+'/mcp'}),'AUTHORIZED');assert.notEqual(tokens.access_token,old);
 });
+test('authenticated socket replacement rejects old in-flight ownership and requires hello',async()=>{
+  const old=socket;
+  const c=await client();
+  // Temporarily suppress the test peer response, leaving one real SDK call in flight.
+  old.removeAllListeners('message');
+  const received=new Promise(resolve=>old.on('message',raw=>{const m=JSON.parse(raw);if(m.type==='invoke') resolve(m)}));
+  const call=c.callTool({name:'test_echo',arguments:{value:'replacement-test'}});
+  await received;
+  const next=new WebSocket(base.replace('http:','ws:')+'/device/test-device',{headers:{Authorization:`Bearer ${device}`}});
+  await new Promise((resolve,reject)=>{next.once('open',resolve);next.once('error',reject)});
+  const result=await call;
+  assert.equal(result.isError,true);assert.equal(result.structuredContent.error,'DEVICE_REPLACED_UNKNOWN_OUTCOME');
+  assert.equal(result.structuredContent.recovery.doNotResubmitMutation,true);
+  assert.equal((await (await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).json()).online,false);
+  const ack=new Promise(resolve=>next.on('message',raw=>{if(JSON.parse(raw).type==='hello_ack') resolve()}));
+  next.send(JSON.stringify({type:'hello',capabilities:[{descriptor:{id:'test.echo',version:1,title:'Fixture echo',description:'Test-only peer',risk:'READ_ONLY',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}},availability:'IMPLEMENTED'}]}));
+  await ack;
+  next.on('message',raw=>{const m=JSON.parse(raw);if(m.type==='invoke') next.send(JSON.stringify({type:'result',id:m.id,record:{requestId:m.id,state:'SUCCEEDED',result:{output:{value:m.request.arguments.value}}}}))});
+  socket=next;
+  assert.equal((await c.callTool({name:'test_echo',arguments:{value:'new-session'}})).structuredContent.result.output.value,'new-session');
+  await c.close();
+});
 test('device disconnect is reported as offline rather than synthetic success',async()=>{
   socket.close();await new Promise(r=>setTimeout(r,100));
   const c=await client();

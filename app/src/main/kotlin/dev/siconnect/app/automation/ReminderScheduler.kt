@@ -80,31 +80,47 @@ class ReminderScheduler(private val g: RuntimeGraph) {
                     else runCatching { schedule(r);if(r.state=="BLOCKED") transition(r,r.copy(state="SCHEDULED",error=null)) }
                         .onFailure { transition(r,r.copy(state="BLOCKED",error=it.javaClass.simpleName)) }
                 }
-                "FIRING" -> transition(r,r.copy(state=g.requests.get("reminder:${r.id}")?.state?.takeIf { it.isTerminal }?.name ?: "UNKNOWN_OUTCOME",error="Interrupted during delivery"))
+                "FIRING" -> {
+                    val record=g.requests.get("reminder:${r.id}")
+                    if(record?.state?.isTerminal==true) transition(r,r.copy(state=record.state.name,error=record.errorCode))
+                    else enqueueDelivery(g.context,r.id)
+                }
             }
         }
     }
     suspend fun deliver(id: String): RequestState? {
         g.ready.await()
         val r=get(id) ?: return null
-        if(r.state!="SCHEDULED" || r.fireAtMs>System.currentTimeMillis()+1000) return null
-        val claimed=transition(r,r.copy(state="FIRING")) ?: return null
-        val result=g.engine.submit(InvocationRequest(requestId="reminder:$id",agentId="local-automation",capabilityId="notifications.post",
+        if(r.state !in setOf("SCHEDULED","FIRING")) return when(r.state) {
+            "BLOCKED" -> RequestState.FAILED
+            else -> RequestState.entries.firstOrNull { it.name==r.state }
+        }
+        if(r.fireAtMs>System.currentTimeMillis()+1000) return null
+        val claimed=if(r.state=="FIRING") r else transition(r,r.copy(state="FIRING")) ?: return null
+        // Reuse the same durable request. A lost delivery result must never create another post.
+        val result=g.requests.get("reminder:$id") ?: g.engine.submit(InvocationRequest(requestId="reminder:$id",agentId="local-automation",capabilityId="notifications.post",
             arguments=buildJsonObject { put("title",r.title);put("text",r.text) }),Origin.LOCAL_AUTOMATION)
-        transition(claimed,claimed.copy(state=result.state.name,error=result.errorCode))
+        if(result.state.isTerminal || result.state==RequestState.AWAITING_APPROVAL)
+            transition(claimed,claimed.copy(state=result.state.name,error=result.errorCode))
         return result.state
     }
 }
 class ReminderWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
     override suspend fun doWork(): Result {
         val state=applicationContext.graph.reminders.deliver(inputData.getString("id") ?: return Result.failure())
-        return if(state==null || state==RequestState.SUCCEEDED) Result.success() else Result.failure()
+        return when {
+            state==RequestState.SUCCEEDED || state==RequestState.CANCELLED -> Result.success()
+            state==null || !state.isTerminal -> if(runAttemptCount<8) Result.retry() else Result.failure()
+            else -> Result.failure()
+        }
     }
 }
 /** Exact delivery posts the notification immediately through the engine; it is not deferred into WorkManager. */
 class ReminderAlarmReceiver: BroadcastReceiver() {
     override fun onReceive(c: Context,intent: Intent) {
         val id=intent.getStringExtra("id") ?: return
+        // Persist a watchdog before depending on runtime initialization or the receiver window.
+        enqueueDelivery(c,id)
         val pending=goAsync()
         val wake=c.getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK,"SIConnect:reminder")
         wake.acquire(10_000)
@@ -114,4 +130,12 @@ class ReminderAlarmReceiver: BroadcastReceiver() {
             finally { if(wake.isHeld) wake.release();pending.finish() }
         }
     }
+}
+
+/** Survives receiver timeout and ordinary process death. It only reconciles the original request. */
+private fun enqueueDelivery(c:Context,id:String) {
+    val work=OneTimeWorkRequestBuilder<ReminderWorker>().setInputData(workDataOf("id" to id))
+        .setInitialDelay(10,TimeUnit.SECONDS)
+        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build()
+    WorkManager.getInstance(c).enqueueUniqueWork("reminder-delivery:$id",ExistingWorkPolicy.KEEP,work)
 }

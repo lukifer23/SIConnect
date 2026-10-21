@@ -111,17 +111,19 @@ class Settings(context: Context) {
 
     private fun getSecret(name: String): String? {
         val blob = secretPrefs.getString(name, null)?.let { Base64.decode(it, Base64.NO_WRAP) } ?: return null
-        return runCatching {
+        // A damaged credential must never be mistaken for an absent one and regenerated.
+        return try {
+            require(blob.size>=28) { "Encrypted credential is truncated" }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, blob, 0, 12))
             String(cipher.doFinal(blob, 12, blob.size - 12))
-        }.getOrNull()
+        } catch(e:Exception) { throw IllegalStateException("Stored credential could not be decrypted; existing data was preserved",e) }
     }
 
-    private fun key(): SecretKey {
+    private fun key(): SecretKey = synchronized(KEY_LOCK) {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+        KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
             init(KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -130,6 +132,7 @@ class Settings(context: Context) {
     }
 
     companion object {
+        private val KEY_LOCK = Any()
         private const val KEY_ALIAS = "siconnect_secrets_v1"
         private val rng = SecureRandom()
 

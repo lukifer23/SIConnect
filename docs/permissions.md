@@ -24,3 +24,7 @@ A denied request stays denied. After changing permission, ask the bot to submit 
 | Battery/background settings | Android/Samsung settings | Owner guidance exists; uninterrupted idle execution and battery cost are not yet established |
 
 The app is sideloaded. Do not claim special access is an ordinary runtime dialog. Biometric approval and phone-only privileged pairing remain unfinished.
+
+## New bot, resume and reconnect
+
+Pair another bot creates a fresh independent identity. Identical names do not share credentials or grants. A pending invitation survives closing the screen and ordinary process death; reopening resumes that exact invitation. Renew and copy code replaces an expired invitation while preserving its intended agent. Dismissing an invitation leaves its identity intact and a previously published code expires normally. Select an existing bot card's Reconnect this bot action only when you intentionally want another connection to that same identity and grant. Revoked or expired identities cannot reconnect. The legacy separately configured bearer connection retains its existing setup.

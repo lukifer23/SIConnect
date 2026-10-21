@@ -15,8 +15,14 @@ class AuthorityProvider: ContentProvider() {
         require(method=="attach")
         android.util.Log.i("SIConnectAuthority","Authenticated shell attachment received")
         val binder=requireNotNull(extras?.getBinder("service"))
-        DirectAuthority.service=IPrivilegedShell.Stub.asInterface(binder)
-        binder.linkToDeath({ DirectAuthority.service=null; DirectAuthority.status.value="Built-in privileged service stopped" },0)
+        synchronized(DirectAuthority) { DirectAuthority.service=IPrivilegedShell.Stub.asInterface(binder) }
+        binder.linkToDeath({
+            synchronized(DirectAuthority) {
+                if(DirectAuthority.service?.asBinder()===binder) {
+                    DirectAuthority.service=null; DirectAuthority.status.value="Built-in privileged service stopped"
+                }
+            }
+        },0)
         DirectAuthority.status.value="Connected; checking execution identity"
         android.util.Log.i("SIConnectAuthority","Authority stored")
         return Bundle().apply { putBinder("owner",owner) }

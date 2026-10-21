@@ -37,10 +37,11 @@ class GatewayConnection(private val g: RuntimeGraph) {
             withTimeout(8_000) { ack.await() }
         } finally { pairingAcks.remove(hash,ack) }
     }
+    private val generation=java.util.concurrent.atomic.AtomicLong()
     private var loop: Job?=null
     @Volatile private var socket: WebSocket?=null
-    fun stop() { loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; state.value=ConnectionState.DISABLED }
-    fun start() {
+    @Synchronized fun stop() { generation.incrementAndGet(); loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; state.value=ConnectionState.DISABLED }
+    @Synchronized fun start() {
         if(loop?.isActive==true) return
         loop=g.scope.launch {
             g.ready.await(); var attempt=0
@@ -63,10 +64,12 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     else if(registration!=409) { state.value=ConnectionState.AUTH_FAILED; detail.value="Gateway enrollment failed: $registration"; break }
                 }
                 val done=CompletableDeferred<Unit>()
+                val epoch=generation.incrementAndGet()
                 val request=Request.Builder().url(base.replaceFirst("https://","wss://").replaceFirst("http://","ws://")+"/device/${g.settings.deviceId}")
                     .header("Authorization","Bearer ${g.settings.deviceSecret()}").build()
-                socket=client.newWebSocket(request,object:WebSocketListener() {
+                val connectedSocket=client.newWebSocket(request,object:WebSocketListener() {
                     override fun onOpen(ws: WebSocket,r: Response) {
+                        if(generation.get()!=epoch) {ws.cancel();done.complete(Unit);return}
                         state.value=ConnectionState.AUTHENTICATING
                         ws.send(buildJsonObject { put("type","hello"); put("deviceId",g.settings.deviceId)
                             put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses())) }.toString())
@@ -76,8 +79,10 @@ class GatewayConnection(private val g: RuntimeGraph) {
                         }
                     }
                     override fun onMessage(ws: WebSocket,text: String) {
+                        if(generation.get()!=epoch) return
                         if(text.length>131072) { ws.close(1009,"Envelope too large"); return }
                         g.scope.launch {
+                            if(generation.get()!=epoch) return@launch
                             runCatching {
                                 val msg=Json.parseToJsonElement(text).jsonObject
                                 val type=msg["type"]?.jsonPrimitive?.content
@@ -108,14 +113,25 @@ class GatewayConnection(private val g: RuntimeGraph) {
                             }
                         }
                     }
+                    override fun onClosing(ws:WebSocket,code:Int,reason:String) {
+                        ws.close(code,reason);done.complete(Unit)
+                    }
                     override fun onClosed(ws: WebSocket,code: Int,reason: String) { done.complete(Unit) }
                     override fun onFailure(ws: WebSocket,t: Throwable,r: Response?) {
-                        detail.value="Connection failed: ${r?.code ?: t.javaClass.simpleName}"
-                        if(r?.code==401 || r?.code==403) state.value=ConnectionState.AUTH_FAILED
+                        if(generation.get()==epoch) {
+                            detail.value="Connection failed: ${r?.code ?: t.javaClass.simpleName}"
+                            if(r?.code==401 || r?.code==403) state.value=ConnectionState.AUTH_FAILED
+                        }
                         done.complete(Unit)
                     }
                 })
-                try { done.await() } finally { socket?.cancel() }
+                socket=connectedSocket
+                try { done.await() } finally {
+                    connectedSocket.cancel()
+                    if(socket===connectedSocket) socket=null
+                    pairingAcks.values.forEach {it.completeExceptionally(IllegalStateException("Gateway connection lost; retry the same invitation"))}
+                }
+                ensureActive()
                 if(state.value==ConnectionState.AUTH_FAILED) break
                 state.value=ConnectionState.BACKOFF
                 val cap=minOf(300_000L,1000L shl attempt.coerceAtMost(8)); attempt++

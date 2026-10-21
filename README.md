@@ -20,6 +20,8 @@ The phone opens the connection outward, so the phone does not need a public addr
 
 > **Status: working development runtime.** The APK is installed on a Galaxy Z Fold 7. Grok Bot, Dots/ChatGPT and Hermes have made real hosted MCP calls to the phone. Native diagnostics, privileged shell, owner approvals, durable requests, reminders and deterministic skills are integrated. Dots OAuth is connected; the owner corrected its app-management grant after an exact-identity UI fix. Dots’ official-app install, owner-approved uninstall and self-email tests were verified. Phone-only privileged bootstrap and extended lifecycle/battery validation remain unfinished. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [troubleshooting](docs/troubleshooting.md).
 
+Pass 3 hardening adds explicit identity-based reconnection, structured package inspection, bounded shell ownership/cancellation and durable reminder reconciliation. See the current [engineering checkpoint](docs/project-status.md) for tested behavior and remaining work.
+
 ## Design principles
 
 - **One policy engine.** Native API calls, shell commands, skills and automations all go through the same authorization path (`core/.../Policy.kt`).

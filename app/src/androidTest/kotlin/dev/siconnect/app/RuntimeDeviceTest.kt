@@ -81,6 +81,100 @@ class RuntimeDeviceTest {
             Assert.assertNull("Resolved review must not offer another approval",node("Allow once"))
         }
     }
+    @Test fun pairingSameNamesRemainIndependentAndRenewPreservesIdentity()=runBlocking {
+        Assume.assumeTrue("Do not disturb an owner's invitation",g.settings.pendingPairing()==null)
+        Assume.assumeTrue("Owner has remote connectivity enabled",g.settings.gateway.value.enabled)
+        g.context.startForegroundService(Intent(g.context,dev.siconnect.app.transport.ConnectionService::class.java))
+        withTimeout(15000) {while(g.gateway.state.value!=dev.siconnect.app.transport.ConnectionState.ONLINE) delay(50)}
+        val created=mutableListOf<String>()
+        try {
+            val first=g.pairing.create("Same-label regression fixture");created+=first.agentId
+            val firstRecord=requireNotNull(g.agents.get(first.agentId))
+            g.agents.put(firstRecord.copy(grant=firstRecord.grant.copy(scopes=listOf("device.*"))))
+            val expired=first.copy(expiresAt=System.currentTimeMillis()-1)
+            g.settings.setPendingPairing(expired)
+            val renewed=g.pairing.renew(first.agentId)
+            Assert.assertEquals(first.agentId,renewed.agentId)
+            Assert.assertNotEquals(first.code,renewed.code)
+            Assert.assertEquals(listOf("device.*"),g.agents.get(first.agentId)!!.grant.scopes)
+            g.pairing.dismissInvitation(first.agentId)
+            val second=g.pairing.create(first.label);created+=second.agentId
+            Assert.assertNotEquals(first.agentId,second.agentId)
+            Assert.assertNotEquals(g.agents.get(first.agentId)!!.tokenSha256,g.agents.get(second.agentId)!!.tokenSha256)
+            Assert.assertNotEquals(listOf("device.*"),g.agents.get(second.agentId)!!.grant.scopes)
+            g.pairing.dismissInvitation(second.agentId)
+            val reconnected=g.pairing.reconnect(first.agentId)
+            Assert.assertEquals(first.agentId,reconnected.agentId)
+            Assert.assertEquals(listOf("device.*"),g.agents.get(first.agentId)!!.grant.scopes)
+        } finally {
+            val pending=g.settings.pendingPairing()
+            if(pending?.agentId in created) g.settings.setPendingPairing(null)
+            created.forEach {id -> g.agents.delete(id);g.context.getSharedPreferences("siconnect_secrets",0).edit().remove("paired_"+id).commit()}
+        }
+    }
+    @Test fun reminderReconcilesInterruptedClaimWithoutDuplicatePost()=runBlocking {
+        val id="physical-reconcile:"+UUID.randomUUID()
+        val row=dev.siconnect.app.capabilities.Reminder(id,System.currentTimeMillis()-100,"SIConnect reconciliation test","Disposable delivery fixture","local-owner",state="FIRING")
+        JsonTable(g.db,"reminders","reminder_id").upsert(android.content.ContentValues().apply {
+            put("reminder_id",id);put("fire_at",row.fireAtMs);put("state",row.state);put("created_by",row.agentId);put("revision",0)
+            put("json",AppJson.encodeToString(dev.siconnect.app.capabilities.Reminder.serializer(),row))
+        })
+        try {
+            Assert.assertEquals(RequestState.SUCCEEDED,g.reminders.deliver(id))
+            val record=requireNotNull(g.requests.get("reminder:$id"))
+            Assert.assertEquals(RequestState.SUCCEEDED,g.reminders.deliver(id))
+            Assert.assertEquals(record,g.requests.get("reminder:$id"))
+            Assert.assertEquals("SUCCEEDED",g.reminders.get(id)!!.state)
+        } finally {
+            g.context.getSystemService(android.app.NotificationManager::class.java).cancel("reminder:$id".hashCode())
+            g.db.writableDatabase.delete("reminders","reminder_id=?",arrayOf(id))
+        }
+    }
+    @Test fun structuredPackageInspectionUsesRealPackageManager()=runBlocking {
+        suspend fun inspect(name:String)=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="apps.inspect_detailed",arguments=buildJsonObject {put("packageName",name);put("user",0)}),Origin.LOCAL_OWNER)
+        for(name in listOf(g.context.packageName,"android")) {
+            val r=inspect(name)
+            Assert.assertEquals(r.errorMessage,RequestState.SUCCEEDED,r.state)
+            Assert.assertEquals(VerificationStatus.VERIFIED,r.result!!.verification)
+            val out=r.result!!.output.jsonObject
+            Assert.assertTrue(out.getValue("installed").jsonPrimitive.boolean)
+            Assert.assertEquals(name,out.getValue("packageName").jsonPrimitive.content)
+            Assert.assertEquals(0,out.getValue("user").jsonPrimitive.int)
+            Assert.assertTrue(out.getValue("versionCode").jsonPrimitive.long>=0)
+        }
+        val missing=inspect("dev.siconnect.missing.p"+UUID.randomUUID().toString().replace("-",""))
+        Assert.assertEquals(RequestState.SUCCEEDED,missing.state)
+        Assert.assertFalse(missing.result!!.output.jsonObject.getValue("installed").jsonPrimitive.boolean)
+        val invalid=inspect("invalid;id")
+        Assert.assertEquals(RequestState.FAILED,invalid.state)
+        Assert.assertEquals("INVALID_PACKAGE",invalid.errorCode)
+    }
+    @Test fun shellSupervisorBoundsTimeoutOutputAndOwnedCancellation()=runBlocking {
+        authority()
+        suspend fun command(text:String,timeout:Long=3000,limit:Int=8192)=g.privileged.execute(dev.siconnect.app.backend.ShellRequest("shell-fixture:"+UUID.randomUUID(),command=text,timeoutMs=timeout,maxOutputBytes=limit))
+        val normal=command("printf 'hello'; printf 'error' >&2; exit 7")
+        Assert.assertEquals(7,normal.exitCode);Assert.assertEquals("hello",normal.stdout);Assert.assertEquals("error",normal.stderr)
+        val input=g.privileged.execute(dev.siconnect.app.backend.ShellRequest("shell-fixture:"+UUID.randomUUID(),command="cat; printf '%s' \"${'$'}SICONNECT_TEST\"",stdin="input",env=mapOf("SICONNECT_TEST" to "environment"),cwd="/data/local/tmp"))
+        Assert.assertEquals("inputenvironment",input.stdout)
+        val large=command("yes abc | head -c 20000")
+        Assert.assertTrue(large.stdoutTruncated);Assert.assertEquals(8192,large.stdout.toByteArray().size)
+        val binary=command("printf '\\000\\377'")
+        Assert.assertEquals("AP8=",binary.stdoutBase64)
+        val timeout=command("trap '' TERM; sleep 10",200)
+        Assert.assertTrue(timeout.timedOut);Assert.assertTrue(timeout.durationMs<2500)
+        val early="shell-fixture:"+UUID.randomUUID()
+        Assert.assertTrue(dev.siconnect.app.privileged.DirectAuthority.service!!.cancel(early))
+        val cancelledBeforeStart=g.privileged.execute(dev.siconnect.app.backend.ShellRequest(early,command="printf must-not-run"))
+        Assert.assertTrue(cancelledBeforeStart.cancelled);Assert.assertEquals("",cancelledBeforeStart.stdout)
+        val path="/data/local/tmp/siconnect-shell-"+UUID.randomUUID()+".pids"
+        try {
+            val job=async {command("sleep 20 & child=${'$'}!; printf '%s %s' ${'$'}${'$'} ${'$'}child > $path; wait",30000)}
+            withTimeout(5000) {while(command("test -s $path").exitCode!=0) delay(30)}
+            job.cancelAndJoin()
+            val check=command("read parent child < $path; kill -0 \"${'$'}parent\" 2>/dev/null && exit 1; kill -0 \"${'$'}child\" 2>/dev/null && exit 2; exit 0")
+            Assert.assertEquals(check.stdout+check.stderr,0,check.exitCode)
+        } finally {command("rm -f $path")}
+    }
     @Test fun bundledBackendActuallyRunsAsShell()=runBlocking {
         authority()
         g.settings.privilegeBackend="direct"; g.privileged.refresh()

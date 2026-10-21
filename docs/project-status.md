@@ -20,6 +20,26 @@ Updated October 20, 2026. This replaces the initial core-only status.
 | Dots/ChatGPT | OAuth, phone-created pairing, separate authenticated agent, real native and shell calls | Actual calls correlated with SQLite; app-install test denied by local scope; correct agent’s permission saved by owner and verified in SQLite; subsequent official-app install and final bounded verification succeeded |
 | Owner management UI | Bot cards, durable Apps permission, revocation, exact blocked-agent review, disambiguated duplicate labels | APK built/linted/installed; physical hierarchy shows the correct Dots permission card; permission review stayed open for 20 seconds; owner saved the correct grant; longer/configuration-change checks remain pending |
 
+## Engineering pass 3 (in progress)
+
+Starting source: `abfefc5`, preserving the reviewed `b474f3d` work and the existing three remote principals. The annotated recovery tag is `siconnect-working-multiagent-2026-10-20`. Fresh baseline core/Android builds and gateway checks passed before modification. Live credentials and the database were preserved.
+
+Implemented this increment:
+
+- New OAuth bots always get fresh identities/credentials, even with duplicate labels. Resume/renew uses the persisted invitation ID. Reconnection is explicitly selected from a particular bot card; it preserves only that bot's grant. No existing identity migration or automatic credential rotation occurs.
+- `apps.inspect_detailed` uses bounded PackageManager queries for primary-user installation, version, enabled state, timestamps and installer metadata. A second query verifies state; source-permission errors and concurrent changes are explicit. Raw privileged inspection/dumps and general shell remain available.
+- Shell execution uses a deadline-bound ownership handshake before user code starts, an owned session supervisor, atomic capacity, cancellation-before-start handling and group cleanup. Successful commands avoid the previous unconditional pair of 100 ms sleeps. Legacy text/base64 fields remain compatible; maximum transport-envelope stress remains outstanding.
+- Exact reminder receivers persist a WorkManager reconciliation watchdog before quick delivery. Interrupted claims reuse their original request ID; terminal/unknown results are reconciled rather than reposted blindly. Worker failure is no longer reported as successful delivery.
+- Gateway socket generations, hello readiness, per-session in-flight ownership, stale-session rejection and same-request recovery hints are implemented and pass local Worker/SDK tests. Deployment verification is recorded separately below; source tests are not hosted evidence.
+- `device.runtime` exposes on-demand process CPU/PSS, UID network counters, database/WAL sizes and connection/backend state. A real sparse hosted MCP collector is available in `gateway/test/soak-client.mjs`; completion of a 24-hour interval is not yet established.
+- Corrupt encrypted secrets now fail explicitly instead of being treated as absent and silently regenerated. Keystore key creation is synchronized. An obsolete bundled Binder death callback cannot clear a newly attached service.
+
+Validation so far: APK/lint/instrumentation builds passed and in-place upgrades succeeded. Three focused physical tests passed: structured PackageManager inspection, actual shell supervisor behavior (nonzero exit, stderr/stdin/environment, bounded output, binary bytes, timeout, early cancellation, parent/child cleanup), and interrupted-reminder reconciliation without a second post. An earlier two-test physical run also verified package metadata and actual UID 2000 identity. Seven local gateway integration tests pass, including official SDK v1/v2, OAuth/refresh/pairing and authenticated socket replacement. Real hosted diagnostics passed after the first upgrade (seven calls; 32 tools at that point). Android instrumentation ends the target process: the app must be relaunched and its socket acknowledged before hosted checks; two prematurely started probes correctly returned DEVICE_OFFLINE.
+
+The focused live pairing test passed (one case, zero failures) for duplicate-label identity isolation, expired invitation renewal and explicitly selected reconnect; only disposable test principals were created/deleted. An initial attempt skipped while the gateway had not yet reconnected; the final test explicitly awaited ONLINE. Existing remote principals remained untouched.
+
+Outstanding audit work includes full output-envelope/Binder stress, scheduler slot recovery and wall-clock recurrence, time-window weather calculations, calendar/files, UI coordination and older-history pagination. Existing provider-specific successes remain valid historical evidence; they are not represented as newly rerun provider tests.
+
 ## Physical evidence
 
 Five production-backed Android instrumentation tests passed, including actual precise reminder delivery: native execution/persistence/idempotency, package query and skill, bundled shell identity, and approval deny/approve/revoke. An additional real-device gateway setup test passed. Official MCP SDK v2 invoked seven real phone tools through the hosted gateway. Grok Bot then independently called device status, shell identity and battery; matching REMOTE request records were read from the phone's database-backed endpoint.
