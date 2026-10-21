@@ -265,15 +265,20 @@ class RuntimeDeviceTest {
     @Test fun exactReminderActuallyDeliversThroughEngine()=runBlocking {
         Assert.assertTrue("Enable exact alarm access before this physical test",g.reminders.canScheduleExact())
         val id="physical-reminder:${UUID.randomUUID()}"
+        val nm=g.context.getSystemService(android.app.NotificationManager::class.java)
+        try {
         val r=g.engine.submit(InvocationRequest(requestId=id,agentId="local-owner",capabilityId="reminders.create",arguments=buildJsonObject {
             put("title","SIConnect timing test");put("text","Actual exact reminder delivery verified");put("fireAtMs",System.currentTimeMillis()+3000);put("exact",true)
         }),Origin.LOCAL_OWNER)
         Assert.assertEquals(RequestState.SUCCEEDED,r.state)
         withTimeout(20000) {while(g.requests.get("reminder:$id")?.state!=RequestState.SUCCEEDED) delay(100)}
         Assert.assertEquals("SUCCEEDED",g.reminders.get(id)!!.state)
-        val nm=g.context.getSystemService(android.app.NotificationManager::class.java)
         Assert.assertTrue(nm.activeNotifications.any {it.id=="reminder:$id".hashCode() && it.notification.extras.getString(android.app.Notification.EXTRA_TITLE)=="SIConnect timing test"})
+        } finally {
         nm.cancel("reminder:$id".hashCode())
+        g.reminders.cancel(id)
+        g.db.writableDatabase.delete("reminders","reminder_id=?",arrayOf(id))
+        }
     }
     @Test fun durableNativeSkillAndPackageQuery()=runBlocking {
         val def=g.skills.get("diagnostics.snapshot")!!

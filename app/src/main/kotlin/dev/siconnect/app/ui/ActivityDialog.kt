@@ -1,6 +1,8 @@
 package dev.siconnect.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import dev.siconnect.app.data.RequestSummary
 import dev.siconnect.app.data.SqlRequestStore
@@ -36,9 +39,10 @@ import dev.siconnect.core.RequestState
             more=loaded.size>100;page=loaded.take(100)
         } catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {error="Could not load history: ${e.javaClass.simpleName}"} finally {loading=false}
     }
-    AlertDialog(onDismissRequest=onClose,title={Text("Activity")},text={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+    val bodyHeight=(LocalConfiguration.current.screenHeightDp * 0.62f).dp
+    AlertDialog(onDismissRequest=onClose,title={Text("Activity")},text={Column(Modifier.fillMaxWidth().heightIn(max=bodyHeight),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text("Page ${cursors.size} · ${page.size} requests. Tap an action for its result and audit trail.",style=MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
             listOf("All","Needs attention","Completed").forEach { name -> FilterChip(selected=filter==name,onClick={filter=name},label={Text(name)}) }
         }
         Row {
@@ -56,7 +60,7 @@ import dev.siconnect.core.RequestState
         if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         if(!loading && page.isEmpty()) Text("No requests match this view.")
-        LazyColumn(Modifier.heightIn(max=440.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+        LazyColumn(Modifier.weight(1f,fill=false),verticalArrangement=Arrangement.spacedBy(4.dp)) {
             items(page,key={it.requestId}) { r ->
                 Column(Modifier.fillMaxWidth().clickable {onOpen(r.requestId)}.padding(vertical=10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     Text(title(r.capabilityId),style=MaterialTheme.typography.titleSmall)

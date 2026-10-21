@@ -152,15 +152,18 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(18.dp)) {
             Column(Modifier.widthIn(max=640.dp).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(18.dp)) {
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                    Image(androidx.compose.ui.res.painterResource(dev.siconnect.app.R.drawable.ic_siconnect),contentDescription=null,
+                        modifier=Modifier.size(44.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) { Text("SIConnect",style=MaterialTheme.typography.headlineLarge); Text("Your phone. Your bots.",color=MaterialTheme.colorScheme.onSurfaceVariant) }
-                    Text(when(connection) {
+                }
+                Text(when(connection) {
                         dev.siconnect.app.transport.ConnectionState.ONLINE->"CONNECTED"
                         dev.siconnect.app.transport.ConnectionState.BACKOFF->"RECONNECTING"
                         dev.siconnect.app.transport.ConnectionState.AUTH_FAILED->"NEEDS ATTENTION"
                         dev.siconnect.app.transport.ConnectionState.DISABLED->if(config.baseUrl.isBlank()) "SETUP" else "PAUSED"
                         else->"CONNECTING"
                     },color=if(connection==dev.siconnect.app.transport.ConnectionState.AUTH_FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelMedium)
-                }
                 if(pending.isNotEmpty()) {
                     Text("Needs your approval",style=MaterialTheme.typography.titleLarge)
                     pending.forEach { r -> Card(shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {

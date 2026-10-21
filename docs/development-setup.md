@@ -67,3 +67,9 @@ Install the generic [SIConnect skill](../integrations/skills/siconnect/SKILL.md)
 The verified local setup currently shares the owner's existing paired agent with another client. OAuth Dots pairing is now implemented and verified with separate local identities; do not describe the shared private-bearer identity as independent grants.
 
 The pass 3 Android package remains `dev.siconnect.app`, now version 0.3.0/code 2 with SQLite v4. Upgrade with `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`; preserve signing and app data. The owner-enabled connection service restores on package replacement without opening the app, subject to Android allowing the service. Reattach the bundled authority with `python3 tools/start_builtin.py --serial <serial> --restart` after code upgrades. Do not assume an older SQLite-v3 APK can downgrade a v4 database; keep a verified current APK/source checkpoint rather than wiping data. Host tooling checks include `python3 -m unittest discover -s tools/tests -v`.
+
+
+Pass 4 keeps the same application ID and signing configuration, with version 0.4.1/code 4 and additive SQLite v6 migrations. Upgrade in place using the commands above; do not use an older database schema as a downgrade recovery method. If cache files were removed while a Gradle daemon was running, stop the daemon with `./gradlew --stop` and rebuild so its dependency transforms are recreated. Do not remove active caches during builds.
+
+
+Current follow-up package: 0.4.2/code 5, same schema v6. The daemon lifetime-observer fix requires one daemon restart after loading this APK; it is not a claim of privileged persistence across phone reboot. Following an in-place upgrade, verify acknowledged gateway readiness and actual shell identity rather than assuming installation success implies backend readiness.

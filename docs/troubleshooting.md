@@ -53,3 +53,6 @@ Use the original request ID with requests_get. If too large, requests_output ret
 ## Appearance and layout
 
 Settings offers System, Light and Dark. Android font scaling remains active. Dialog explanations scroll independently of action buttons, and the main content accounts for system bars/keyboard. Folded/unfolded and large-font verification remains a separate device check. Bridge health → Check now collects one native sample; it does not start continuous polling or establish battery drain.
+
+
+If the shell daemon is alive but the app loses privileged availability after process death, older builds could have lost the remote owner BinderProxy to garbage collection, silently unlinking its death callback. The corrected daemon retains both proxy and recipient and reattaches after actual owner-process death. Upgrade the app and restart the bundled daemon once to load the correction; later ordinary app recovery should not require another bootstrap. Reboot still destroys shell authority. Ending instrumentation is a separate lifecycle case: it can stop the connection service, so restore the owner-enabled service before evaluating production connection recovery.
