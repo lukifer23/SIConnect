@@ -1,5 +1,11 @@
 # Next steps
 
+## October 21, 2026 checkpoint
+
+Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
+
+Current checkpoint: 0.5.0-dev.2/code 7, SQLite 7, 85 tools. Action Inbox and installed-app picker are implemented. Prioritize remaining semantic interruption/identity cases, real owner acceptance/form-save and designated Calendar/SAF resources. See [pass 8](engineering-pass-8.md) for fresh versus historical evidence; the older roadmap below is retained for continuity.
+
 Current development checkpoint: Android 0.5.0-dev/code 6, SQLite 6 and 81 registry capabilities. Existing credentials, grants, reminder records and gateway identity are retained. See [project status](project-status.md) for measured evidence and historical checkpoints.
 
 1. Finish stable semantic interaction validation in the normal app process, including cancellation, stale nodes, password subtrees, package switches and shared-screen contention. Keep UI observation bounded. Global accessibility-event invalidation is conservative and may cause extra re-observation; do not weaken stale-action checks without measuring the cause.

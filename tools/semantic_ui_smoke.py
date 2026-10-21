@@ -2,12 +2,28 @@
 """Opt-in real semantic fixture checks in the normal Android process, through authenticated loopback."""
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
 import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+
+
+def screen_precondition(policy):
+    """Fail closed before provisioning credentials or changing tasks. Never dismiss keyguard."""
+    showing = re.search(r'^\s*showing=(true|false)\s*$', policy, re.MULTILINE)
+    screen = re.search(r'\bscreenState=(SCREEN_STATE_[A-Z_]+)', policy)
+    if showing is None or screen is None:
+        raise RuntimeError('SCREEN_STATE_UNKNOWN: cannot establish an unlocked, screen-on fixture session')
+    if showing.group(1) == 'true' or screen.group(1) != 'SCREEN_STATE_ON':
+        raise RuntimeError('SCREEN_LOCKED_OR_OFF: unlock the phone and make the screen available; no fixture session was created')
+
+
+def session_probe_absent(stdout, stderr, path):
+    # adb exec-out may merge stderr and report status 0 even when remote toybox ls fails.
+    return (stdout+stderr).strip() == ('ls: '+path+': No such file or directory').encode()
 
 
 def main():
@@ -17,6 +33,7 @@ def main():
     args=p.parse_args()
     def adb(*words):
         return subprocess.run(['adb','-s',args.serial,*words],capture_output=True,check=True,timeout=60).stdout
+    screen_precondition(adb('shell','dumpsys','window','policy').decode())
     port=None;lease=None;reports=[]
     session=str(uuid.uuid4())
     session_path='no_backup/semantic-harness-'+session+'.json'
@@ -49,14 +66,16 @@ def main():
         while True:
             try:
                 status=call('ui.status')
+                if status.get('deviceLocked'):raise RuntimeError('SCREEN_LOCKED: unlock the device before semantic fixture actions')
                 if status.get('connected'):break
             except (OSError,urllib.error.URLError):pass
             if time.monotonic()>deadline:raise RuntimeError('Owner-enabled service did not bind in normal app process')
-            time.sleep(.2)
+            time.sleep(.5)
         # Exercise a genuinely separate app/process; the SIConnect debug Activity only provisions credentials.
         adb('shell','am','start','-W','-f','0x18000000','-n','dev.siconnect.notificationfixture/.SemanticFixtureActivity')
         target='dev.siconnect.notificationfixture'
         lease=call('ui.lease_acquire',{'targetPackage':target,'ttlMs':120000})['leaseId']
+        assert call('ui.lease_renew',{'leaseId':lease,'ttlMs':120000})['leaseId']==lease
         def find(**selector):return call('ui.find',dict(packageName=target,**selector))
         def fresh_action(cap,selector,**values):
             for attempt in range(3):
@@ -75,12 +94,15 @@ def main():
         time.sleep(.3)
         observed=call('ui.inspect',{'packageName':target,'limit':200})
         assert not any('fixture-secret-value' in row.get('text','') or 'fixture-protected-descendant' in row.get('text','') for row in observed['nodes'])
+        buttons=[row for row in observed['nodes'] if row.get('className')=='android.widget.Button' and row.get('text','').casefold()=='complete fixture']
+        assert len(buttons)==1, 'Fixture must expose one completion button'
         edited,field=fresh_action('ui.set_text',dict(description='Fixture entry',editable=True),text='Disposable semantic content')
         assert edited['textReadbackVerified']
         stale=call('ui.set_text',dict(packageName=target,leaseId=lease,windowId=field['windowId'],snapshotId=field['snapshotId'],nodeRef=field['nodes'][0]['nodeRef'],text='Never replace newer state'),success=False)
         assert stale.get('errorCode')=='STALE_NODE_REFERENCE'
         assert wait(text='Disposable semantic content')['matched']
-        fresh_action('ui.click',dict(text='Complete fixture',clickable=True))
+        # Android's Button transformation exposes uppercase accessibility text on this device.
+        fresh_action('ui.click',dict(text=buttons[0]['text'],className='android.widget.Button',clickable=True))
         assert wait(text='Fixture complete')['matched']
         fresh_action('ui.click',dict(description='Fixture checkbox',checkable=True,checked=False))
         assert wait(description='Fixture checkbox',checked=True)['matched']
@@ -100,8 +122,25 @@ def main():
             pending.result(timeout=15)
         end=request('/requests/'+unique)
         assert end['state']=='CANCELLED'
+        # Global navigation needs a fresh exact window; verify the previous app actually leaves foreground.
+        for navigation in ('ui.back','ui.home'):
+            # Reset only the disposable fixture: prior focus/viewport changes must not define Back's meaning.
+            adb('shell','am','start','-W','-f','0x18000000','-n','dev.siconnect.notificationfixture/.SemanticFixtureActivity')
+            assert wait(text='SIConnect semantic fixture')['matched'], navigation+': fixture heading not observable after launch'
+            snapshot=call('ui.inspect',{'packageName':target,'limit':1})
+            call(navigation,{'packageName':target,'leaseId':lease,'windowId':snapshot['windowId']})
+            deadline=time.monotonic()+5
+            while True:
+                changed=call('ui.inspect',{'packageName':target,'limit':1},success=False)
+                if changed.get('errorCode')=='TARGET_NOT_FOREGROUND':break
+                # Back from a fresh fixture task can reveal an older fixture task of the same package.
+                if navigation=='ui.back' and changed.get('state')=='SUCCEEDED' and changed['result']['output']['windowId']!=snapshot['windowId']:break
+                if time.monotonic()>deadline:raise AssertionError(navigation+' did not change the expected foreground window')
+                time.sleep(.1)
     finally:
         primary_failure=sys.exc_info()[0] is not None
+        if primary_failure:
+            print(json.dumps({'classification':'PHYSICAL_DEVICE_AUTHENTICATED_LOOPBACK','state':'FAILED','results':reports}),file=sys.stderr)
         cleanup_errors=[]
         if lease and port:
             try:call('ui.lease_release',{'leaseId':lease})
@@ -114,8 +153,8 @@ def main():
             cleanup_deadline=time.monotonic()+10
             while True:
                 probe=subprocess.run(['adb','-s',args.serial,'exec-out','run-as','dev.siconnect.app','ls',session_path],capture_output=True,timeout=10)
+                if session_probe_absent(probe.stdout,probe.stderr,session_path):break
                 if probe.returncode!=0:
-                    if b'No such file or directory' in probe.stderr:break
                     raise RuntimeError('Cannot verify disposable session removal')
                 if time.monotonic()>cleanup_deadline:raise RuntimeError('Disposable session cleanup did not complete')
                 time.sleep(.1)
@@ -126,6 +165,6 @@ def main():
             # Preserve the actual test failure (for example SCREEN_LOCKED) instead of masking it.
             if primary_failure:print(json.dumps({'cleanupErrors':cleanup_errors}),file=sys.stderr)
             else:raise RuntimeError('Disposable cleanup failed: '+','.join(cleanup_errors))
-    print(json.dumps({'classification':'PHYSICAL_DEVICE_AUTHENTICATED_LOOPBACK','checks':'text/click/checkbox/scroll/wait/cancel/stale/protected/password/bounds','seconds':round(time.monotonic()-started,3),'results':reports,'disposableSessionCleaned':True}))
+    print(json.dumps({'classification':'PHYSICAL_DEVICE_AUTHENTICATED_LOOPBACK','checks':'text/click/checkbox/scroll/wait/cancel/stale/protected/password/bounds/back/home/lease-renew','seconds':round(time.monotonic()-started,3),'results':reports,'disposableSessionCleaned':True}))
 
 if __name__=='__main__':main()

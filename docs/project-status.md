@@ -1,5 +1,11 @@
 # Project status
 
+## October 21, 2026 checkpoint
+
+Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
+
+Current checkpoint: Android **0.5.0-dev.2 / code 7**, SQLite **7**, **85** hosted-discovered tools. The new Action Inbox, installed-app permission picker, service-state diagnostics and physical migration/native-proposal verification are detailed in [engineering pass 8](engineering-pass-8.md). Earlier checkpoints below retain their historical evidence and limitations.
+
 Updated October 20, 2026. This replaces the initial core-only status.
 
 | Subsystem | Implemented | Evidence / limits |

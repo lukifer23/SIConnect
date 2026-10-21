@@ -1,5 +1,9 @@
 # Security model
 
+## October 21, 2026 checkpoint
+
+Action Inbox trust boundary: proposal text/source references are untrusted display data. There is no remote accept/approve tool. Local acceptance requires fresh owner authentication and submits under the proposing identity, without changing scopes/standing grants or selecting LOCAL_OWNER origin. Existing revocation, emergency stop and exact-action approval remain authoritative. Proposal IDs/results are agent-scoped. Immutable action/version hashes, argument/text budgets, expiration, CAS resolution and stable execution IDs prevent silent replacement or duplicate acceptance. Broad-shell and trusted-gateway limitations are unchanged.
+
 ## Trust boundaries
 
 | Component | Trusted for | Not trusted for |

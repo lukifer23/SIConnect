@@ -1,16 +1,17 @@
 package dev.siconnect.app.capabilities
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.KeyguardManager
 import android.os.Process
-import android.view.accessibility.AccessibilityManager
 import dev.siconnect.app.RuntimeGraph
 import dev.siconnect.app.accessibility.SemanticAccessibilityService
 import dev.siconnect.core.*
 import kotlinx.serialization.json.*
 
 fun registerSemanticUiCapabilities(g: RuntimeGraph) {
-    fun service() = SemanticAccessibilityService.instance ?: throw CapabilityException("ACCESSIBILITY_REQUIRED", "Enable SIConnect accessibility access in Android settings; sideload restrictions may require owner action", noSideEffects = true)
+    fun configured()=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+        .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,SemanticAccessibilityService::class.java)}
+    fun service() = SemanticAccessibilityService.instance ?: if(configured()) throw CapabilityException("ACCESSIBILITY_DISCONNECTED", "Android access is enabled but the service is disconnected; restore SIConnect in Accessibility settings",noSideEffects=true)
+        else throw CapabilityException("ACCESSIBILITY_REQUIRED", "Enable SIConnect accessibility access in Android settings; sideload restrictions may require owner action", noSideEffects = true)
     fun ObjectSchemaBuilder.target() { string("packageName", "Exact foreground Android package expected", true, maxLength = 200) }
     fun ObjectSchemaBuilder.selector() {
         string("text", "Visible text; exact unless contains=true", maxLength = 500); string("description", "Content description", maxLength = 500)
@@ -26,6 +27,11 @@ fun registerSemanticUiCapabilities(g: RuntimeGraph) {
         if (node) { string("snapshotId", "Fresh snapshot bound to this agent/window", true, maxLength = 100); string("nodeRef", "Node reference returned by that snapshot", true, maxLength = 30) }
     }
     val output = objectSchema {
+        string("serviceState","Configured, connected, locked and foreground readiness distinguished; not a grant decision")
+        boolean("foregroundWindowAvailable","An active accessible root exists while unlocked")
+        boolean("androidServiceCrashStateKnown","False: Android's private service crash list requires external diagnostics")
+        integer("eventCount","Content-free invalidating event count since service binding");integer("lastEventType","Last Android accessibility event type")
+        integer("lastEventAtElapsedMs","Last invalidating event monotonic time");integer("staleReferenceCount","Explicit stale-reference refusals since binding");integer("retainedSnapshots","Bounded snapshot count")
         boolean("connected", "Service connection state"); boolean("enabledInSettings", "Android reports service enabled"); boolean("deviceLocked", "Android keyguard state")
         string("serviceGeneration", "Runtime service generation"); integer("snapshotTtlMs", "Reference lifetime"); integer("maxScannedNodes", "Traversal bound"); integer("maxReturnedNodes", "Result bound")
         boolean("protectedControlsAutomatable", "Always false for this semantic backend"); boolean("eventDrivenWaits", "Waits use Android events")
@@ -47,8 +53,12 @@ fun registerSemanticUiCapabilities(g: RuntimeGraph) {
                 permissions = listOf("android.settings.ACCESSIBILITY_SETTINGS"), interaction = if (status) InteractionMode.BACKGROUND else InteractionMode.SCREEN,
                 timeoutMs = if (id == "ui.wait_for") 65_000 else 30_000,
                 sideEffects = if (risk > RiskClass.READ_ONLY) listOf("Changes the shared screen or app controls; generic clicks can communicate externally or delete content") else emptyList())
-            override fun availability() = if (status || SemanticAccessibilityService.instance != null) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED
-            override fun availabilityDetail() = if (availability() == Availability.IMPLEMENTED) null else "Owner must enable SIConnect accessibility access in Android's special settings"
+            override fun availability() = if (status || SemanticAccessibilityService.instance != null) Availability.IMPLEMENTED else if(configured()) Availability.TEMPORARILY_UNAVAILABLE else Availability.PERMISSION_REQUIRED
+            override fun availabilityDetail() = when(availability()) {
+                Availability.TEMPORARILY_UNAVAILABLE->"Android access is enabled but the service is disconnected. Open Accessibility settings to restore it; app diagnostics cannot read Android's private service crash list."
+                Availability.PERMISSION_REQUIRED->"Owner must enable SIConnect accessibility access in Android's special settings"
+                else->null
+            }
             override fun assess(args: JsonObject) = RiskAssessment(risk, title, args["packageName"]?.jsonPrimitive?.content, descriptor.sideEffects, externalCommunication = id == "ui.click")
             override suspend fun execute(args: JsonObject, ctx: ExecutionContext): CapabilityResult {
                 val action = risk > RiskClass.READ_ONLY
@@ -62,10 +72,12 @@ fun registerSemanticUiCapabilities(g: RuntimeGraph) {
         })
     }
     register("ui.status", "Inspect semantic accessibility availability", objectSchema()) { _, _ ->
-        val manager = g.context.getSystemService(AccessibilityManager::class.java)
-        val enabled = manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).any { it.resolveInfo.serviceInfo.packageName == g.context.packageName && it.resolveInfo.serviceInfo.name == SemanticAccessibilityService::class.java.name }
+        val enabled = configured()
         val base = SemanticAccessibilityService.instance?.status() ?: buildJsonObject { put("connected", false); put("deviceLocked", g.context.getSystemService(KeyguardManager::class.java).isDeviceLocked); put("protectedControlsAutomatable", false); put("eventDrivenWaits", true) }
-        JsonObject(base + ("enabledInSettings" to JsonPrimitive(enabled)))
+        JsonObject(base + mapOf("enabledInSettings" to JsonPrimitive(enabled),"androidServiceCrashStateKnown" to JsonPrimitive(false),
+            "serviceState" to JsonPrimitive(dev.siconnect.app.accessibility.SemanticServiceState.classify(enabled,
+                base["connected"]?.jsonPrimitive?.booleanOrNull==true,base["deviceLocked"]?.jsonPrimitive?.booleanOrNull==true,
+                base["foregroundWindowAvailable"]?.jsonPrimitive?.booleanOrNull==true))))
     }
     register("ui.inspect", "Inspect a bounded semantic foreground snapshot", objectSchema { target(); integer("limit", "Returned node limit", min = 1, max = 200); integer("maxScanNodes", "Maximum visited nodes", min = 1, max = 1000) }) { a, ctx -> service().inspect(ctx.agentId, a.str("packageName"), selection(a), a.long("limit", 100).toInt()) }
     register("ui.find", "Find semantic controls using bounded explicit selectors", objectSchema { target(); selector(); integer("limit", "Returned match limit", min = 1, max = 100) }) { a, ctx ->

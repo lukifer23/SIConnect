@@ -32,6 +32,10 @@ class SemanticAccessibilityService : AccessibilityService() {
     private val processGeneration = UUID.randomUUID().toString()
     private val changes = MutableStateFlow(0L)
     private var connected = false
+    private var lastEventType=0
+    private var lastEventAtElapsedMs=0L
+    private var eventCount=0L
+    private var staleReferenceCount=0L
     private data class Reference(val path: List<Int>, val fingerprint: String)
     private data class Snapshot(val id: String, val agent: String, val target: String, val window: Int, val epoch: Long, val createdElapsed: Long, val refs: Map<String, Reference>)
     private val snapshots = linkedMapOf<String, Snapshot>()
@@ -40,7 +44,10 @@ class SemanticAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() { connected = true; instance = this; _connectionState.value = true; invalidate(); catalogChanged() }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Event payload/text is never logged or retained. A content or window change invalidates refs.
-        if (event != null && event.eventType and INVALIDATING_EVENTS != 0) invalidate()
+        if (event != null && event.eventType and INVALIDATING_EVENTS != 0) {
+            lastEventType=event.eventType;lastEventAtElapsedMs=SystemClock.elapsedRealtime();eventCount++
+            invalidate()
+        }
     }
     override fun onInterrupt() { invalidate() }
     override fun onUnbind(intent: Intent?): Boolean { disconnected(); return super.onUnbind(intent) }
@@ -54,7 +61,10 @@ class SemanticAccessibilityService : AccessibilityService() {
     }
     private fun catalogChanged() { runCatching { val g = graph; g.scope.launch { g.ready.await(); g.gateway.refreshCatalog() } } }
     private fun invalidate() { snapshots.clear(); changes.value = changes.value + 1 }
-    private fun error(code: String, message: String): Nothing = throw CapabilityException(code, message, noSideEffects = true)
+    private fun error(code: String, message: String): Nothing {
+        if(code=="STALE_NODE_REFERENCE") staleReferenceCount++
+        throw CapabilityException(code, message, noSideEffects = true)
+    }
     private fun guard(target: String, windowId: Int? = null): AccessibilityNodeInfo {
         if (!connected || instance !== this) error("ACCESSIBILITY_DISCONNECTED", "Accessibility service disconnected; restore it in Android settings")
         if (getSystemService(KeyguardManager::class.java).isDeviceLocked) error("SCREEN_LOCKED", "Semantic UI actions require an unlocked device; background native tools remain independent")
@@ -68,13 +78,22 @@ class SemanticAccessibilityService : AccessibilityService() {
         return root
     }
 
-    suspend fun status(): JsonObject = withContext(Dispatchers.Main.immediate) { buildJsonObject {
+    suspend fun status(): JsonObject {
+        val locked=getSystemService(KeyguardManager::class.java).isDeviceLocked
+        // Reading our own foreground window must leave the main thread free to serve Android's node query.
+        val windowAvailable=if(locked) false else withContext(Dispatchers.IO) {rootInActiveWindow!=null}
+        return withContext(Dispatchers.Main.immediate) { buildJsonObject {
+        val lockedNow=getSystemService(KeyguardManager::class.java).isDeviceLocked
         put("connected", connected && instance === this@SemanticAccessibilityService); put("serviceGeneration", processGeneration)
-        put("deviceLocked", getSystemService(KeyguardManager::class.java).isDeviceLocked)
+        put("deviceLocked", lockedNow)
+        put("foregroundWindowAvailable", !lockedNow && windowAvailable)
+        put("eventCount",eventCount);put("lastEventType",lastEventType);put("lastEventAtElapsedMs",lastEventAtElapsedMs)
+        put("staleReferenceCount",staleReferenceCount);put("retainedSnapshots",snapshots.size)
         put("snapshotTtlMs", SNAPSHOT_TTL); put("maxScannedNodes", MAX_SCAN); put("maxReturnedNodes", MAX_RETURN)
         put("protectedControlsAutomatable", false); put("eventDrivenWaits", true)
         put("observedAtMs", System.currentTimeMillis()); put("observedAtElapsedMs", SystemClock.elapsedRealtime())
     } }
+    }
 
     private fun fingerprint(node: AccessibilityNodeInfo): String {
         val bounds = Rect(); node.getBoundsInScreen(bounds)

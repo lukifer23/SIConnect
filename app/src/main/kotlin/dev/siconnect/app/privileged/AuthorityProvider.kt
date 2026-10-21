@@ -5,6 +5,8 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import dev.siconnect.app.graph
 
 /** Only Android's shell/root identities may attach authority. No owner/policy actions are exported. */
 class AuthorityProvider: ContentProvider() {
@@ -24,6 +26,7 @@ class AuthorityProvider: ContentProvider() {
             }
         },0)
         DirectAuthority.status.value="Connected; checking execution identity"
+        context?.graph?.let {g->g.scope.launch {g.privileged.refreshDirectAuthority(IPrivilegedShell.Stub.asInterface(binder))}}
         android.util.Log.i("SIConnectAuthority","Authority stored")
         return Bundle().apply { putBinder("owner",owner) }
     }

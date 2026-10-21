@@ -1,5 +1,11 @@
 # Device testing
 
+## October 21, 2026 checkpoint
+
+Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
+
+Latest verification: [pass 8](engineering-pass-8.md) records 44 core, 36 Android JVM, 13 Python and ten gateway tests, two new physical Inbox/migration cases and seven fresh hosted checks. Biometric UI, semantic mutation and selected Calendar/SAF writes remain separate pending checks. Android instrumentation start/finish force-stopped the app and left enabled accessibility in Android’s crashed set. Batch instrumentation before owner restores special access, then prefer `tools/semantic_ui_smoke.py` in the normal process. Its screen preflight fails before creating credentials when locked/off/unknown. Do not count that refusal as a passing semantic test. Historical sections below are not fresh reruns.
+
 Target physically exercised October 20, 2026: Galaxy Z Fold 7 SM-F966U, Android 17/API 37, One UI 9. Always select the current authorized serial from `adb devices -l`; do not copy a private serial into documentation.
 
 ```sh
@@ -12,7 +18,7 @@ adb -s <serial> shell am start -W -n dev.siconnect.app/.ui.MainActivity
 adb -s <serial> shell am instrument -w -e class dev.siconnect.app.RuntimeDeviceTest dev.siconnect.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-APK metadata: `app/build/outputs/apk/debug/output-metadata.json`; application ID `dev.siconnect.app`. Android host unit task currently has no test sources; instrumentation is distinct from host tests. Core currently has 30 passing tests, including exact standing grant boundaries. Five current device runtime tests passed, including an actual precise alarm followed by a policy-governed notification. A separate real gateway setup test passed. Do not present CI compilation as physical verification.
+APK metadata: `app/build/outputs/apk/debug/output-metadata.json`; application ID `dev.siconnect.app`. At the original checkpoint, the Android host unit task had no test sources; current counts are above. Instrumentation is distinct from host tests. That original core checkpoint had 30 passing tests, including exact standing grant boundaries. Five current device runtime tests passed, including an actual precise alarm followed by a policy-governed notification. A separate real gateway setup test passed. Do not present CI compilation as physical verification.
 
 Actual external actions: Grok Bot through hosted MCP opened apple.com in physical Chrome and created the requested Samsung Clock test alarm. Approval UI was used on the phone. Screen and Clock state were inspected after execution; shell exit status alone was not treated as verification. Native and shell calls were correlated by request IDs with durable records. Private evidence is outside Git.
 

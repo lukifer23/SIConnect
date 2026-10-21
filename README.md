@@ -18,11 +18,11 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime, Android 0.5.0-dev (version code 6), SQLite schema 6.** The installed registry advertises 81 tools through the existing hosted gateway. Grokbot and official MCP SDK calls were freshly exercised this pass, including actual bundled shell UID 2000. Dots/ChatGPT and Hermes have prior real-device success; fresh provider-specific evidence is tracked separately in [device testing](docs/device-testing.md) and [provider compatibility](docs/provider-compatibility.md).
+> **Status: working development runtime, Android 0.5.0-dev.2 (versionCode 7), SQLite schema 7.** The installed registry discovers 85 tools through the existing gateway. The latest in-place upgrade preserved existing agents, grant/credential hashes and reminders. Fresh hosted native/shell checks and real Grokbot/Hermes read-only sessions passed. See the [pass 8 evidence and remaining gaps](docs/engineering-pass-8.md).
 
-The owner UI now has Home, Agents, Automations, Activity and Settings with adaptive navigation. Home shows actual missing-access setup cards; enabling Android Accessibility and notification-listener access removed the corresponding cards on the physical Fold. Automations can be created/edited with native date/time inputs, inspected, run once without changing their schedule, and cancelled. These changes preserve existing identities, grants, requests and reminders. Comprehensive fold/posture/font-scale verification remains pending.
+The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
 
-Native notification-action discovery and supported RemoteInput replies now use exact live action references. A separate disposable test APK received one real reply broadcast, with its receipt digest/count checked independently. Production results report `DISPATCHED`, not recipient delivery. Semantic screen tools are implemented with cooperative leases, strict stale-reference checks and protected-owner/password exclusions; their normal-process physical harness is currently blocked because Android marks the owner-enabled Accessibility service crashed/disconnected after lifecycle testing. Owner off/on restoration is required before that validation can continue. Calendar/SAF write tests still need owner-selected disposable resources. No completed battery study or unattended privileged reboot recovery is claimed.
+Native semantic screen tools, calendar and SAF operations are implemented. The normal-process physical semantic workflow now passes text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password rejection, back/home and lease checks. Owner biometric/form-save and owner-selected calendar/document write verification remain incomplete. Android instrumentation force-stops were observed to leave the enabled Accessibility service in its crashed-service set; normal-process validation and explicit owner restoration are required in that state. Background native/shell checks continue working independently. No completed battery study or unattended privileged reboot recovery is claimed.
 
 ## Design principles
 
@@ -37,7 +37,8 @@ Native notification-action discovery and supported RemoteInput replies now use e
 
 1. Open Home to see connection/backend state and any missing Android access. Enable only the access needed for your workflow.
 2. Open Agents to select the exact bot identity and allow its capability families. Standing screen access for a selected app and broad privileged shell are separate deliberate permissions.
-3. Open Automations to choose a reminder, device snapshot or configured commute check, review timing/permissions and save. Activity retains request results; pending approvals remain reviewable until resolved or expired.
+3. Open Home’s Action Inbox to review proposed follow-ups. Accepting is separate from granting an agent new permission.
+4. Open Automations to choose a reminder, device snapshot or configured commute check, review timing/permissions and save. Activity retains request results; pending approvals remain reviewable until resolved or expired.
 
 Remote agents still use the same authenticated MCP endpoint. Existing OAuth connections do not need to be replaced for this update. See [permissions and owner controls](docs/permissions.md) for the exact setup and approval behavior.
 

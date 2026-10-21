@@ -94,6 +94,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         val recent=snapshot.recent
 
         var activity by rememberSaveable { mutableStateOf(false) }
+        var inbox by rememberSaveable {mutableStateOf(false)}
         var note by remember { mutableStateOf("") }
         var measurements by remember {mutableStateOf<JsonObject?>(null)}
         var busy by remember { mutableStateOf(false) }
@@ -163,7 +164,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     onStop={g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=false))},
                     onResume={ownerAuthentication.authenticate("Resume remote requests",{g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=true))},{note=it})},
                     onEnableSemantic={startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))},
-                    onEnableNotifications={startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))})
+                    onEnableNotifications={startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))},onInbox={inbox=true})
                 Destination.AGENTS -> AgentsScreen(snapshot,wide,selectedAgentId,
                     onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
                     onFamily={id,family,enabled->
@@ -181,6 +182,10 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             }
         }
         if(activity) ActivityDialog(g.requests,snapshot.revision,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> work {inspected=g.requests.get(id)}})
+        if(inbox) ActionInbox(g,snapshot.revision,{title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onClose={inbox=false},onRequest={id->work {
+            val r=requireNotNull(g.requests.get(id));inbox=false
+            if(r.state==RequestState.AWAITING_APPROVAL) {reviewId=id;review=r} else inspected=r
+        }})
         manageBot?.let { bot -> AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text(botDisplayName(bot,bots))},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.55f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             listOf("apps" to ("Apps" to "Install, inspect and remove apps. Sensitive actions still ask first."),
                 "files" to ("Managed files" to "SIConnect’s own files only. Other apps’ private data stays isolated."),

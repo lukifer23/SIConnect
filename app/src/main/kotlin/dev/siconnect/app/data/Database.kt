@@ -21,7 +21,7 @@ val AppJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNu
  * Single SQLite database. Migrations are explicit and append-only: add a new `if (old < N)` block,
  * never edit an existing one.
  */
-class SIConnectDb(context: Context) : SQLiteOpenHelper(context, "siconnect.db", null, VERSION) {
+class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHelper(context, name, null, VERSION) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.enableWriteAheadLogging()
         db.setForeignKeyConstraintsEnabled(true)
@@ -91,9 +91,17 @@ class SIConnectDb(context: Context) : SQLiteOpenHelper(context, "siconnect.db", 
             db.execSQL("CREATE TABLE document_roots (root_id TEXT PRIMARY KEY, tree_uri TEXT NOT NULL UNIQUE, label TEXT NOT NULL, created_at INTEGER NOT NULL)")
             db.execSQL("CREATE TABLE notification_dedup (agent_id TEXT NOT NULL, key_hash TEXT NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(agent_id,key_hash))")
         }
+        if (old < 7) {
+            db.execSQL("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL, request_id TEXT, json TEXT NOT NULL)")
+            db.execSQL("CREATE UNIQUE INDEX proposals_idem ON proposals(agent_id,idempotency_key)")
+            db.execSQL("CREATE UNIQUE INDEX proposals_request ON proposals(request_id) WHERE request_id IS NOT NULL")
+            db.execSQL("CREATE INDEX proposals_history ON proposals(created_at DESC,proposal_id DESC)")
+            db.execSQL("CREATE INDEX proposals_agent_history ON proposals(agent_id,created_at DESC,proposal_id DESC)")
+            db.execSQL("CREATE INDEX proposals_state ON proposals(state)")
+        }
     }
 
-    companion object { const val VERSION = 6 }
+    companion object { const val VERSION = 7 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->

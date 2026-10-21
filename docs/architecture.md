@@ -1,5 +1,9 @@
 # Architecture
 
+## October 21, 2026 checkpoint
+
+Action Inbox is a device-SQLite proposal layer over the existing engine. An authenticated agent can store/read/withdraw only its own proposals. Local owner acceptance atomically records a stable execution link, then submits the immutable versioned action as the original agent with REMOTE origin. Current policy and approval still apply. Recovery consults the existing request before any dispatch; it does not repeat unknown mutations. Lists use bounded keyset pagination and omit action arguments from remote summaries. Schema 7 adds indexed proposal rows without modifying existing tables.
+
 > Intelligence decides what to do. Deterministic software decides how. The policy engine decides whether it may proceed. The execution engine performs it. Verification determines what actually happened. Observability records it.
 
 ## Layers

@@ -21,7 +21,19 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
-      - run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest --console=plain
+      - run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease --console=plain
+      - name: Verify release debug isolation
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          sdk = os.environ['ANDROID_HOME']
+          manifest = subprocess.check_output([f'{sdk}/build-tools/37.0.0/aapt2', 'dump', 'xmltree', '--file', 'AndroidManifest.xml', 'app/build/outputs/apk/release/app-release-unsigned.apk'], text=True)
+          assert 'SemanticUiFixtureActivity' not in manifest, 'Debug fixture leaked into release manifest'
+          assert 'BIND_ACCESSIBILITY_SERVICE' in manifest
+          removed = Path('app/build/outputs/mapping/release/usage.txt').read_text().splitlines()
+          assert 'dev.siconnect.app.transport.LocalEndpoint' in removed, 'Debug loopback endpoint was not removed by R8'
+          PY
       - run: python3 -m py_compile tools/*.py
       - run: python3 -m unittest discover -s tools/tests -v
       - uses: actions/upload-artifact@v4

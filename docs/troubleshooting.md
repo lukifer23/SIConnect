@@ -1,5 +1,9 @@
 # Troubleshooting
 
+## October 21, 2026 checkpoint
+
+If semantic access is configured but unavailable, inspect `ui.status.serviceState`: DISABLED_BY_OWNER, ENABLED_BUT_DISCONNECTED, CONNECTED_BUT_SCREEN_LOCKED, CONNECTED_WITH_NO_FOREGROUND_WINDOW or CONNECTED_READY. The ordinary app cannot inspect Android’s private crash list (`androidServiceCrashStateKnown=false`). In this pass, ADB exit history proved instrumentation force-stops and `dumpsys accessibility` showed the enabled service crashed/unbound. Restore through Android Accessibility → Installed apps → SIConnect, off/on; no secure-settings write is performed automatically. Finish instrumentation before restoration. Native background capabilities remain independent. The normal-process fixture requires an unlocked screen and rejects lock/off before session setup.
+
 ## Bot is connected but an action does nothing
 
 Open Home and inspect the exact recent request. CONNECTED means the phone acknowledged its gateway connection; it does not mean every bot has every permission. `DENIED` with `agent_scope` means the request reached the phone and was blocked before approval. Use the blocked app-request permission card, enable the intended scope for that bot and submit a fresh request. The previous denied record will not turn into success.

@@ -1,5 +1,9 @@
 # Performance and resource evidence
 
+## October 21, 2026 checkpoint
+
+Pass 8 development sample: 61.423 seconds, five observations; app CPU 0.45 s / 60.347 valid seconds (0.7457% of one core), daemon 0.02 s / 60.382 s (0.0331%); app PSS 65,864–88,913 KiB and RSS 200,528–222,124 KiB. Hosted calls overlapped collection. This is not idle/battery evidence or a controlled before/after comparison. Existing sparse collection remains running and unfinished; see [pass 8](engineering-pass-8.md).
+
 Measurements below are short development observations on the actual Fold. They are not a battery-life study or a guarantee of continuous Android background execution.
 
 | Observation | Result | Limits |

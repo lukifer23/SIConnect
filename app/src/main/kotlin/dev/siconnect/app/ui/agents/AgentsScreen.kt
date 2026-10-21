@@ -76,11 +76,18 @@ import dev.siconnect.core.*
         Text(pkg,Modifier.weight(1f));TextButton(onClick={onSemanticApp(a.grant.agentId,pkg,false)}) {Text("Remove")}
     }}
     var appPackage by rememberSaveable(a.grant.agentId) {mutableStateOf("")}
+    var appLabel by rememberSaveable(a.grant.agentId) {mutableStateOf("")}
+    var chooseApp by rememberSaveable(a.grant.agentId) {mutableStateOf(false)}
+    var manualPackage by rememberSaveable(a.grant.agentId) {mutableStateOf(false)}
     if(usable) {
-        OutlinedTextField(appPackage,{appPackage=it.take(200)},label={Text("App package, for example com.example.app")},singleLine=true,modifier=Modifier.fillMaxWidth())
+        OutlinedButton(onClick={chooseApp=true}) {Text("Choose installed app")}
+        if(appPackage.isNotBlank()) Text("Selected: ${appLabel.ifBlank {appPackage}}\n$appPackage",style=MaterialTheme.typography.bodySmall)
+        TextButton(onClick={manualPackage=!manualPackage}) {Text(if(manualPackage) "Hide manual package entry" else "Advanced: enter package manually")}
+        if(manualPackage) OutlinedTextField(appPackage,{appPackage=it.take(200);appLabel=""},label={Text("Exact Android package")},singleLine=true,modifier=Modifier.fillMaxWidth())
         Text("Allows this agent to click any accessible control and enter text in that app, including sends or deletes. Protected owner and lock screens remain excluded. This is separate from arbitrary shell access.",style=MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick={onSemanticApp(a.grant.agentId,appPackage.trim(),true)},enabled=appPackage.isNotBlank()) {Text("Allow clicks and text in this app")}
     }
+    if(chooseApp) InstalledAppPicker(appAllowances.toSet(),onSelect={appPackage=it.packageName;appLabel="${it.label} · ${it.version}";chooseApp=false},onClose={chooseApp=false})
     Text("Privileged shell",style=MaterialTheme.typography.titleLarge)
     Text(if(a.grant.shellMode==ShellMode.BROAD) "Broad automatic shell permission is enabled. This can change apps, settings and data." else "Arbitrary shell commands require the current approval policy.")
     if(usable) OutlinedButton(onClick={onShell(a)}) {Text(if(a.grant.shellMode==ShellMode.BROAD) "Review broad shell permission" else "Configure shell permission")}

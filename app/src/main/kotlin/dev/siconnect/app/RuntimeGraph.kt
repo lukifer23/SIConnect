@@ -40,6 +40,8 @@ class RuntimeGraph(val context: Context) {
     val approvals = AndroidApprovals(context)
     val engine = ExecutionEngine(settings.deviceId, registry, PolicyEngine(), requests, events, approvals,
         agents, { settings.controls.value }, scope)
+    val proposalStore = SqlProposalStore(db)
+    val proposals = ProposalCoordinator(settings.deviceId,proposalStore,registry,agents,engine,events)
     val skillRuns = SqlSkillRunStore(db)
     val skills = SkillCatalog(db, registry)
     val runner = DurableSkillRunner(engine, skillRuns)
@@ -59,6 +61,7 @@ class RuntimeGraph(val context: Context) {
         registerCapabilities(this)
         registerAutomationCapabilities(this)
         dev.siconnect.app.capabilities.registerWeatherCommuteCapabilities(this)
+        dev.siconnect.app.capabilities.registerProposalCapabilities(this)
         ready = scope.async {
             check(db.readableDatabase.rawQuery("PRAGMA quick_check", null).use { it.moveToFirst() && it.getString(0) == "ok" }) { "SQLite integrity check failed; database preserved for recovery" }
             if (agents.get("local-owner") == null) agents.put(AgentRecord(AgentGrant("local-owner", "Device owner", scopes=listOf("*"), autoApproveUpTo=RiskClass.LOW_IMPACT), "", System.currentTimeMillis(), tokenHint="local only"))
@@ -82,7 +85,12 @@ class RuntimeGraph(val context: Context) {
         }
         scope.launch {
             ready.await()
+            proposals.recover()
+        }
+        scope.launch {
+            ready.await()
             engine.recordUpdates.collect { record ->
+                runCatching {proposals.onRequest(record)}.onFailure {android.util.Log.e("SIConnect","Proposal reconciliation failed: ${it.javaClass.simpleName}")}
                 if (record.state.isTerminal) {
                     reminders.onRequestUpdated(record)
                     skillRuns.active().filter { it.pendingRequestId == record.requestId }.forEach {runCatching {runner.resume(it.runId)}}

@@ -75,3 +75,9 @@ Use Android's published notification PendingIntent/RemoteInput APIs for supporte
 Use adaptive Material navigation for Home, Agents, Automations, Activity and Settings while preserving one runtime state holder, policy and database. Split cohesive Compose components; do not fork execution logic into screens. Saveable drafts reduce accidental loss during Activity recreation, but only saving commits a schedule.
 
 Run now owns an independent frozen one-shot slot under the local-automation identity. It neither advances nor overwrites a saved schedule. SQLite records the manual run before WorkManager dispatch; duplicate delivery/reconciliation reuse its identity. Cancelling a queued run persists cancellation before a later worker can start it. Unknown external outcomes remain explicit.
+
+## Device-authoritative Action Inbox (pass 8)
+
+Proposals are persistent untrusted suggestions, not approvals or local-owner invocations. Use one immutable target/version/argument binding and one stable linked request, allocated transactionally before dispatch. Invoke through the existing engine as the proposing agent with REMOTE origin; retain the existing additional execution approval when required. Recover from the request store and never repeat an unknown outcome. There is no remote accept or grant-changing proposal tool. Proposal summaries are bounded and omit exact argument/source payloads; details remain agent-scoped. Schema 7 is additive.
+
+Accessibility configuration, actual service binding, lock state and foreground-window availability are separate observations. Android's private crashed-service set cannot be inferred by an ordinary APK. Do not silently rewrite special-access settings to repair instrumentation-induced force-stop state; prefer normal-process fixture validation after owner restoration. Keep conservative node identity checks until measured evidence justifies a specific change.

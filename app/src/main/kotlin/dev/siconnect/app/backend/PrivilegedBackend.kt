@@ -13,8 +13,15 @@ class PrivilegedBackend(private val settings: Settings, val shizuku: ShizukuBack
     fun detail()=if(kind==BackendKind.SHIZUKU) shizuku.status.value else directStatus.value
     suspend fun refresh() {
         if(kind==BackendKind.SHIZUKU) { shizuku.connect(); return }
-        directStatus.value=runCatching { withContext(Dispatchers.IO) { requireNotNull(DirectAuthority.service).identity() } }
-            .getOrElse { "Built-in service unavailable: ${it.javaClass.simpleName}. Run SIConnect setup once after reboot." }
+        val service=DirectAuthority.service
+        if(service==null) {directStatus.value="Built-in privileged service has not been started";return}
+        refreshDirectAuthority(service)
+    }
+    /** A late identity reply from a replaced/dead Binder cannot overwrite the current backend status. */
+    suspend fun refreshDirectAuthority(service:dev.siconnect.app.privileged.IPrivilegedShell) {
+        val detail=runCatching {withContext(Dispatchers.IO) {service.identity()}}
+            .getOrElse {"Built-in service unavailable: ${it.javaClass.simpleName}. Run SIConnect setup once after reboot."}
+        synchronized(DirectAuthority) {if(DirectAuthority.service?.asBinder()===service.asBinder()) directStatus.value=detail}
     }
     suspend fun execute(req: ShellRequest): ShellResult {
         if(kind==BackendKind.SHIZUKU) return shizuku.execute(req)

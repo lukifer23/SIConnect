@@ -18,7 +18,7 @@ import kotlinx.serialization.json.JsonObject
     measurements:JsonObject?,busy:Boolean,note:String,onReview:(RequestRecord)->Unit,onRequest:(String)->Unit,
     onAgent:(String)->Unit,onAgents:()->Unit,onConnect:()->Unit,onRestore:()->Unit,onAutomations:()->Unit,
     onActivity:()->Unit,onHealth:()->Unit,onStop:()->Unit,onResume:()->Unit,
-    onEnableSemantic:()->Unit,onEnableNotifications:()->Unit) {
+    onEnableSemantic:()->Unit,onEnableNotifications:()->Unit,onInbox:()->Unit) {
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
     val status=when { !controls.remoteExecutionEnabled->"Remote control paused";connection!=ConnectionState.ONLINE->"Disconnected";!nativeReady || !privilegedReady->"Limited";else->"Ready"}
@@ -53,6 +53,11 @@ import kotlinx.serialization.json.JsonObject
         if(note.isNotBlank()) Text(note,color=MaterialTheme.colorScheme.primary)
         state.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         @Composable fun attention() {
+            Text("Action Inbox",style=MaterialTheme.typography.titleLarge)
+            val proposed=state.proposals.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED)}
+            Text(if(proposed.isEmpty()) "No proposed follow-ups on the latest inbox page." else "${proposed.size} proposed follow-ups on the latest inbox page. Nothing executes until you accept.")
+            proposed.take(3).forEach {p->OutlinedCard(onClick=onInbox,modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(p.title,style=MaterialTheme.typography.titleMedium);Text("Agent …${p.agentId.takeLast(8)} · ${p.assessment.risk}",style=MaterialTheme.typography.bodySmall)}}}
+            OutlinedButton(onClick=onInbox) {Text("Review Action Inbox")}
             Text("Needs attention",style=MaterialTheme.typography.titleLarge)
             if(state.pending.isEmpty() && privilegedReady && connection==ConnectionState.ONLINE) Text("No pending approvals or connection problems.")
             state.pending.take(10).forEach {r->Card(Modifier.fillMaxWidth().clickable {onReview(r)}) {Column(Modifier.padding(16.dp)) {

@@ -16,6 +16,7 @@ data class ControlCenterSnapshot(
     val reminders:List<Reminder> = emptyList(),val automations:List<Automation> = emptyList(),
     val capabilities:List<CapabilityStatus> = emptyList(),val error:String?=null,
     val semanticEnabledInSettings:Boolean=false,
+    val proposals:List<ActionProposal> = emptyList(),
 )
 
 /** One retained metadata projection. No shell output is loaded to render overview screens. */
@@ -28,7 +29,7 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
         g.ready.await()
         mutable.subscriptionCount.map {it>0}.distinctUntilChanged().collectLatest {visible ->
         if(!visible) return@collectLatest
-        merge(refreshes,g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},
+        merge(refreshes,g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},g.proposals.updates,
             g.gateway.state.map {Unit},g.privileged.directStatus.map {Unit},g.shizuku.status.map {Unit},
             dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState.map {Unit},
             dev.siconnect.app.notifications.NotificationCaptureService.connectionState.map {Unit})
@@ -37,7 +38,8 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
                     g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)),
                     g.reminders.all().filter {it.state in setOf("SCHEDULED","BLOCKED","FIRING","AWAITING_APPROVAL")}.sortedBy {it.fireAtMs},
                     g.scheduler.all(),g.registry.statuses(),semanticEnabledInSettings=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-                        .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)})}
+                        .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)},
+                    proposals=g.proposals.list())}
                 catch(e:CancellationException) {throw e}
                 catch(e:Exception) {mutable.value=mutable.value.copy(error="Could not refresh: ${e.javaClass.simpleName}")}
             }

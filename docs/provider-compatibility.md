@@ -1,5 +1,11 @@
 # Provider compatibility
 
+## October 21, 2026 checkpoint
+
+Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
+
+Pass 8 retains the existing gateway and all original credential/grant hashes. Official hosted discovery reports 85 tools and seven read-only/native-shell checks passed. A fresh Hermes agent-level status/identity run succeeded. Fresh Grokbot/Dots application checks remain in progress; preservation of OAuth rows alone is not provider execution evidence. See [the current report](engineering-pass-8.md). Existing agents may need an explicit owner proposal-family grant; newly registered tools do not broaden existing scopes automatically.
+
 Updated October 20, 2026. Entries below describe actual SIConnect evidence, rather than assuming that every MCP product accepts the same authentication.
 
 | Client | Evidence | State |

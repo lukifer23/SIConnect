@@ -1,5 +1,11 @@
 # Capability coverage
 
+## October 21, 2026 checkpoint
+
+Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
+
+Pass 8 catalog: **85** actual hosted-discovered capabilities. Four new native `proposals.create/list/get/withdraw` tools are implemented through the existing registry/engine; remote proposal acceptance is deliberately absent. Physical SQLite/authenticated proposal/native execution and isolated migration passed. The real owner biometric Inbox UI and remaining semantic interruption/identity matrix remain unverified. Consult [pass 8 evidence](engineering-pass-8.md) before treating older table entries as current verification.
+
 Current development checkpoint: Android 0.5.0-dev (version code 6), SQLite 6, 81 registered tools. Implemented means registered production code exists. Physical evidence is listed separately. The catalog is generated from the installed registry; availability and scope are separate. Use `device.capabilities` for current state. Tool count changes with installed builds.
 
 | Family | Implemented | Physical evidence / remaining limits |
