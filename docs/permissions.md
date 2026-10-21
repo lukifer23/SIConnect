@@ -1,5 +1,9 @@
 # Permissions and owner control
 
+## Pass 9 checkpoint — October 21, 2026
+
+Accepting an Inbox suggestion submits the exact action under its original agent; it never adds a scope or standing grant. Review shows current denial/backend unavailability before authentication and explains when an additional execution approval is required. Current policy is rechecked after authentication and by the engine. Existing Dots/Grok/Hermes grants were not expanded. See [pass 9](engineering-pass-9.md).
+
 SIConnect has two permission layers. Android grants access to platform features; the owner grants each authenticated bot access to SIConnect capabilities. Connecting to the gateway or authorizing Cloudflare's management connector does not grant phone-control permissions.
 
 ## Daily workflow

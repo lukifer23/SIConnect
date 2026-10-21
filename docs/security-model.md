@@ -1,5 +1,9 @@
 # Security model
 
+## Pass 9 checkpoint — October 21, 2026
+
+Inbox acceptance now revalidates original-agent policy, availability and emergency stop after authentication, before allocating a request link. Preflight is guidance, never a permission grant. Transient retry requires a successful missing-record lookup and reuses the same ID; unknown outcomes are reconciled. The optional debug Inbox harness has no acceptance endpoint, uses expiring isolated credentials and is excluded from the minified release. Existing credentials/grants were unchanged. See [pass 9](engineering-pass-9.md).
+
 ## October 21, 2026 checkpoint
 
 Action Inbox trust boundary: proposal text/source references are untrusted display data. There is no remote accept/approve tool. Local acceptance requires fresh owner authentication and submits under the proposing identity, without changing scopes/standing grants or selecting LOCAL_OWNER origin. Existing revocation, emergency stop and exact-action approval remain authoritative. Proposal IDs/results are agent-scoped. Immutable action/version hashes, argument/text budgets, expiration, CAS resolution and stable execution IDs prevent silent replacement or duplicate acceptance. Broad-shell and trusted-gateway limitations are unchanged.

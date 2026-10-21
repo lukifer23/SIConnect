@@ -1,5 +1,9 @@
 # Architecture
 
+## Pass 9 checkpoint — October 21, 2026
+
+SQLite v8 adds indexed proposal metadata without replacing immutable detail JSON or device request authority. Inbox reads use keyset projections. The existing sparse runtime tick reconciles bounded accepted/request-state candidates and expired proposals; startup recovery pages active rows. Retries require an authoritative missing request and keep the same request ID/deadline. Recorded unknown outcomes are never resubmitted. See [pass 9](engineering-pass-9.md).
+
 ## October 21, 2026 checkpoint
 
 Action Inbox is a device-SQLite proposal layer over the existing engine. An authenticated agent can store/read/withdraw only its own proposals. Local owner acceptance atomically records a stable execution link, then submits the immutable versioned action as the original agent with REMOTE origin. Current policy and approval still apply. Recovery consults the existing request before any dispatch; it does not repeat unknown mutations. Lists use bounded keyset pagination and omit action arguments from remote summaries. Schema 7 adds indexed proposal rows without modifying existing tables.

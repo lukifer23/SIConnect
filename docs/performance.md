@@ -1,5 +1,9 @@
 # Performance and resource evidence
 
+## Pass 9 checkpoint — October 21, 2026
+
+Pass-9 agent-use observation: 61.011 seconds/five samples, app CPU 0.42 seconds over 59.983 valid seconds (0.7002% of one core), daemon 0.01/59.965 seconds (0.0167%), PSS 82,630–88,557 KiB. This was not a quiet-idle or before/after comparison. Metadata-only Inbox queries avoid decoding private argument payloads; no quantified speedup/token saving is claimed. The retained 24-hour soak is still incomplete; see [pass 9](engineering-pass-9.md) for interim counts and limitations.
+
 ## October 21, 2026 checkpoint
 
 Pass 8 development sample: 61.423 seconds, five observations; app CPU 0.45 s / 60.347 valid seconds (0.7457% of one core), daemon 0.02 s / 60.382 s (0.0331%); app PSS 65,864–88,913 KiB and RSS 200,528–222,124 KiB. Hosted calls overlapped collection. This is not idle/battery evidence or a controlled before/after comparison. Existing sparse collection remains running and unfinished; see [pass 8](engineering-pass-8.md).

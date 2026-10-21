@@ -1,5 +1,9 @@
 # Provider compatibility
 
+## Pass 9 checkpoint — October 21, 2026
+
+Fresh pass-9 evidence: seven official SDK phone calls and a Hermes agent native/shell pair passed on the installed 85-tool build; Hermes IDs matched SQLite. Grokbot background submission was not confirmed before its window became inaccessible; Dots remains blocked on safe existing-session access. Earlier provider successes below are historical. OAuth/bearer identities, scopes and gateway deployment were preserved. See [pass 9](engineering-pass-9.md).
+
 ## October 21, 2026 checkpoint
 
 Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.

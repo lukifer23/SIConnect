@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 7
-        versionName = "0.5.0-dev.2"
+        versionCode = 8
+        versionName = "0.5.0-dev.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

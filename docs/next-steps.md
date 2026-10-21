@@ -1,5 +1,9 @@
 # Next steps
 
+## Pass 9 checkpoint — October 21, 2026
+
+Pass 9 closed Inbox quota-expiration, transient pre-insert dispatch recovery and full-payload list-query gaps. Next: real owner Inbox acceptance/cancel; accessibility owner restoration and normal-process edge cases; explicitly selected Calendar/SAF CRUD; diagnostics Run now and configured commute delivery; existing Dots/Grokbot checks; complete retained soak. Do not repeat completed personal sends or broaden grants to pass smoke tests. See [pass 9](engineering-pass-9.md) and the owner harness instructions in [device testing](device-testing.md).
+
 ## October 21, 2026 checkpoint
 
 Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.

@@ -99,9 +99,26 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE INDEX proposals_agent_history ON proposals(agent_id,created_at DESC,proposal_id DESC)")
             db.execSQL("CREATE INDEX proposals_state ON proposals(state)")
         }
+        if (old < 8) {
+            // Additive projection: preserve original proposal JSON and linked execution identities.
+            listOf("expires_at INTEGER", "dispatch_expires_at INTEGER", "title TEXT", "summary TEXT",
+                "capability_id TEXT", "risk TEXT", "request_state TEXT", "error_code TEXT",
+                "verification TEXT", "dispatch_attempt_at INTEGER").forEach {
+                db.execSQL("ALTER TABLE proposals ADD COLUMN $it")
+            }
+            db.rawQuery("SELECT proposal_id,json FROM proposals",null).use {c ->
+                while(c.moveToNext()) {
+                    val proposal=AppJson.decodeFromString<dev.siconnect.core.ActionProposal>(c.getString(1))
+                    db.update("proposals",SqlProposalStore.metadata(proposal),"proposal_id=?",arrayOf(c.getString(0)))
+                }
+            }
+            db.execSQL("CREATE INDEX proposals_expiry ON proposals(state,expires_at,proposal_id)")
+            db.execSQL("CREATE INDEX proposals_dispatch ON proposals(state,dispatch_attempt_at)")
+        }
+
     }
 
-    companion object { const val VERSION = 7 }
+    companion object { const val VERSION = 8 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->

@@ -65,7 +65,7 @@ class ProposalDeviceTest {
             }
             SIConnectDb(context,name).use {helper->
                 val db=helper.writableDatabase
-                assertEquals(7,db.version)
+                assertEquals(SIConnectDb.VERSION,db.version)
                 assertEquals("ok",db.rawQuery("PRAGMA quick_check",null).use {it.moveToFirst();it.getString(0)})
                 assertEquals("fixture-preserved",db.rawQuery("SELECT json FROM agents WHERE agent_id='disposable'",null).use {it.moveToFirst();it.getString(0)})
                 assertEquals(0,db.rawQuery("SELECT count(*) FROM proposals",null).use {it.moveToFirst();it.getInt(0)})
@@ -73,4 +73,56 @@ class ProposalDeviceTest {
             }
         } finally {context.deleteDatabase(name)}
     }
+    @Test fun schemaSevenUpgradePreservesProposalAndMetadataListsAvoidPrivatePayloadDecoding() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val name="proposal-v7-${UUID.randomUUID()}.db"
+        val proposal=ActionProposal(proposalId="fixture-proposal",agentId="fixture-agent",deviceId="fixture-device",
+            createdAtMs=1000,expiresAtMs=5000,title="Disposable proposal",summary="Bounded summary",reason="Private fixture reason",
+            sourceType="fixture",sourceReference=null,capabilityId="device.status",capabilityVersion=1,
+            arguments=buildJsonObject {},assessment=RiskAssessment(RiskClass.READ_ONLY,"Fixture"),actionHash="fixture",idempotencyKey="fixture-key")
+        try {
+            SIConnectDb(context,name).use {helper->
+                val db=helper.writableDatabase
+                db.execSQL("DROP TABLE proposals")
+                db.execSQL("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,created_at INTEGER NOT NULL,state TEXT NOT NULL,revision INTEGER NOT NULL,request_id TEXT,json TEXT NOT NULL)")
+                db.execSQL("INSERT INTO proposals VALUES(?,?,?,?,?,?,?,?)",arrayOf<Any?>(proposal.proposalId,proposal.agentId,proposal.idempotencyKey,proposal.createdAtMs,proposal.state.name,0,null,AppJson.encodeToString(proposal)))
+                db.version=7
+            }
+            SIConnectDb(context,name).use {helper->
+                val store=SqlProposalStore(helper)
+                assertEquals(proposal,store.get(proposal.proposalId))
+                assertEquals(proposal.summary(),store.summaries(ProposalQuery(),2000).single())
+                // List rendering must remain independent of potentially large/invalid private arguments.
+                helper.writableDatabase.execSQL("UPDATE proposals SET json='invalid-private-payload' WHERE proposal_id=?",arrayOf(proposal.proposalId))
+                assertEquals(proposal.title,store.summaries(ProposalQuery(),2000).single().title)
+                assertEquals(ProposalState.EXPIRED,store.summaries(ProposalQuery(states=setOf(ProposalState.EXPIRED)),6000).single().state)
+                assertEquals(0,store.pendingCount(6000));assertEquals(0,store.activeCount(proposal.agentId,6000))
+                assertEquals("ok",helper.readableDatabase.rawQuery("PRAGMA quick_check",null).use {it.moveToFirst();it.getString(0)})
+            }
+        } finally {context.deleteDatabase(name)}
+    }
+
+    @Test fun metadataPaginationHandlesEqualTimestampsBothDirectionsAndAgentFilters() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val name="proposal-pages-${UUID.randomUUID()}.db"
+        try {
+            SIConnectDb(context,name).use {helper->
+                val store=SqlProposalStore(helper)
+                repeat(6) {i->store.insert(ActionProposal(proposalId="p$i",agentId=if(i%2==0) "a" else "b",deviceId="test",
+                    createdAtMs=1000,expiresAtMs=5000,title="Fixture $i",summary="Summary",reason="Reason",sourceType="fixture",sourceReference=null,
+                    capabilityId="device.status",capabilityVersion=1,arguments=buildJsonObject {},assessment=RiskAssessment(RiskClass.READ_ONLY,"Fixture"),actionHash="fixture",idempotencyKey="key$i"))}
+                for(oldest in listOf(false,true)) {
+                    val first=store.summaries(ProposalQuery(limit=3,oldestFirst=oldest),2000)
+                    val second=store.summaries(ProposalQuery(limit=3,cursorMs=first.last().createdAtMs,cursorId=first.last().proposalId,oldestFirst=oldest),2000)
+                    val expected=(0..5).map {"p$it"}.let {if(oldest) it else it.reversed()}
+                    assertEquals(expected,(first+second).map {it.proposalId})
+                }
+                assertEquals(listOf("p4","p2","p0"),store.summaries(ProposalQuery(agentId="a"),2000).map {it.proposalId})
+                assertEquals(6,store.pendingCount(2000));assertEquals(0,store.pendingCount(6000))
+                assertTrue(store.summaries(ProposalQuery(states=setOf(ProposalState.PROPOSED)),6000).isEmpty())
+                assertEquals(6,store.summaries(ProposalQuery(states=setOf(ProposalState.EXPIRED)),6000).size)
+            }
+        } finally {context.deleteDatabase(name)}
+    }
+
 }

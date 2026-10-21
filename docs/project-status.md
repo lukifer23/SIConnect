@@ -1,5 +1,9 @@
 # Project status
 
+## Pass 9 checkpoint — October 21, 2026
+
+Current checkpoint: **0.5.0-dev.3 / code 8**, SQLite **v8**, **85** hosted tools. Inbox expiration/quota recovery, same-ID dispatch maintenance, indexed metadata lists and owner-policy preflight are implemented. All 48 core, 36 Android JVM, 13 Python and 10 gateway tests passed; four targeted physical SQLite/native-execution cases and seven hosted calls passed. Fresh Hermes native/shell IDs matched SQLite. Owner Inbox authentication, semantic restoration, designated Calendar/SAF resources and fresh Dots/Grokbot checks remain open. See [pass 9](engineering-pass-9.md). Earlier checkpoints below are historical.
+
 ## October 21, 2026 checkpoint
 
 Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.

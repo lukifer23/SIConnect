@@ -82,3 +82,9 @@ Discover current actions with the exact key and originating package. Notificatio
 ## Automation editing or Run now
 
 Saved schedule state and an active/manual run are separate. Saveable form fields survive ordinary Activity recreation but must be saved before they become a durable schedule. Run now queues one independent run without moving the saved next time. Reopen that run to inspect steps/results or cancel it. A queued cancellation remains cancelled before worker start. A cancelled side-effecting action may remain `UNKNOWN_OUTCOME`; inspect the original request instead of assuming nothing happened. Missing local-automation scope and Android special access are displayed independently.
+
+## Accepted proposal has no execution record
+
+Pass 9 retains the linked request identity before dispatch. If insertion fails transiently, the Inbox reports `DISPATCH_NOT_RECORDED`; existing sparse maintenance retries that same identity until its deadline. A failed database lookup is not treated as proof of absence. Once an execution exists, inspect its linked result instead of proposing/resubmitting a mutation. `UNKNOWN_OUTCOME` may mean the side effect happened and must not be blindly retried. Current agent revocation, scope, backend availability and emergency stop remain authoritative.
+
+Expired unopened proposals no longer consume the active quota. Inbox filters and both sort orders use metadata-only keyset queries; Home counts the full unexpired pending queue. See [pass 9](engineering-pass-9.md).

@@ -38,7 +38,7 @@ fun registerProposalCapabilities(g:RuntimeGraph) {
         // Lists omit exact arguments, source content and assessment shell text. Fetch one proposal for review.
         buildJsonObject {
             put("proposalId",p.proposalId);put("title",p.title);put("summary",p.summary.take(240));put("state",p.state.name)
-            put("createdAtMs",p.createdAtMs);put("expiresAtMs",p.expiresAtMs);put("capabilityId",p.capabilityId);put("risk",p.assessment.risk.name)
+            put("createdAtMs",p.createdAtMs);put("expiresAtMs",p.expiresAtMs);put("capabilityId",p.capabilityId);put("risk",p.risk.name)
             p.linkedRequestId?.let {put("linkedRequestId",it)};p.requestState?.let {put("requestState",it.name)}
         }
     }))}}

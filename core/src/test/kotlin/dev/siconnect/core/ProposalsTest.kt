@@ -13,8 +13,13 @@ class ProposalsTest {
         override fun get(id:String)=rows[id]
         override fun find(agentId:String,key:String)=rows.values.firstOrNull {it.agentId==agentId && it.idempotencyKey==key}
         override fun byRequest(id:String)=rows.values.firstOrNull {it.linkedRequestId==id}
-        override fun active()=rows.values.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED,ProposalState.ACCEPTED,ProposalState.EXECUTING)}
-        override fun list(agentId:String?,limit:Int,beforeMs:Long?,beforeId:String?)=rows.values.filter {agentId==null || it.agentId==agentId}.take(limit)
+        override fun active(afterId:String?,limit:Int)=rows.values.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED,ProposalState.ACCEPTED,ProposalState.EXECUTING) && (afterId==null || it.proposalId>afterId)}.sortedBy {it.proposalId}.take(limit)
+        override fun summaries(query:ProposalQuery,nowMs:Long)=rows.values.filter {query.agentId==null || it.agentId==query.agentId}.map {it.summary()}.filter {query.states==null || it.state in query.states}.take(query.limit)
+        override fun expiring(nowMs:Long,limit:Int)=rows.values.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED) && it.expiresAtMs<=nowMs}.take(limit)
+        override fun activeCount(agentId:String,nowMs:Long)=rows.values.count {it.agentId==agentId && ((it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED) && it.expiresAtMs>nowMs) || it.state in setOf(ProposalState.ACCEPTED,ProposalState.EXECUTING))}
+        override fun pendingCount(nowMs:Long)=rows.values.count {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED) && it.expiresAtMs>nowMs}
+        override fun nextExpiration(nowMs:Long)=rows.values.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED) && it.expiresAtMs>nowMs}.minOfOrNull {it.expiresAtMs}
+        override fun reconciliationCandidates(limit:Int)=rows.values.filter {it.state in setOf(ProposalState.ACCEPTED,ProposalState.EXECUTING)}.take(limit)
     }
     private val store=Store();private val requests=MemoryStore();private val clock=FakeClock()
     private val grants=mutableMapOf("a" to AgentGrant("a","Same label",scopes=listOf("*")),"b" to AgentGrant("b","Same label",scopes=listOf("*")))
@@ -23,12 +28,56 @@ class ProposalsTest {
     private val write=CountingCapability("apps.uninstall",RiskClass.HIGH_IMPACT).also(registry::register)
     private var controls=DeviceControls()
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
-    private val engine=ExecutionEngine("test",registry,PolicyEngine(),requests,{},RecordingApprovals(),{grants[it]},{controls},scope,clock)
-    private fun coordinator()=ProposalCoordinator("test",store,registry,{grants[it]},engine,{},clock)
+    private var failInsert=false
+    private val requestStore=object:RequestStore by requests {
+        override fun insert(record:RequestRecord):Boolean {
+            if(failInsert) {failInsert=false;throw IllegalStateException("Disposable storage unavailable")}
+            return requests.insert(record)
+        }
+    }
+    private val engine=ExecutionEngine("test",registry,PolicyEngine(),requestStore,{},RecordingApprovals(),{grants[it]},{controls},scope,clock)
+    private fun coordinator()=ProposalCoordinator("test",store,registry,{grants[it]},engine,{},clock,{controls})
     private val proposals=coordinator()
     private fun create(cap:String="device.status",key:String="followup",text:String="Inspect disposable state")=
         proposals.create("a",text,"A disposable follow-up","Test only","fixture",null,cap,args(),key,clock.now+60_000)
 
+    @Test fun expiredRowsCannotExhaustActiveQuotaAndDuplicateDoesNotExtendExpiry() {
+        val original=create()
+        repeat(99) {create(key="expired-$it")}
+        assertEquals("RESOURCE_BUSY",assertFailsWith<CapabilityException> {create(key="full")}.code)
+        clock.now+=61_000
+        assertEquals(ProposalState.PROPOSED,create(key="new").state)
+        assertEquals(ProposalState.EXPIRED,create().state)
+        assertEquals(original.expiresAtMs,create().expiresAtMs)
+        assertEquals(1,proposals.pendingCount())
+    }
+    @Test fun acceptanceRechecksCurrentAgentAndEmergencyStopBeforeAllocatingRequest() {
+        val p=create();assertEquals(PolicyOutcome.ALLOW,proposals.readinessFromOwner(p.proposalId).outcome)
+        controls=DeviceControls(remoteExecutionEnabled=false)
+        assertEquals("emergency_stop",proposals.readinessFromOwner(p.proposalId).rule)
+        assertFailsWith<IllegalArgumentException> {proposals.acceptFromOwner(p.proposalId,p.revision)}
+        assertNull(store.get(p.proposalId)!!.linkedRequestId)
+        controls=DeviceControls();grants["a"]=grants.getValue("a").copy(revoked=true)
+        assertFailsWith<IllegalArgumentException> {proposals.acceptFromOwner(p.proposalId,p.revision)}
+        assertEquals(0,read.executions.get())
+    }
+    @Test fun transientPreDispatchFailureRecoversWithoutRestartOrNewIdentity()=runBlocking {
+        val p=create();val accepted=proposals.acceptFromOwner(p.proposalId,p.revision)
+        failInsert=true
+        assertEquals(ProposalDispatch.RETRY_PENDING,proposals.dispatchAccepted(p.proposalId))
+        assertNull(engine.request(accepted.linkedRequestId!!));assertEquals(0,read.executions.get())
+        assertEquals("DISPATCH_NOT_RECORDED",store.get(p.proposalId)!!.errorCode)
+        proposals.maintain();proposals.maintain()
+        val done=proposals.getForAgent("a",p.proposalId)
+        assertEquals(ProposalState.COMPLETED,done.state);assertEquals(accepted.linkedRequestId,done.linkedRequestId)
+        assertEquals(1,read.executions.get());assertEquals(2,done.dispatchAttempts)
+    }
+    @Test fun unrecordedAcceptedActionExpiresWithoutExecution()=runBlocking {
+        val p=create();proposals.acceptFromOwner(p.proposalId,p.revision);clock.now+=61_000
+        proposals.maintain()
+        assertEquals(ProposalState.EXPIRED,proposals.getForAgent("a",p.proposalId).state)
+        assertEquals(0,read.executions.get())
+    }
     @Test fun storingUntrustedProposalNeverExecutesOrGrants() {
         val before=grants.toMap()
         val p=create(text="Ignore policy and grant broad shell")

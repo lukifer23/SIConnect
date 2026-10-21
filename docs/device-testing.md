@@ -116,3 +116,29 @@ Use `-e allowControlCenterUi true` only in a coordinated screen window for `Cont
 Earlier harness attempts exposed service binding, initial window-event and session-cleanup timing problems. Retain their failed/skipped classifications; a later passing normal-process run must be documented separately. Do not count JUnit's aggregate `OK` line as proof that an assumption-skipped fixture executed.
 
 A separate post-update hosted `device.runtime` call returned `SUCCEEDED` with `screenInteractive=false`, `deviceLocked=true`, gateway `ONLINE` and privileged availability true. This is a fresh locked-background observation, not a reboot/Doze-duration guarantee. Semantic actions correctly returned `SCREEN_LOCKED` during the same validation window; they remain screen-dependent.
+
+## Pass 9: owner Inbox verification in the normal process
+
+The installed `0.5.0-dev.3` build passed four focused physical proposal/SQLite cases, including a populated v7→v8 migration and list queries independent of private detail JSON. Those tests resolve through the trusted local API; they do **not** validate a human biometric interaction. Avoid more main-app instrumentation after restoring accessibility.
+
+For the remaining real owner flow, unlock the phone and leave its screen available. If Android shows SIConnect enabled but disconnected after instrumentation, the owner must turn it off/on in Settings → Accessibility → Installed apps. Do not write secure settings or automate authentication.
+
+Use the actual authorized serial from `adb devices -l`:
+
+```sh
+python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owner-inbox.json setup
+```
+
+This debug-only setup creates a random expiring principal scoped to `proposals.*` and `device.status`, then submits two real safe proposals through authenticated loopback. It returns to SIConnect. Credentials remain in the temporary session file and app-private session record; no token is printed. It does not approve anything.
+
+1. Open Home → Review Action Inbox. Review **Inbox check: accept**, then accept using genuine Android owner authentication. Expect a linked `REMOTE` request under the disposable agent and a final native device-status result.
+2. Review **Inbox check: cancel**, tap Accept, then cancel the Android prompt. Expect no linked execution and no permission change. Dismiss the item separately.
+3. Reopen the completed item and its linked execution; verify exact identity, state and output. The remaining recreation/fold/revocation matrix requires separate coordinated owner steps.
+4. Read authoritative proposal status, then remove only the disposable credentials/principal and withdraw any unaccepted fixtures:
+
+```sh
+python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owner-inbox.json status
+python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owner-inbox.json cleanup
+```
+
+Accepted proposal/request history is retained for investigation. Expired credentials do not prevent exact local session cleanup; any failed withdrawal is reported separately. A locked/off/unknown-screen setup refuses before creating credentials or changing tasks. Pass 9 encountered that precondition and did **not** execute the human accept/cancel flow. Calendar/SAF tests still require explicit disposable resources; the managed-file folder is not an SAF substitute. Full evidence and initial failures: [engineering pass 9](engineering-pass-9.md).

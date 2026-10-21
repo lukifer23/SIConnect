@@ -72,7 +72,8 @@ class SemanticUiFixtureActivity : Activity() {
             }
             return
         }
-        if (intent.getBooleanExtra("semanticHarness", false)) {
+        val inboxHarness=intent.getBooleanExtra("ownerInboxHarness", false)
+        if (intent.getBooleanExtra("semanticHarness", false) || inboxHarness) {
             requireSession(session)
             graph.scope.launch {
                 graph.ready.await()
@@ -80,8 +81,8 @@ class SemanticUiFixtureActivity : Activity() {
                     val file = sessionFile(requireNotNull(session))
                     if (!file.exists()) {
                         val id = "semantic-harness:$session"; val token = Settings.randomToken("sia_")
-                        graph.agents.put(AgentRecord(AgentGrant(id, "Disposable semantic harness", scopes = listOf("ui.*"), autoApproveUpTo = RiskClass.HIGH_IMPACT,
-                            expiresAtMs = System.currentTimeMillis() + 10 * 60_000), Settings.sha256Hex(token), System.currentTimeMillis(), tokenHint = "disposable test"))
+                        graph.agents.put(AgentRecord(AgentGrant(id, if(inboxHarness) "Disposable Inbox review" else "Disposable semantic harness", scopes = if(inboxHarness) listOf("proposals.*","device.status") else listOf("ui.*"), autoApproveUpTo = if(inboxHarness) RiskClass.LOW_IMPACT else RiskClass.HIGH_IMPACT,
+                            expiresAtMs = System.currentTimeMillis() + (if(inboxHarness) 30 else 10) * 60_000), Settings.sha256Hex(token), System.currentTimeMillis(), tokenHint = "disposable test"))
                         file.writeText(buildJsonObject { put("sessionId", session); put("agentId", id); put("token", token) }.toString())
                         file.setReadable(false, false); file.setReadable(true, true); file.setWritable(false, false); file.setWritable(true, true)
                     }

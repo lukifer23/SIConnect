@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime, Android 0.5.0-dev.2 (versionCode 7), SQLite schema 7.** The installed registry discovers 85 tools through the existing gateway. The latest in-place upgrade preserved existing agents, grant/credential hashes and reminders. Fresh hosted native/shell checks and real Grokbot/Hermes read-only sessions passed. See the [pass 8 evidence and remaining gaps](docs/engineering-pass-8.md).
+> **Status: working development runtime, Android 0.5.0-dev.3 (versionCode 8), SQLite schema 8.** The installed registry discovers 85 tools through the existing gateway. The Action Inbox now has bounded expiration/dispatch recovery, metadata-only pagination, filtering and current-policy guidance. The in-place upgrade preserved all original grants/credentials and reminders; fresh hosted and Hermes native/shell checks passed. Owner Inbox authentication, Calendar/SAF test resources and fresh Dots/Grokbot checks remain pending. See [pass 9 evidence and limitations](docs/engineering-pass-9.md).
 
 The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
 

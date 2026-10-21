@@ -1,5 +1,9 @@
 # Architecture decisions
 
+## Pass 9 checkpoint — October 21, 2026
+
+Proposal list metadata is stored transactionally alongside its immutable detail payload in SQLite v8. Recovery uses the existing maintenance loop and device execution identity, with no Cloudflare action queue or second execution engine. Current original-agent policy is checked before owner authentication and again on acceptance; the execution engine remains authoritative afterward. See [pass 9](engineering-pass-9.md).
+
 Short records of decisions and the alternatives that were rejected. Newest last.
 
 ## ADR-001: Bundled privileged Binder service; optional Shizuku

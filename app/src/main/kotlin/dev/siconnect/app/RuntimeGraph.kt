@@ -41,7 +41,7 @@ class RuntimeGraph(val context: Context) {
     val engine = ExecutionEngine(settings.deviceId, registry, PolicyEngine(), requests, events, approvals,
         agents, { settings.controls.value }, scope)
     val proposalStore = SqlProposalStore(db)
-    val proposals = ProposalCoordinator(settings.deviceId,proposalStore,registry,agents,engine,events)
+    val proposals = ProposalCoordinator(settings.deviceId,proposalStore,registry,agents,engine,events,controls={settings.controls.value})
     val skillRuns = SqlSkillRunStore(db)
     val skills = SkillCatalog(db, registry)
     val runner = DurableSkillRunner(engine, skillRuns)
@@ -99,7 +99,7 @@ class RuntimeGraph(val context: Context) {
         }
         scope.launch {
             ready.await()
-            while (isActive) { delay(60_000); scheduler.reconcileActive(); engine.expireStale(); skillRuns.active().filter { it.deadlineMs <= System.currentTimeMillis() || it.pendingRequestId?.let {id->requests.get(id)?.state?.isTerminal}==true }.forEach {runCatching {runner.resume(it.runId)}} }
+            while (isActive) { delay(60_000); try {proposals.maintain()} catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {android.util.Log.e("SIConnect","Proposal maintenance deferred: ${e.javaClass.simpleName}")}; scheduler.reconcileActive(); engine.expireStale(); skillRuns.active().filter { it.deadlineMs <= System.currentTimeMillis() || it.pendingRequestId?.let {id->requests.get(id)?.state?.isTerminal}==true }.forEach {runCatching {runner.resume(it.runId)}} }
         }
         scope.launch {ready.await();privileged.directStatus.collect {gateway.refreshCatalog()}}
         scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}

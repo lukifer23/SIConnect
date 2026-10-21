@@ -55,8 +55,8 @@ import kotlinx.serialization.json.JsonObject
         @Composable fun attention() {
             Text("Action Inbox",style=MaterialTheme.typography.titleLarge)
             val proposed=state.proposals.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED)}
-            Text(if(proposed.isEmpty()) "No proposed follow-ups on the latest inbox page." else "${proposed.size} proposed follow-ups on the latest inbox page. Nothing executes until you accept.")
-            proposed.take(3).forEach {p->OutlinedCard(onClick=onInbox,modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(p.title,style=MaterialTheme.typography.titleMedium);Text("Agent …${p.agentId.takeLast(8)} · ${p.assessment.risk}",style=MaterialTheme.typography.bodySmall)}}}
+            Text(if(state.pendingProposalCount==0) "No follow-ups waiting for review." else "${state.pendingProposalCount} follow-ups waiting for review. Nothing executes until you accept.")
+            proposed.take(3).forEach {p->OutlinedCard(onClick=onInbox,modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(p.title,style=MaterialTheme.typography.titleMedium);Text("Agent …${p.agentId.takeLast(8)} · ${p.risk}",style=MaterialTheme.typography.bodySmall)}}}
             OutlinedButton(onClick=onInbox) {Text("Review Action Inbox")}
             Text("Needs attention",style=MaterialTheme.typography.titleLarge)
             if(state.pending.isEmpty() && privilegedReady && connection==ConnectionState.ONLINE) Text("No pending approvals or connection problems.")
