@@ -23,7 +23,13 @@ class RuntimeDeviceTest {
         Assert.assertEquals(RequestState.SUCCEEDED,record.state)
         Assert.assertEquals(android.os.Build.MODEL,record.result!!.output.jsonObject["model"]!!.jsonPrimitive.content)
         val reopened=SIConnectDb(g.context)
-        Assert.assertEquals(record,SqlRequestStore(reopened).get(id)); reopened.close()
+        Assert.assertEquals(record,SqlRequestStore(reopened).get(id))
+        val summary=SqlRequestStore(reopened).recentSummaries().single {it.requestId==id}
+        Assert.assertEquals(record.agentId,summary.agentId)
+        Assert.assertEquals(record.capabilityId,summary.capabilityId)
+        Assert.assertEquals(record.state,summary.state)
+        Assert.assertEquals(record.updatedAtMs,summary.updatedAtMs)
+        reopened.close()
         Assert.assertEquals(record.requestId,g.engine.submit(req,Origin.LOCAL_OWNER).requestId)
         try { g.engine.submit(req.copy(capabilityId="device.battery"),Origin.LOCAL_OWNER); Assert.fail("collision accepted") }
         catch(e: CapabilityException) { Assert.assertEquals("IDEMPOTENCY_CONFLICT",e.code) }

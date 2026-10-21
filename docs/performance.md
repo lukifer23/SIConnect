@@ -4,7 +4,7 @@ Measurements below are short development observations on the actual Fold. They a
 
 | Observation | Result | Limits |
 | --- | --- | --- |
-| Installed UI-checkpoint debug APK | 48,955,141 bytes | Debug build; subsequent source/build changes can alter size |
+| Installed Activity-checkpoint debug APK | 48,955,141 bytes | Debug build; subsequent source/build changes can alter size |
 | Deterministic Hermes install flow | Five successful MCP calls: 681, 809, 2661, 706 and 790 ms; one bounded three-second installation check interval | About nine seconds for measured calls plus interval; excludes agent startup/reasoning; official app package/version/Play installer verified |
 | Short Hermes agent trace | 35 tool results; 21 ordinary operations p50 717 ms / p95 927 ms | One mixed interactive run, not controlled idle profiling |
 | Scripts containing UI hierarchy capture | 14 samples p50 7076 ms, maximum 120223 ms | These scripts also contained sleeps/other work; do not attribute the combined delay to Android hierarchy capture alone |
@@ -17,3 +17,15 @@ Current implementation uses one outbound WebSocket with a 90-second protocol pin
 Next measurements should record connected idle foreground/background/screen-off intervals, process identity, CPU deltas, memory, network bytes, wakeups/reconnection count and retained log growth. Preserve raw captures privately. Record other bot activity so it is not mislabeled idle. Compare equivalent intervals before optimizing; do not extrapolate one short sample into 24-hour battery drain.
 
 After the approval-window gateway deployment, an official MCP v2 read-only device-status call succeeded on the real phone in 258 ms. Its stored request deadline was approximately fifteen minutes after creation, confirming the new live envelope. One call does not establish a latency percentile.
+
+A separate 60.487-second connected foreground observation collected seven process samples through `tools/profile_device.py`. The app used 0.24 CPU-seconds (0.4% of one CPU core across that interval); the bundled daemon's counters did not increase. App PSS ranged from 127,060 to 127,960 KiB. A passive UI hierarchy read occurred during this interval. This establishes a short observed CPU/memory baseline only; it does not establish screen-off behavior, network/radio cost, idle battery drain or a before/after optimization comparison.
+
+To repeat on an explicitly selected authorized device:
+
+```sh
+python3 tools/profile_device.py --serial <serial> --out /absolute/private/connected-profile.json --duration-seconds 60 --interval-seconds 10
+```
+
+The harness reads actual process CPU counters and memory, records process changes instead of inferring deltas across them, and writes outside the repository with mode 0600. It does not change phone settings, acquire a device wakelock or claim to measure battery drain. Sampling itself has overhead. Annotate foreground/background/screen state and other activity separately.
+
+The subsequent Activity update avoids deserializing full request results during Home refresh. It reads indexed recent metadata, defers full output to an explicit selection, and reuses one agent-list query per refresh. The physical UI and SQLite projection were exercised. A controlled equivalent before/after memory or power comparison has not been completed, so no measured savings are claimed.

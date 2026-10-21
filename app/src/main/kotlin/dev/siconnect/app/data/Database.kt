@@ -83,6 +83,9 @@ inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
     buildList { while (c.moveToNext()) add(block(c)) }
 }
 
+/** Small history projection: listing activity never decodes potentially large shell output. */
+data class RequestSummary(val requestId:String,val agentId:String,val capabilityId:String,val state:RequestState,val createdAtMs:Long,val updatedAtMs:Long)
+
 class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     override fun insert(record: RequestRecord): Boolean {
         val w = db.writableDatabase
@@ -128,6 +131,13 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
         return db.readableDatabase.query("requests", arrayOf("json"), where, states?.map { it.name }?.toTypedArray(),
             null, null, "updated_at DESC", limit.toString()).mapAll { decode(it.getString(0)) }
     }
+
+    fun recentSummaries(limit:Int=100):List<RequestSummary> = db.readableDatabase.query("requests",
+        arrayOf("request_id","agent_id","capability_id","state","created_at","updated_at"),null,null,null,null,"updated_at DESC, request_id DESC",limit.coerceIn(1,500).toString())
+        .mapAll { RequestSummary(it.getString(0),it.getString(1),it.getString(2),RequestState.valueOf(it.getString(3)),it.getLong(4),it.getLong(5)) }
+
+    fun recentDeniedApps():List<RequestRecord> = db.readableDatabase.query("requests",arrayOf("json"),"state = ? AND capability_id LIKE ?",
+        arrayOf(RequestState.DENIED.name,"apps.%"),null,null,"updated_at DESC","10").mapAll {decode(it.getString(0))}
 
     fun prune(olderThanMs: Long): Int {
         val terminal = RequestState.TERMINAL.joinToString(",") { "'${it.name}'" }

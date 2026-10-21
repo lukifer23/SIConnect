@@ -55,7 +55,9 @@ open class MainActivity: ComponentActivity() {
         var advanced by remember { mutableStateOf(false) }
         var changed by remember { mutableIntStateOf(0) }
         var pending by remember { mutableStateOf(emptyList<RequestRecord>()) }
-        var recent by remember { mutableStateOf(emptyList<RequestRecord>()) }
+        var recent by remember { mutableStateOf(emptyList<RequestSummary>()) }
+        var deniedApps by remember { mutableStateOf(emptyList<RequestRecord>()) }
+        var activity by rememberSaveable { mutableStateOf(false) }
         var note by remember { mutableStateOf("") }
         var busy by remember { mutableStateOf(false) }
         var setup by remember { mutableStateOf(false) }
@@ -83,10 +85,10 @@ open class MainActivity: ComponentActivity() {
         var notifications by remember { mutableStateOf(getSystemService(NotificationManager::class.java).areNotificationsEnabled()) }
         fun work(block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: Exception) { note=e.message ?: "Action failed" } finally { busy=false } } }
         LaunchedEffect(changed,health,connection,permissionRevision) {
-            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(50); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); bots=g.agents.all().filter { !it.grant.agentId.startsWith("local-") && !it.grant.revoked };labels=g.agents.all().associate { it.grant.agentId to botDisplayName(it,g.agents.all()) }
+            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recentSummaries(100);deniedApps=g.requests.recentDeniedApps(); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); val agentRecords=g.agents.all();bots=agentRecords.filter { !it.grant.agentId.startsWith("local-") && !it.grant.revoked };labels=agentRecords.associate { it.grant.agentId to botDisplayName(it,agentRecords) }
                 reminders=g.reminders.all().filter { it.state in setOf("SCHEDULED","BLOCKED") }.sortedBy { it.fireAtMs };exactAccess=g.reminders.canScheduleExact()
                 reminder=reminder?.let { g.reminders.get(it.id) }
-            } }
+            }.onFailure {note="Could not load activity: ${it.javaClass.simpleName}"} }
             notifications=getSystemService(NotificationManager::class.java).areNotificationsEnabled()
         }
         LaunchedEffect(reviewId,changed) {
@@ -136,14 +138,14 @@ open class MainActivity: ComponentActivity() {
                 Card(shape=RoundedCornerShape(24.dp)) { Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Ready for your bot" else "Connect your phone",style=MaterialTheme.typography.headlineSmall)
                     Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Requests run on this phone. You approve sensitive actions here." else "Enable access, then connect your bot. Every action is checked and logged.",color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    recent.firstOrNull { it.origin==Origin.REMOTE.name }?.let { last ->
+                    recent.firstOrNull { r -> bots.any {it.grant.agentId==r.agentId} }?.let { last ->
                         Text("Last bot request: ${java.time.Instant.ofEpochMilli(last.createdAtMs).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm:ss a"))}",style=MaterialTheme.typography.labelLarge)
                     }
                     Button(onClick={setup=true},modifier=Modifier.fillMaxWidth().height(52.dp)) { Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connection details" else "Connect a bot") }
                     if(config.baseUrl.isNotBlank()) Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
                 } }
-                recent.filter { it.state==RequestState.DENIED && it.policy?.rule=="agent_scope" && it.capabilityId.startsWith("apps.") }
-                    .distinctBy { it.agentId }.filter { r -> bots.any { it.grant.agentId==r.agentId && !it.grant.scopes.contains("apps.*") && !it.grant.scopes.contains("*") } }.take(3).forEach { r ->
+                deniedApps.filter { it.policy?.rule in setOf("agent_scope","agent_denylist") }
+                    .distinctBy { it.agentId }.filter { r -> bots.any { bot -> bot.grant.agentId==r.agentId && (bot.grant.scopes.none { PolicyEngine.globMatches(it,r.capabilityId) } || bot.grant.denied.any { PolicyEngine.globMatches(it,r.capabilityId) }) } }.take(3).forEach { r ->
                         Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                             Text("${labels[r.agentId] ?: "Your bot"} needs app permission",style=MaterialTheme.typography.titleMedium)
                             Text("The phone received this request and blocked it. This connection is working; app management is not enabled for this bot.")
@@ -168,6 +170,7 @@ open class MainActivity: ComponentActivity() {
                     bots.sortedByDescending { bot -> recent.firstOrNull { it.agentId==bot.grant.agentId }?.createdAtMs ?: 0 }.forEach { bot -> Card(onClick={manageBotId=bot.grant.agentId},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                         Text(botDisplayName(bot,bots),style=MaterialTheme.typography.titleMedium)
                         Text(if(bot.grant.shellMode==ShellMode.BROAD) "Device control always allowed" else "Sensitive actions ask first",style=MaterialTheme.typography.bodySmall)
+                        Text("Tap to review or change permissions",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
                         val last=recent.firstOrNull { it.agentId==bot.grant.agentId }
                         Text(last?.let { "Last request: ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it.updatedAtMs))} · ${it.state.name.lowercase().replace('_',' ')}" } ?: "Paired locally · no tool call recorded yet",style=MaterialTheme.typography.bodySmall)
                     } } }
@@ -189,10 +192,13 @@ open class MainActivity: ComponentActivity() {
                     } }
                 }
                 if(recent.isNotEmpty()) {
-                    Text("Bot activity",style=MaterialTheme.typography.titleLarge)
-                    recent.take(8).forEach { r -> Row(Modifier.fillMaxWidth().clickable { inspected=r }.padding(vertical=6.dp)) {
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        Text("Activity",style=MaterialTheme.typography.titleLarge,modifier=Modifier.weight(1f))
+                        TextButton(onClick={activity=true}) {Text("View all")}
+                    }
+                    recent.take(8).forEach { r -> Row(Modifier.fillMaxWidth().clickable { work { inspected=g.requests.get(r.requestId) } }.padding(vertical=6.dp)) {
                         Column(Modifier.weight(1f)) { Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId,style=MaterialTheme.typography.bodyMedium); Text("${labels[r.agentId] ?: r.agentId} · ${java.time.Instant.ofEpochMilli(r.createdAtMs).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm:ss a"))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
-                        Text(when(r.state) {RequestState.SUCCEEDED->"Completed";RequestState.AWAITING_APPROVAL->"Waiting";RequestState.UNKNOWN_OUTCOME->"Check outcome";else->r.state.name.lowercase().replaceFirstChar { it.uppercase() }},style=MaterialTheme.typography.labelMedium)
+                        Text(actionStateLabel(r.state),style=MaterialTheme.typography.labelMedium)
                     } }
                 }
                 HorizontalDivider()
@@ -204,6 +210,7 @@ open class MainActivity: ComponentActivity() {
                 Text(if(health.startsWith("Ready")) "On-device engine ready" else health,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        if(activity) ActivityDialog(recent,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> work {inspected=g.requests.get(id)}})
         manageBot?.let { bot -> AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text(botDisplayName(bot,bots))},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) { Text("Apps");Text("Install, inspect and remove apps. Sensitive actions still ask first.",style=MaterialTheme.typography.bodySmall) }
@@ -266,7 +273,11 @@ open class MainActivity: ComponentActivity() {
         }) }
         inspected?.let { r -> AlertDialog(onDismissRequest={inspected=null},title={Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId)},
             text={Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                Text("${r.state} · ${labels[r.agentId] ?: r.agentId}")
+                Text("${actionStateLabel(r.state)} · ${labels[r.agentId] ?: r.agentId}")
+                r.policy?.let {Text(it.reason)}
+                if(r.state==RequestState.DENIED && r.policy?.rule in setOf("agent_scope","agent_denylist") && bots.any {it.grant.agentId==r.agentId}) {
+                    Button(onClick={inspected=null;activity=false;note="";manageBotId=r.agentId}) {Text("Review this bot’s permissions")}
+                }
                 Text("Request: ${r.requestId}\nBackend: ${r.result?.backend ?: r.selectedBackend ?: "not executed"}")
                 r.assessment?.shellCommand?.let { Text(it) }
                 r.errorMessage?.let { Text(it) }

@@ -4,7 +4,7 @@ SIConnect has two permission layers. Android grants access to platform features;
 
 ## Daily workflow
 
-Home shows connection state, pending action reviews, blocked app-permission requests, bot cards and recent activity. Tap a bot to manage it. Same-name connections have a short distinguishing suffix and independent grants. A blocked-request permission button targets the exact requesting identity; use that instead of guessing between names.
+Home shows connection state, pending action reviews, blocked app-permission requests, bot cards and recent activity. Tap a bot to manage it. Activity → View all provides status/bot filters and sorting; opening a blocked action displays its authorization reason and can open the same bot’s permission screen. Same-name connections have a short distinguishing suffix and independent grants. A blocked-request permission button targets the exact requesting identity; use that instead of guessing between names.
 
 Apps enables the registered `apps.*` family. The choice is saved in SQLite and audited. Sensitive operations still follow risk policy. Always allow device control is a separate explicit broad-shell choice; its grant survives app process restarts until revoked or changed. Ask before device control clears standing shell authorization. Revoking a bot blocks subsequent requests and accepted approvals. New pairings do not inherit another bot's permissions.
 

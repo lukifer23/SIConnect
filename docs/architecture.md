@@ -78,3 +78,5 @@ SQLiteOpenHelper v3 stores requests, transitions, events, agents, skills, skill 
 - `core` has no Android dependency, so the policy, engine, schema, skill and canonicalization code is unit-tested on the JVM and in CI.
 - `app` provides Android implementations of `RequestStore`, `EventSink`, `ApprovalGate` and `AgentDirectory`, plus the capabilities, backends, transport and UI.
 - `gateway` shares only the wire contract with the device. It never imports device code.
+
+Home activity uses a bounded SQLite column projection. Large argument/output JSON is decoded only for an explicitly opened result; pending approval and recent app-denial records remain separately loaded for their owner review. The view subscribes to runtime changes rather than polling full history. Existing detailed management remains available.

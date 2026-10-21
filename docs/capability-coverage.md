@@ -17,4 +17,4 @@ Updated October 20, 2026. Implemented means registered production code exists. P
 | Skills | Durable JSON skill validation/storage/execution and continuation | Real native diagnostics skill; host approval/continuation tests; expanded scheduled workflows pending |
 | Calendar/files | Not implemented | Do not infer functionality from permission controls or planned schemas |
 
-Client-specific grants are independent of capability implementation. Dots read-only native/shell tools worked, while its app inspection was denied by scope. That is a permission blocker, not proof of missing implementation or a disconnected phone. See [permissions](permissions.md) and [provider compatibility](provider-compatibility.md).
+Client-specific grants are independent of capability implementation. Dots read-only native/shell tools worked, while its initial app inspection was denied by scope. The owner has since corrected the exact agent’s grant; its installation retry remains in progress. That is a permission blocker, not proof of missing implementation or a disconnected phone. See [permissions](permissions.md) and [provider compatibility](provider-compatibility.md).

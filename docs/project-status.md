@@ -17,7 +17,7 @@ Updated October 20, 2026. This replaces the initial core-only status.
 | Scheduling | Versioned reminder records, revision CAS, exact AlarmManager and deferrable WorkManager, same-ID update, reboot restoration | Real exact alarm delivered through policy/engine/notification in instrumentation; longer lifecycle testing pending |
 | Weather | Real Open-Meteo forecast/cache/normalization | Live forecast fetched; existing next-morning reminder updated to exact timing without creating a duplicate |
 | Hermes | Global HTTP MCP connection and reusable device skill | Real phone email confirmed by owner; deterministic native MCP runtime installed official app and verified package/version/installer; full LLM run interrupted after email, not reported as full success |
-| Dots/ChatGPT | OAuth, phone-created pairing, separate authenticated agent, real native and shell calls | Actual calls correlated with SQLite; app-install test denied by local scope; owner permission change and successful retry still pending |
+| Dots/ChatGPT | OAuth, phone-created pairing, separate authenticated agent, real native and shell calls | Actual calls correlated with SQLite; app-install test denied by local scope; correct agent’s permission saved by owner and verified in SQLite; successful install retry pending |
 | Owner management UI | Bot cards, durable Apps permission, revocation, exact blocked-agent review, disambiguated duplicate labels | APK built/linted/installed; physical hierarchy shows the correct Dots permission card; final owner review of new dialog behavior pending |
 
 ## Physical evidence
@@ -30,7 +30,7 @@ Grok Bot submitted the owner's requested browser and Clock commands. Both waited
 
 - Two explicitly authorized conversations were exercised through Grok Bot. Exact outgoing messages and Delivered state were verified on the Fold. A date-bounded message review also ran. Private content stays outside Git.
 - OAuth onboarding completed after an expired consent session was restarted. Both a ChatGPT work conversation and the actual Dots conversation executed native and privileged read-only calls. Initial browser failures remain documented as resolved onboarding failures, not a continuing connection blocker.
-- Dots app management is still blocked by the active agent grant. Two same-name connections caused the wrong grant to be changed. The installed update links the denial to the exact bot. A denied request is not pending approval and will not execute retroactively.
+- Dots app management was blocked by the active agent grant. Two same-name connections caused the wrong grant to be changed. The installed update linked the denial to the exact bot; the owner then enabled Apps and broad device control for that identity. Both choices were verified in SQLite. A denied request will not execute retroactively; the new client install retry is still pending.
 - Approval/permission review previously closed too readily, and automated setup taps interfered with owner review. Automated phone approval taps were stopped. The installed update requires explicit Close/Done, preserves an open Home action review across activity recreation, and retains a pending notification until resolution/expiry. Extended owner interaction and configuration-change validation remain pending.
 - Full device control requires an owner-authorized ADB bootstrap after phone reboot. The Mac is not a runtime server after bootstrap. Phone-only wireless pairing is not implemented.
 - Shizuku integration is optional; its reboot/lifecycle behavior has not been exhaustively tested.
@@ -46,3 +46,13 @@ The UI-checkpoint build (`:app:assembleDebug :app:lintDebug`) passed, then its A
 Current host checks: core 30 tests (up-to-date on the latest invocation); gateway six tests passed with zero failures/skips. Android JVM unit task has no sources. Five physical instrumentation tests passed earlier; those are not a fresh physical validation of every subsequent UI change. Lint passed with warnings, including dependency/style suggestions; it was not disabled wholesale.
 
 The longer approval envelope was subsequently deployed to the previously verified personal gateway account. An official MCP v2 device-status call succeeded in 258 ms with an approximately fifteen-minute stored deadline. The final source also checks persistence when clearing a consumed invitation; it built/linted successfully after the installed UI checkpoint, but that last guard has not been separately exercised on the phone.
+
+## Activity and resource checkpoint
+
+Home now queries a bounded metadata projection rather than decoding complete result JSON on every request update. Full output is loaded on selection. A compact Activity dialog exposes bot/status filters and newest/oldest sorting for the latest 100 records; blocked request details display the policy reason and link to that exact bot's permissions. This keeps the primary navigation small and preserves detailed management.
+
+The activity APK and instrumentation APK built, lint passed, both installed and the bundled authority restarted. The updated native SQLite/idempotency instrumentation test passed on the physical phone (one test, zero failures). The earlier five-test suite was not rerun in full during owner review because it deliberately creates and resolves brief test approval notifications. Physical UI checks opened Activity, selected Needs attention, changed sort direction and listed real bot identities, then returned Home without changing any permission or approval.
+
+A short connected foreground resource baseline measured 0.24 CPU-seconds across 60.487 seconds and app PSS 127,060–127,960 KiB. Daemon CPU counters did not increase. This is a short mixed-observation baseline, not a battery result or an optimization comparison. The private-output process profiling harness is in `tools/profile_device.py`.
+
+The exact Dots permission screen remained open through a 20-second passive check. The owner then saved Apps and always-allow device control for the requesting OAuth principal; SQLite and its owner grant event independently confirmed the change. No diagnostic script granted permission. A new client invocation is required because prior denied records remain terminal.

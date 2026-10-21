@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime.** The APK is installed on a Galaxy Z Fold 7. Grok Bot, Dots/ChatGPT and Hermes have made real hosted MCP calls to the phone. Native diagnostics, privileged shell, owner approvals, durable requests, reminders and deterministic skills are integrated. Dots OAuth is connected; app-management requests are currently blocked by its local grant. Phone-only privileged bootstrap and extended lifecycle/battery validation remain unfinished. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [troubleshooting](docs/troubleshooting.md).
+> **Status: working development runtime.** The APK is installed on a Galaxy Z Fold 7. Grok Bot, Dots/ChatGPT and Hermes have made real hosted MCP calls to the phone. Native diagnostics, privileged shell, owner approvals, durable requests, reminders and deterministic skills are integrated. Dots OAuth is connected; the owner corrected its app-management grant after an exact-identity UI fix. The install retry is in progress. Phone-only privileged bootstrap and extended lifecycle/battery validation remain unfinished. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [troubleshooting](docs/troubleshooting.md).
 
 ## Design principles
 
