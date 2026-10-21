@@ -23,3 +23,7 @@ Native tools can still work. After an authorized ADB connection, run `python3 to
 ## Slow execution
 
 Prefer typed tools and request status lookup over repeated screen capture. A command containing sleeps, UI dumping and parsing reports the combined duration. Use bounded XML capture, verify before acting, and stop when the requested state is reached. Do not resend messages or repeat installs solely because a transport response was lost. See [performance](performance.md).
+
+## Package inspection output is truncated
+
+`apps.inspect_privileged` currently returns a bounded raw Android package dump. For packages with large resolver tables, truncation can occur before version and per-user state. `SUCCEEDED`/exit 0 means the dump command ran; it does not prove that omitted metadata was verified. A typed bounded result remains required. The real Dots install was verified using a bounded privileged package query and an independent user-0 check, rather than treating a truncated dump as complete evidence.
