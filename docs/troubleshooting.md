@@ -56,3 +56,25 @@ Settings offers System, Light and Dark. Android font scaling remains active. Dia
 
 
 If the shell daemon is alive but the app loses privileged availability after process death, older builds could have lost the remote owner BinderProxy to garbage collection, silently unlinking its death callback. The corrected daemon retains both proxy and recipient and reattaches after actual owner-process death. Upgrade the app and restart the bundled daemon once to load the correction; later ordinary app recovery should not require another bootstrap. Reboot still destroys shell authority. Ending instrumentation is a separate lifecycle case: it can stop the connection service, so restore the owner-enabled service before evaluating production connection recovery.
+
+## Accessibility or notification setup card remains
+
+Home's cards reflect actual service availability, not merely a previously tapped setup button. Open the indicated Android special-access screen and enable SIConnect. Sideload restrictions may require Allow restricted settings in app info first. Return to SIConnect and inspect `ui.status` or current capability availability. Enabling ordinary notification permission does not enable notification-listener access. Both services initially connected and their missing-access cards disappeared on the tested Fold; no silent permission grant is performed. Later lifecycle testing left Accessibility enabled in Settings but disconnected, and Android diagnostics listed it as crashed. Enabled in Settings is not the same as bound/operational.
+
+## A semantic action reports stale, busy or protected
+
+`RESOURCE_BUSY` means another cooperative screen lease owns the target; unrelated background tools can continue. Use the current lease status and wait for release, or cancel your own active request. Mutations require the calling agent's existing lease and the correct target package/window.
+
+`STALE_NODE_REFERENCE`, `WINDOW_CHANGED` or `TARGET_NOT_FOREGROUND` means inspect the actual screen again before preparing another action. Owner approval itself can change the window. For intentionally unattended operation, the owner can permit semantic click/text for one app in Agents, separately from UI scope, then the bot inspects fresh state. Never weaken reference checks to replay an old click. `PROTECTED_UI` and `SCREEN_LOCKED` require appropriate owner/manual interaction; this backend does not unlock the phone or automate biometric, permission or owner-management controls.
+
+A running Android instrumentation session can interfere with accessibility-service binding. Its skipped fixture is not a passing semantic test. In the observed normal-process retry, Android still listed the enabled service as crashed/disconnected; no new app fatal exception was found, so the exact crash mechanism remains unconfirmed. Open Android Settings → Accessibility → installed apps/services → SIConnect, turn the service off and back on yourself, then return and check `ui.status.connected`. SIConnect does not silently toggle this authorization or claim automatic recovery. The opt-in `tools/semantic_ui_smoke.py` harness exercises an isolated debug fixture through authenticated ADB-forwarded loopback in the normal app process; it remains blocked until the owner restores service binding, and its current verification status is recorded in device testing. Do not run it while the owner is using the screen or reviewing a real action.
+
+## Notification action or reply is refused
+
+Discover current actions with the exact key and originating package. Notification updates/removal and listener/process restarts invalidate previous references. `NOTIFICATION_CHANGED` or `ACTION_CHANGED` requires fresh inspection, not blind replay. `OWNER_AUTHENTICATION_REQUIRED` and `LOCAL_OWNER_ACTION_PROTECTED` require the owner to use the real local interface. `ACTION_CREATOR_MISMATCH`, immutable reply intents, Activity replies and unsupported inputs are reported explicitly; there is no hidden alternate send route.
+
+`DISPATCHED` means Android accepted the PendingIntent. Recipient identity, application send state and external delivery remain unverified. On connection loss retrieve the original request through requests.get; never submit another reply just to discover its result. The separate [notification fixture](../tools/notification_fixture/README.md) validates disposable Android broadcast receipts without sending a personal message.
+
+## Automation editing or Run now
+
+Saved schedule state and an active/manual run are separate. Saveable form fields survive ordinary Activity recreation but must be saved before they become a durable schedule. Run now queues one independent run without moving the saved next time. Reopen that run to inspect steps/results or cancel it. A queued cancellation remains cancelled before worker start. A cancelled side-effecting action may remain `UNKNOWN_OUTCOME`; inspect the original request instead of assuming nothing happened. Missing local-automation scope and Android special access are displayed independently.

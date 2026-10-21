@@ -55,3 +55,14 @@ The installed 0.4.2 checkpoint debug APK measured 36,529,327 bytes before the su
 
 
 The compact native package check against the installed 0.4.2 app returned a 323-byte output object and a 3,100-byte complete MCP result in 211 ms in one hosted observation. Updated raw-tool selection guidance was confirmed through live discovery. The earlier Hermes raw-result character count is a different measurement boundary, so no percentage/token reduction is calculated from those two numbers.
+
+
+## Pass 6 resource observation and methodology
+
+One 61.161-second collection was annotated `owner-use`; five actual samples reported foreground-service importance (125). Across four continuous process/boot/version intervals, app CPU increased by 0.09 seconds over 60.023 counter-observed seconds (0.1499% of one core). App PSS was 43,613–46,570 KiB. Daemon counters increased by 0.0 seconds over 60.066 seconds. This is a short background-service observation during normal owner use, not controlled idle, an optimization comparison or battery consumption. Missing OEM screen/power fields remain unknown; keyguard-showing false is not proof of `isDeviceLocked=false`.
+
+`profile_device.py` retains report-v1 compatibility with methodology revision 2. It now records bounded probe diagnostics, exact version code, process importance/RSS, available power/keyguard flags and salted boot-session brackets. CPU summaries validate every adjacent interval across PID/start/boot/version/counter and host clock/sleep continuity. Flushed JSONL checkpoints survive interruption; interrupted/failed/complete collection states are explicit. Six added parser/counter tests and four existing Python tests pass.
+
+The existing 24-hour sparse collector remains running. At the current checkpoint seven 15-minute samples contained fifteen successful read-only calls and six `DEVICE_OFFLINE` results during active upgrade/instrumentation work. This approximately 90-minute, development-contaminated span is not a completed 24-hour soak or a daily-driver availability estimate. Outputs were preserved and not restarted.
+
+Overview metadata refresh is event-driven and unsubscribes while the owner screen is not collecting it. Semantic waits use accessibility events rather than persistent tree polling. No before/after resource improvement or agent-token saving is claimed without matched measurements.

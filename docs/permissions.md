@@ -4,7 +4,7 @@ SIConnect has two permission layers. Android grants access to platform features;
 
 ## Daily workflow
 
-Home shows connection state, pending action reviews, blocked app-permission requests, bot cards and recent activity. Tap a bot to manage it. Activity → View all provides status/bot filters and sorting; opening a blocked action displays its authorization reason and can open the same bot’s permission screen. Same-name connections have a short distinguishing suffix and independent grants. A blocked-request permission button targets the exact requesting identity; use that instead of guessing between names.
+Home shows live connection/backend state, pending reviews, missing-access setup cards and recent activity. Agents manages exact identities; Automations manages saved workflows and runs; Activity provides status/bot filters, sorting and stored results; Settings holds Android special access and connection configuration. Opening a blocked action displays its authorization reason and can open that same agent’s permission screen. Same-name connections have a short distinguishing suffix and independent grants. A blocked-request permission button targets the exact requesting identity; use that instead of guessing between names.
 
 Apps enables the registered `apps.*` family. The choice is saved in SQLite and audited. Sensitive operations still follow risk policy. Always allow device control is a separate explicit broad-shell choice; its grant survives app process restarts until revoked or changed. Ask before device control clears standing shell authorization. Revoking a bot blocks subsequent requests and accepted approvals. New pairings do not inherit another bot's permissions.
 
@@ -15,7 +15,8 @@ A denied request stays denied. After changing permission, ask the bot to submit 
 | Access | How it is granted | Current behavior |
 | --- | --- | --- |
 | Notifications | Native runtime permission on supported versions; Settings afterward | Approval/reminder notifications; pending requests remain in Home even without permission |
-| Notification listener | Android special-access settings | Actual listener-backed capability availability; Samsung may require Allow restricted settings in app info |
+| Notification listener | Android special-access settings | Live metadata/actions and supported RemoteInput replies; owner enabled this access on the Fold. Samsung may require Allow restricted settings in app info. Native notification permission is separate. |
+| Accessibility | Android special-access settings; Home offers a missing-access card | Semantic foreground tools; owner initially enabled access on the Fold. Android later marked the service crashed/disconnected after lifecycle testing; owner off/on restoration is pending. Locked, protected and password surfaces are excluded; scope and standing approval remain separate. |
 | Exact alarms | Android special-access screen | Required for exact reminders; an exact request does not silently become deferrable |
 | Package visibility | Manifest visibility declarations | Native package results follow Android visibility limits; privileged queries require the selected backend |
 | Privileged device control | Owner-authorized ADB bootstrap of bundled Binder service | No companion app required; actual UID 2000 verified; bootstrap required again after phone reboot |
@@ -37,3 +38,19 @@ Capabilities now distinguish background execution from actions that use the shar
 Pass 4 owner authentication uses Android's actual strong biometric or screen-lock credential prompt, with no cached approval. Cancelling leaves the request/grant unchanged. The callback binds the selected request/hash or agent action and engine authorization is rechecked afterward. Emergency stop, denial, revocation and permission reduction remain immediately available. Ordinary background calls under existing standing grants do not prompt again.
 
 Settings → Choose a folder opens Android's actual picker after owner authentication. A root handle grants no extra bot scope; permit Selected folders separately. Access revocation/provider disappearance is reported explicitly. Calendar and document tests require a deliberately designated disposable resource; do not select personal data just to prove writes.
+
+## Automatic screen actions in one app
+
+In Agents, select the exact identity, allow the UI interaction family, then review Automatic screen actions. Enter the intended Android package and choose Allow clicks and text in this app. Android owner authentication confirms this expansion. It persists an agent/package/backend-bound standing grant for semantic clicks and text entry; it does not grant arbitrary shell or another app. These actions can include sends/deletes inside the chosen app, so enable them deliberately. Remove the allowance to restore ordinary approval behavior for that package.
+
+An exact approval for an earlier `ui.click` can become stale when owner review changes the foreground window. This is expected protection. For a permitted unattended workflow, have the bot acquire its lease and inspect fresh nodes after review; do not relax stale checks or repeatedly replay an old reference. Background native capabilities do not need semantic screen permission.
+
+## Automation owner workflow
+
+Automations offers typed inputs and native date/time pickers, recurrence and timezone, next-run previews, exact/deferrable timing, missed-run policy and a durable run history. Save commits the configuration after owner authentication; it does not silently grant the local-automation identity new capabilities. Commute weather exposes an explicit Allow local weather automation action when its required scopes are missing. Wake fallback and departure time must be configured; no Clock alarm is changed.
+
+Run now queues a separate one-shot execution and leaves the saved schedule untouched. Inspect its existing run for approval waits, results or uncertainty; Cancel this run targets that run. Disabling a schedule affects future dispatch, while active runs remain separately visible. Draft fields are saveable across ordinary Activity recreation; save the automation to make its configuration durable.
+
+## Published notification actions
+
+Grant the intended bot's Notifications family separately from Android notification-listener access. `notifications.actions` returns bounded live action references without bodies or suggested replies; optional labels may contain app-supplied sensitive text. High-impact invocation/reply still requires the configured approval or standing policy. Authentication-required actions and SIConnect owner-management actions are refused. RemoteInput replies work only for supported published mutable text-input intents; `DISPATCHED` is not proof of recipient delivery. Do not resend an uncertain reply blindly.

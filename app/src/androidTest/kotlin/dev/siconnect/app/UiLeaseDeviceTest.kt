@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.siconnect.app.coordination.SqlUiLeaseStore
 import dev.siconnect.app.data.AgentRecord
+import dev.siconnect.app.data.AgentStore
 import dev.siconnect.app.data.SIConnectDb
 import dev.siconnect.core.*
 import kotlinx.coroutines.runBlocking
@@ -17,6 +18,33 @@ import java.util.UUID
 /** Real registry, policy, engine and SQLite; deliberately no screen navigation or owner approvals. */
 @RunWith(AndroidJUnit4::class)
 class UiLeaseDeviceTest {
+    @Test fun ownerPackageAllowanceIsDurableNarrowAndRevocable()=runBlocking {
+        val g=InstrumentationRegistry.getInstrumentation().targetContext.graph;g.ready.await()
+        val id="semantic-grant-test-${UUID.randomUUID()}"
+        val original=AgentGrant(id,"Disposable semantic permission test",scopes=listOf("ui.*"),autoApproveUpTo=RiskClass.LOW_IMPACT)
+        g.agents.put(AgentRecord(original,"",System.currentTimeMillis(),tokenHint="test only; no credential"))
+        val pkg="dev.siconnect.disposabletarget"
+        val cap=requireNotNull(g.registry.get("ui.click"))
+        fun decision(grant:AgentGrant,target:String):PolicyOutcome {
+            val args=buildJsonObject {put("packageName",target)}
+            return PolicyEngine().evaluate(grant,cap.descriptor,args,cap.assess(args),Availability.IMPLEMENTED,DeviceControls(),Origin.REMOTE,System.currentTimeMillis()).outcome
+        }
+        try {
+            assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(original,pkg))
+            g.setSemanticPackagePermissionFromOwner(id,pkg,true)
+            val saved=SIConnectDb(g.context).use {AgentStore(it).grant(id)!!}
+            assertEquals(original.scopes,saved.scopes);assertEquals(original.shellMode,saved.shellMode)
+            assertEquals(PolicyOutcome.ALLOW,decision(saved,pkg))
+            assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(saved,"dev.siconnect.otherapp"))
+            assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(original.copy(agentId="other"),pkg))
+            assertEquals(PolicyOutcome.DENY,decision(saved.copy(revoked=true),pkg))
+            assertEquals(PolicyOutcome.DENY,decision(saved.copy(scopes=emptyList()),pkg))
+            try {g.setSemanticPackagePermissionFromOwner(id,g.context.packageName,true);fail("Owner controls allowed")} catch(_:IllegalArgumentException) {}
+            g.setSemanticPackagePermissionFromOwner(id,pkg,false)
+            assertEquals(PolicyOutcome.REQUIRE_APPROVAL,decision(g.agents.grant(id)!!,pkg))
+        } finally {g.agents.delete(id)}
+    }
+
     @Test fun twoDisposableAgentsCoordinateScreenWhileBackgroundRemainsAvailable() = runBlocking {
         val g = InstrumentationRegistry.getInstrumentation().targetContext.graph
         g.ready.await()

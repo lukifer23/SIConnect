@@ -33,3 +33,10 @@ Pass 4 found a distinct provider configuration issue: the Telegram-facing Hermes
 
 
 Fresh Pass 4 Dots/ChatGPT check through the existing conversation/OAuth integration: `shell_health`, `device_battery` and `device_network` all returned SUCCEEDED and were independently matched against device SQLite. Sanitized request references: `704ee19c-a051-41b7-8b07-b22968549e60`, `b5676831-9165-48a0-a613-365b1e661d9e`, `a390e3a6-04ae-4445-9d96-2c76a2d4086c`. This verifies current native and privileged read-only access after the gateway update; it does not verify every write scope or repeat prior personal emails/installations.
+
+
+## Pass 6 fresh regression boundary
+
+The installed 0.5.0-dev bridge advertised 81 tools through the existing endpoint. Seven official SDK native/shell calls succeeded, including actual shell UID 2000. Grokbot made two new read-only status/identity requests; both matched successful on-device records. Existing five agent grant/credential hashes matched the pre-upgrade baseline, including OAuth principals. This preserves identity/state; it is not a fresh OAuth refresh/revocation campaign.
+
+The first fresh Hermes LLM smoke discovered its server but received `DEVICE_OFFLINE` during app restarts. A subsequent post-update run completed both actual native status and shell identity calls successfully, including UID 2000. The earlier offline observation remains recorded. A new Dots application invocation has not yet been executed in this pass. Historical provider successes remain historical. Never repeat a personal send or real app installation just to fill this matrix.

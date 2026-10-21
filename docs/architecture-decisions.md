@@ -61,3 +61,17 @@ Gateway generations persist in socket attachments and Durable Object storage. In
 Use a typed recurrence subset rather than an incomplete RRULE parser for Android automations. Existing interval records keep fixed epoch anchors. Wall-clock rules pin an IANA timezone, shift nonexistent times by the DST gap, select the earlier overlapping offset once, and skip invalid monthly dates. Device travel does not silently change the pinned timezone. AlarmManager cannot be part of SQLite's transaction; persisted configuration/run cursors are reconciled with OS dispatch after startup and explicit time changes.
 
 Use bounded reliable Binder PFD pipes for new shell replies, retaining the old transaction API with a smaller explicit capture budget. Keep text/base64 compatibility by default and expose explicit encoding for efficient callers. Large general request records use existing authenticated capability routing for chunk retrieval.
+
+## ADR-009: Cooperative semantic interaction and native notification actions
+
+Keep screen automation in the existing registry, policy and execution engine. Android AccessibilityService provides semantic selectors and event-driven waits; a device-wide lease coordinates structured mutations. Agent/window/event-bound references reject stale state rather than clicking whatever later occupies the screen. Native background operations remain independent. This cooperative layer does not constrain arbitrary owner-authorized privileged shell.
+
+Per-app semantic standing access is an owner-authenticated grant for clicks/text in one package, separate from capability scope, exact-action approval and broad shell. It intentionally can authorize sends/deletes in that selected app. Protected management, system-permission, lock/biometric surfaces and password input remain excluded. Opening an approval can invalidate a previous screen snapshot; acquire fresh state after review rather than weakening that check.
+
+Use Android's published notification PendingIntent/RemoteInput APIs for supported actions without scraping private messaging databases. Validate the live reference and originating authority immediately before dispatch, reject SIConnect-owned/authentication-required actions, and report `DISPATCHED` with delivery unverified. A separately installed disposable fixture validates real framework delivery without adding a production authorization exception.
+
+## ADR-010: Owner navigation and manual automation ownership
+
+Use adaptive Material navigation for Home, Agents, Automations, Activity and Settings while preserving one runtime state holder, policy and database. Split cohesive Compose components; do not fork execution logic into screens. Saveable drafts reduce accidental loss during Activity recreation, but only saving commits a schedule.
+
+Run now owns an independent frozen one-shot slot under the local-automation identity. It neither advances nor overwrites a saved schedule. SQLite records the manual run before WorkManager dispatch; duplicate delivery/reconciliation reuse its identity. Cancelling a queued run persists cancellation before a later worker can start it. Unknown external outcomes remain explicit.

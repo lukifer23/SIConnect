@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="semantic_accessibility_description">Allows your authorized SIConnect agents to inspect selected app controls and perform semantic actions on the unlocked screen. Changes follow your grants, approvals, and screen leases. Owner security controls and password fields are excluded.</string>
+</resources>

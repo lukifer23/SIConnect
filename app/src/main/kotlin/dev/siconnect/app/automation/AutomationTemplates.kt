@@ -1,0 +1,105 @@
+package dev.siconnect.app.automation
+
+import dev.siconnect.core.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
+import java.time.*
+
+/** Templates install ordinary validated skills; execution always uses local-automation policy. */
+object AutomationTemplates {
+    const val NOTICE_SKILL="reminders.recurring_notice"
+    fun notice()=SkillDefinition(NOTICE_SKILL,1,"Post a native reminder notification when the generic schedule fires.",
+        inputs=objectSchema {
+            for((key,label,max) in listOf(Triple("title","Reminder title",150),Triple("text","Reminder text",1000)))
+                prop(key,true,buildJsonObject {put("type","string");put("description",label);put("minLength",1);put("maxLength",max)})
+        },steps=listOf(SkillStep("notify","notifications.post",buildJsonObject {
+            put("title",JsonPrimitive("\${input.title}"));put("text",JsonPrimitive("\${input.text}"))
+        })),output=buildJsonObject {put("notification",JsonPrimitive("\${steps.notify.output}"))})
+
+    fun title(skill:SkillDefinition)=when(skill.id) {
+        NOTICE_SKILL->"Reminder"
+        "diagnostics.snapshot"->"Device health snapshot"
+        "weather.commute_check"->"Commute weather"
+        else->skill.id.replace('.',' ').replace('_',' ')
+    }
+    fun initialInputs(skill:SkillDefinition,zoneId:String):JsonObject {
+        val defaults=defaults(skill.inputs).toMutableMap()
+        if(skill.id=="weather.commute_check") {
+            defaults["timezone"]=JsonPrimitive(zoneId)
+            defaults["useNextAlarm"]=JsonPrimitive(true)
+            defaults["rainThresholdPercent"]=JsonPrimitive(60)
+            defaults["snowThresholdCm"]=JsonPrimitive(1)
+            defaults["minimumTemperatureC"]=JsonPrimitive(0)
+            defaults["reminderOffsetMinutes"]=JsonPrimitive(0)
+            defaults["notifyWinter"]=JsonPrimitive(true);defaults["notifyCold"]=JsonPrimitive(true)
+            defaults["remindRain"]=JsonPrimitive(true);defaults["exactReminder"]=JsonPrimitive(false)
+        }
+        return JsonObject(defaults)
+    }
+    fun defaults(schema:JsonObject):JsonObject=JsonObject((schema["properties"] as? JsonObject).orEmpty().mapNotNull {(key,value)->
+        val field=value.jsonObject
+        field["default"]?.let {key to it} ?: if(field["type"]?.jsonPrimitive?.content=="object") {
+            defaults(field).takeIf {it.isNotEmpty()}?.let {key to it}
+        } else null
+    }.toMap())
+}
+
+/** Saveable form model. Stable id/revision keep edits from overwriting concurrent owner changes. */
+@Serializable
+data class AutomationDraft(
+    val id:String,val label:String,val skillId:String,val inputs:JsonObject,
+    val recurrenceKind:RecurrenceKind=RecurrenceKind.DAILY,val localTime:String="09:00",
+    val startDate:String=LocalDate.now().toString(),val zoneId:String=ZoneId.systemDefault().id,
+    val intervalMinutes:String="60",val weekdays:List<Int> = listOf(1,2,3,4,5),val dayOfMonth:String="1",
+    val exact:Boolean=false,val enabled:Boolean=true,val missedPolicy:MissedRunPolicy=MissedRunPolicy.COALESCE,
+    val maxLatenessMinutes:String="60",val revision:Long=0,
+) {
+    fun effectiveInputs():JsonObject=when(skillId) {
+        AutomationTemplates.NOTICE_SKILL->JsonObject(inputs+("title" to JsonPrimitive(label.trim())))
+        "weather.commute_check"->JsonObject(inputs+("timezone" to JsonPrimitive(zoneId)))
+        else->inputs
+    }
+    fun recurrence():Recurrence=when(recurrenceKind) {
+        RecurrenceKind.ONCE->Recurrence(RecurrenceKind.ONCE)
+        RecurrenceKind.FIXED_INTERVAL->Recurrence(RecurrenceKind.FIXED_INTERVAL,intervalMs=Math.multiplyExact(requireNotNull(intervalMinutes.toLongOrNull()) {"Enter the interval in minutes"},60_000))
+        RecurrenceKind.DAILY->Recurrence(RecurrenceKind.DAILY,localTime=localTime)
+        RecurrenceKind.WEEKDAYS->Recurrence(RecurrenceKind.WEEKDAYS,localTime=localTime,weekdays=weekdays.sorted())
+        RecurrenceKind.WEEKLY->Recurrence(RecurrenceKind.WEEKLY,localTime=localTime,weekdays=weekdays.take(1))
+        RecurrenceKind.MONTHLY->Recurrence(RecurrenceKind.MONTHLY,localTime=localTime,dayOfMonth=dayOfMonth.toIntOrNull())
+    }.also {it.validate()}
+    fun build(nowMs:Long,original:Automation?=null):Automation {
+        require(label.isNotBlank() && label.length<=120) {"Give this automation a name (up to 120 characters)"}
+        val zone=ZoneId.of(zoneId);var rule=recurrence()
+        val originalDraft=original?.let(::from)
+        val timingUnchanged=originalDraft!=null && recurrenceKind==originalDraft.recurrenceKind && localTime==originalDraft.localTime && startDate==originalDraft.startDate && zoneId==originalDraft.zoneId && intervalMinutes==originalDraft.intervalMinutes && weekdays==originalDraft.weekdays && dayOfMonth==originalDraft.dayOfMonth
+        if(timingUnchanged) rule=original!!.recurrence ?: Recurrence(if(original.intervalMs==null) RecurrenceKind.ONCE else RecurrenceKind.FIXED_INTERVAL,intervalMs=original.intervalMs)
+        val next=if(timingUnchanged) original!!.nextAtMs else if(rule.kind in setOf(RecurrenceKind.ONCE,RecurrenceKind.FIXED_INTERVAL)) {
+            Recurrence.oneTime("$startDate"+"T"+LocalTime.parse(localTime),zone.id).also {
+                require(!enabled || it>nowMs) {"Choose a future start time"}
+            }
+        } else requireNotNull(rule.nextAfter(nowMs,nowMs,zone.id))
+        val lateness=requireNotNull(maxLatenessMinutes.toLongOrNull()) {"Enter the maximum delay in minutes"}
+        require(lateness in 1..1440) {"Maximum delay must be between 1 minute and 24 hours"}
+        if(skillId=="weather.commute_check" && rule.kind!=RecurrenceKind.ONCE)
+            require("targetDate" !in inputs) {"Recurring commute checks use tomorrow each run; clear the fixed target date"}
+        val savedInputs=effectiveInputs()
+        return Automation(id,skillId,next,enabled=enabled,exact=exact,zoneId=zone.id,recurrence=rule,
+            inputs=savedInputs,missedPolicy=missedPolicy,maxLatenessMs=if(original!=null && maxLatenessMinutes==(original.maxLatenessMs/60_000).toString()) original.maxLatenessMs else lateness*60_000,revision=revision,
+            lastRunId=original?.lastRunId,lastState=original?.lastState,label=label.trim())
+    }
+    fun preview(nowMs:Long,original:Automation?=null):List<Long> {
+        val automation=build(nowMs,original);val times=mutableListOf(automation.nextAtMs)
+        repeat(2) {val next=automation.nextAfter(times.last()) ?: return times;times+=next}
+        return times
+    }
+    companion object {
+        fun from(a:Automation):AutomationDraft {
+            val rule=a.recurrence ?: Recurrence(if(a.intervalMs==null) RecurrenceKind.ONCE else RecurrenceKind.FIXED_INTERVAL,intervalMs=a.intervalMs)
+            val first=Instant.ofEpochMilli(a.nextAtMs).atZone(ZoneId.of(a.zoneId))
+            return AutomationDraft(a.id,a.label.ifBlank {a.id},a.skillId,a.inputs,rule.kind,rule.localTime ?: first.toLocalTime().withSecond(0).withNano(0).toString(),
+                first.toLocalDate().toString(),a.zoneId,((rule.intervalMs ?: 3_600_000)/60_000).toString(),
+                rule.weekdays.takeIf {it.isNotEmpty()} ?: listOf(1,2,3,4,5),(rule.dayOfMonth ?: 1).toString(),
+                a.exact,a.enabled,a.missedPolicy,(a.maxLatenessMs/60_000).toString(),a.revision)
+        }
+    }
+}

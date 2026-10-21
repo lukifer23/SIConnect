@@ -36,6 +36,8 @@ fun registerCapabilities(g: RuntimeGraph) {
     registerFileCapabilities(g)
     registerDocumentCapabilities(g)
     registerCalendarCapabilities(g)
+    registerSemanticUiCapabilities(g)
+    registerNotificationActionCapabilities(g)
     registerUiCapabilities(g.registry,g.ui)
     g.registry.register(RequestOutputCapability(g))
     g.registry.register(PackageInspectionCapability(g.context))

@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.siconnect.notificationfixture" android:versionCode="1" android:versionName="1.0">
+    <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="37" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application android:label="SIConnect disposable notification fixture" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".FixtureActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+        <activity android:name=".SemanticFixtureActivity" android:exported="true" android:label="SIConnect disposable semantic fixture" />
+        <receiver android:name=".FixtureReceiver" android:exported="false" />
+        <provider android:name=".ReceiptProvider" android:authorities="dev.siconnect.notificationfixture.receipts" android:exported="true" />
+    </application>
+</manifest>

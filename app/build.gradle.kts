@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.4.2"
+        versionCode = 6
+        versionName = "0.5.0-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -54,6 +54,7 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)
+    implementation("androidx.compose.material3:material3-adaptive-navigation-suite")
     implementation(libs.compose.ui)
     implementation(libs.activity.compose)
     implementation(libs.work.runtime)

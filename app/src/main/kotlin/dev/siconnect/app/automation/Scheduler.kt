@@ -26,7 +26,10 @@ data class Automation(val id: String, val skillId: String, val nextAtMs: Long,
     val maxLatenessMs: Long = 6*60*60_000L,
     val inputs: JsonObject = JsonObject(emptyMap()),
     val revision: Long = 0,
-    val scheduleState: String = "SCHEDULED") {
+    val scheduleState: String = "SCHEDULED",
+    val label: String = "",
+    /** True only in automation_runs snapshots; never accepted as a saved schedule. */
+    val manualRun: Boolean = false) {
     fun nextAfter(now:Long):Long? = (recurrence ?: Recurrence(if(intervalMs==null) RecurrenceKind.ONCE else RecurrenceKind.FIXED_INTERVAL,intervalMs=intervalMs)).nextAfter(nextAtMs,now,zoneId)
 }
 
@@ -52,6 +55,8 @@ class Scheduler(private val g: RuntimeGraph) {
         put("owner","local-automation");put("revision",a.revision);put("json",AppJson.encodeToString(Automation.serializer(),a))
     }
     fun put(a: Automation):Automation {
+        require(!a.manualRun) {"Manual run snapshots cannot be saved as schedules"}
+        require(a.label.length<=120) {"Automation name is too long"}
         require(a.id.matches(Regex("[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}"))) {"Invalid automation id"}
         require(a.intervalMs == null || a.intervalMs >= 900_000) { "Recurrence minimum is 15 minutes" }
         require(a.recurrence==null || a.intervalMs==null) {"Choose typed recurrence or legacy interval, not both"}
@@ -76,7 +81,65 @@ class Scheduler(private val g: RuntimeGraph) {
         return requireNotNull(get(a.id))
     }
     fun setEnabled(id: String, enabled: Boolean) { get(id)?.let { put(it.copy(enabled=enabled)) } }
-    suspend fun cancelRun(runId:String) {g.runner.cancel(runId);reconcileRun(runId)}
+    suspend fun cancelRun(runId:String) {
+        if(g.skillRuns.get(runId)==null) {
+            val pending=g.db.readableDatabase.query("automation_runs",arrayOf("automation_id","automation_json","skill_json","started_at"),"run_id=?",arrayOf(runId),null,null,null,"1").use {cursor->
+                require(cursor.moveToFirst()) {"Automation run no longer exists"}
+                val snapshot=if(cursor.isNull(1)) requireNotNull(get(cursor.getString(0))) else decode(cursor.getString(1))
+                val definition=if(cursor.isNull(2)) requireNotNull(g.skills.get(snapshot.skillId)) {"Workflow definition is unavailable"} else SkillJson.parse(cursor.getString(2))
+                Triple(snapshot,definition,cursor.getLong(3))
+            }
+            // A durable cancelled cursor wins even if fire() has read READY but has not
+            // inserted its workflow yet. If start won the unique insert, cancel it below.
+            val (snapshot,definition,started)=pending
+            g.skillRuns.insert(SkillExecution(runId,definition,snapshot.inputs,"local-automation",g.settings.deviceId,runId,
+                Origin.LOCAL_AUTOMATION.name,started,Math.addExact(started,definition.timeoutMs),state=SkillState.CANCELLED))
+        }
+        g.runner.cancel(runId)
+        reconcileRun(runId)
+    }
+
+    /** Owner-requested one-off run; does not move or enable the saved recurring schedule.
+     * Persist its snapshot before dispatch, so the normal worker/fire/recovery path owns it.
+     * Reusing the same slot identifies the same manual action, never another execution. */
+    suspend fun runNow(id:String,slotAtMs:Long,expectedRevision:Long):String {
+        g.ready.await()
+        require(slotAtMs>0 && kotlin.math.abs(System.currentTimeMillis()-slotAtMs)<=15*60_000) {"Run request expired; review and try again"}
+        val w=g.db.writableDatabase;val ownedRun:String;val manualSlot:Long;var dispatch=true
+        w.beginTransaction()
+        try {
+            val current=requireNotNull(get(id)) {"Automation no longer exists"}
+            require(current.revision==expectedRevision) {"Automation changed; review it again"}
+            val definition=requireNotNull(g.skills.get(current.skillId)) {"Workflow is unavailable or disabled"}
+            require(Schema.validate(definition.inputs,current.inputs).isEmpty()) {"Workflow inputs are invalid"}
+            // Avoid consuming the scheduled slot if the owner happens to run it at the same ms.
+            manualSlot=if(slotAtMs==current.nextAtMs) Math.addExact(slotAtMs,1) else slotAtMs
+            ownedRun=runId(id,manualSlot)
+            val snapshot=current.copy(nextAtMs=manualSlot,intervalMs=null,recurrence=Recurrence(RecurrenceKind.ONCE),
+                enabled=true,exact=false,missedPolicy=MissedRunPolicy.RUN_ONCE_IF_STILL_RELEVANT,maxLatenessMs=15*60_000,manualRun=true)
+            val old=w.query("automation_runs",arrayOf("automation_json","state"),"run_id=?",arrayOf(ownedRun),null,null,null,"1").mapAll {it.getString(0) to it.getString(1)}.firstOrNull()
+            if(old==null) {
+                w.insertOrThrow("automation_runs",null,ContentValues().apply {
+                    put("run_id",ownedRun);put("automation_id",id);put("slot_at",manualSlot);put("started_at",System.currentTimeMillis())
+                    put("updated_at",System.currentTimeMillis());put("state","READY")
+                    put("automation_json",AppJson.encodeToString(Automation.serializer(),snapshot))
+                    put("skill_json",SkillJson.json.encodeToString(SkillDefinition.serializer(),definition))
+                })
+                g.events.emit(Event(System.currentTimeMillis(),eventType="automation.run.requested",requestId=ownedRun,traceId=ownedRun,agentId="local-owner",detail="One-off run uses existing local-automation policy"))
+            } else {
+                val previous=decode(old.first)
+                dispatch=old.second in setOf("READY","RUNNING")
+                require(previous.manualRun && previous.skillId==snapshot.skillId && previous.inputs==snapshot.inputs && previous.revision==snapshot.revision) {"Run identity belongs to a different automation revision"}
+            }
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+        if(!dispatch) return ownedRun
+        try {enqueue(id,manualSlot)} catch(e:Exception) {
+            w.update("automation_runs",ContentValues().apply {put("error_code","DISPATCH_FAILED");put("updated_at",System.currentTimeMillis())},"run_id=? AND state='READY'",arrayOf(ownedRun))
+            throw IllegalStateException("Run saved but dispatch failed; restart or retry the same run",e)
+        }
+        return ownedRun
+    }
 
     /** Called after engine/skill startup recovery; never executes user work inside initialization. */
     suspend fun restore() {
@@ -201,6 +264,7 @@ class Scheduler(private val g: RuntimeGraph) {
         val info=g.db.readableDatabase.query("automation_runs",arrayOf("automation_id","automation_json"),"run_id=?",arrayOf(runId),null,null,null,"1").mapAll {it.getString(0) to if(it.isNull(1)) null else decode(it.getString(1))}.firstOrNull() ?: return
         lock(info.first).withLock {
             val r=g.skillRuns.get(runId) ?: return@withLock
+            if(r.error=="CANCELLATION_REQUESTED" && g.runner.isCancelling(runId)) return@withLock
             val a=info.second ?: get(info.first) ?: return@withLock
             finish(a,runId,AutomationRunState.valueOf(r.state.name),r,r.error)
         }
@@ -220,7 +284,7 @@ class Scheduler(private val g: RuntimeGraph) {
                 result?.let {put("json",AppJson.encodeToString(SkillExecution.serializer(),it))}
             },"run_id=?",arrayOf(runId))
             val current=get(snapshot.id)
-            if(current!=null && current.nextAtMs==snapshot.nextAtMs) {
+            if(!snapshot.manualRun && current!=null && current.nextAtMs==snapshot.nextAtMs) {
                 val future=if(state==AutomationRunState.UNKNOWN_OUTCOME) null else if(state.terminal) current.nextAfter(now) else current.nextAtMs
                 val updated=current.copy(nextAtMs=future ?: current.nextAtMs,enabled=current.enabled && (!state.terminal || future!=null),
                     lastRunId=runId,lastState=state.name,error=error,scheduleState=if(state.terminal && future!=null && current.enabled) "SCHEDULED" else state.name)

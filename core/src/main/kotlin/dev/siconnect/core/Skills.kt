@@ -1,5 +1,10 @@
 package dev.siconnect.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -116,6 +121,8 @@ interface SkillRunStore {
     fun get(runId: String): SkillExecution?
     fun update(run: SkillExecution, expectedRevision: Long): Boolean
     fun active(): List<SkillExecution>
+    /** Interrupted owner cancellations need cleanup, never ordinary workflow resumption. */
+    fun cancellations():List<SkillExecution> = emptyList()
 }
 
 /** Persisted cursor plus stable child request IDs: completed steps are never resubmitted. */
@@ -124,6 +131,17 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
     private val updates = kotlinx.coroutines.flow.MutableSharedFlow<SkillExecution>(extraBufferCapacity=64,
         onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
     val runUpdates: kotlinx.coroutines.flow.SharedFlow<SkillExecution> = updates
+    // Only coordinates live callers. UNKNOWN_OUTCOME remains the durable barrier on process death.
+    private val cancellations=ConcurrentHashMap<String,CompletableDeferred<Unit>>()
+    fun isCancelling(runId:String)=cancellations.containsKey(runId)
+    private suspend fun stopped(runId:String):SkillExecution? {
+        val current=store.get(runId) ?: return null
+        if(current.state !in setOf(SkillState.CANCELLED,SkillState.UNKNOWN_OUTCOME)) return null
+        if(current.error=="CANCELLATION_REQUESTED") cancellations[runId]?.let {completion->
+            withContext(NonCancellable) {withTimeoutOrNull(5000) {completion.await()}}
+        }
+        return store.get(runId)
+    }
 
     suspend fun start(def: SkillDefinition, inputs: JsonObject, ctx: ExecutionContext, origin: Origin): SkillExecution {
         require(def.timeoutMs in 1..86_400_000) { "Invalid skill timeout" }
@@ -145,6 +163,7 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
     }
 
     suspend fun resume(runId: String): SkillExecution {
+        stopped(runId)?.let {return it}
         var r = requireNotNull(store.get(runId))
         if (r.state !in setOf(SkillState.READY, SkillState.AWAITING_APPROVAL)) return r
         val claim = r.copy(state = SkillState.RUNNING, revision = r.revision + 1)
@@ -154,7 +173,7 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
         try {
             while (r.cursor < r.definition.steps.size) {
                 // Cancellation wins over an in-flight cursor update.
-                if (store.get(runId)?.state == SkillState.CANCELLED) return requireNotNull(store.get(runId))
+                stopped(runId)?.let {return it}
                 // Reconcile an already-finished child even if result delivery was delayed past
                 // the deadline. The deadline still prevents starting any remaining step.
                 val completedChild=r.pendingRequestId?.let {engine.request(it)?.state?.isTerminal}==true
@@ -175,10 +194,15 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                 }
                 val childId = "${r.runId}:${step.id}"
                 if (r.pendingRequestId == null) r = save(r, r.copy(pendingRequestId = childId))
+                stopped(runId)?.let {return it}
                 var record = engine.request(childId) ?: engine.submit(InvocationRequest(requestId = childId,
                     traceId = r.traceId, agentId = r.agentId, capabilityId = step.capability,
                     arguments = Templates.resolve(step.args, values) as JsonObject,
                     expiresAtMs = r.deadlineMs, parentRequestId = r.runId), Origin.valueOf(r.origin))
+                stopped(runId)?.let {stopped->
+                    if(stopped.error?.startsWith("CANCELLATION_")==true && !record.state.isTerminal) return cancel(runId)
+                    return stopped
+                }
                 if (!record.state.isTerminal) {
                     if (step.approvalWaitMs > 0) record = engine.await(childId, minOf(step.approvalWaitMs, r.deadlineMs - clock.nowMs())) ?: record
                     if (!record.state.isTerminal)
@@ -200,7 +224,7 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
             return save(r, r.copy(state = if (partial) SkillState.PARTIALLY_SUCCEEDED else SkillState.SUCCEEDED,
                 output = Templates.resolve(r.definition.output, values)))
         } catch (e: Exception) {
-            if (store.get(runId)?.state == SkillState.CANCELLED) return requireNotNull(store.get(runId))
+            stopped(runId)?.let {return it}
             // Yield ownership after cancellation/failure. Stable pending child IDs reconcile any
             // already-started action; the caller must not replay it under a new identity.
             val latest=store.get(runId)
@@ -211,21 +235,56 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
         }
     }
 
-    suspend fun cancel(runId: String): SkillExecution {
-        while (true) {
-            val r = requireNotNull(store.get(runId))
-            if (r.state !in setOf(SkillState.READY, SkillState.RUNNING, SkillState.AWAITING_APPROVAL)) return r
-            val n = r.copy(state = SkillState.CANCELLED, revision = r.revision + 1)
-            if (store.update(n, r.revision)) {
-                r.pendingRequestId?.let { engine.cancel(it, "workflow cancelled") }
-                updates.tryEmit(n)
-                return n
+    suspend fun cancel(runId:String):SkillExecution = cancelInternal(runId,true)
+    private suspend fun cancelInternal(runId: String,waitForHandoff:Boolean): SkillExecution = withContext(NonCancellable) {
+        val completion=CompletableDeferred<Unit>()
+        val other=cancellations.putIfAbsent(runId,completion)
+        if(other!=null) {
+            withTimeoutOrNull(5000) {other.await()}
+            return@withContext requireNotNull(store.get(runId))
+        }
+        try {
+            while(true) {
+                val r=requireNotNull(store.get(runId))
+                val reconciling=r.state==SkillState.UNKNOWN_OUTCOME && r.error?.startsWith("CANCELLATION_")==true
+                if(r.state !in setOf(SkillState.READY,SkillState.RUNNING,SkillState.AWAITING_APPROVAL) && !reconciling) return@withContext r
+                val childId=r.pendingRequestId
+                val barrier=r.copy(state=if(childId==null) SkillState.CANCELLED else SkillState.UNKNOWN_OUTCOME,
+                    error=if(childId==null) "WORKFLOW_CANCELLED" else "CANCELLATION_REQUESTED",revision=r.revision+1)
+                if(!store.update(barrier,r.revision)) continue
+                if(childId==null) {updates.tryEmit(barrier);return@withContext barrier}
+                // Persist the stop barrier before asking the backend. A missing child can be
+                // in the submit handoff: absence alone never proves nothing executed.
+                var child=engine.cancel(childId,"workflow cancelled")
+                if(child==null && waitForHandoff) child=engine.await(childId,1000)
+                if(child!=null && !child.state.isTerminal) {
+                    child=engine.cancel(childId,"workflow cancelled") ?: child
+                    if(!child.state.isTerminal) child=engine.await(childId,3000) ?: child
+                }
+                val known=child?.state?.isTerminal==true && child.state!=RequestState.UNKNOWN_OUTCOME
+                val outcome=child?.takeIf {it.state.isTerminal}?.let {record->
+                    barrier.definition.steps.firstOrNull {"${barrier.runId}:${it.id}"==childId}
+                        ?.takeIf {barrier.steps.none {outcome->outcome.requestId==childId}}?.let {step->
+                        StepOutcome(step.id,record.state.name,false,childId,record.result?.output ?: JsonNull,record.errorCode)
+                    }
+                }
+                val result=barrier.copy(state=if(known) SkillState.CANCELLED else SkillState.UNKNOWN_OUTCOME,
+                    error=when {child==null->"CANCELLATION_HANDOFF_UNCERTAIN";!known->"CANCELLATION_UNKNOWN_OUTCOME";child?.state==RequestState.SUCCEEDED->"WORKFLOW_CANCELLED_AFTER_STEP_COMPLETED";else->"WORKFLOW_CANCELLED"},
+                    steps=if(outcome==null) barrier.steps else barrier.steps+outcome,
+                    cursor=barrier.cursor+if(outcome==null) 0 else 1,pendingRequestId=if(known) null else childId)
+                return@withContext save(barrier,result)
             }
+            @Suppress("UNREACHABLE_CODE") error("Unreachable")
+        } finally {
+            completion.complete(Unit);cancellations.remove(runId,completion)
+            // A failed final SQLite write leaves the conservative persisted barrier visible.
+            store.get(runId)?.takeIf {it.error=="CANCELLATION_REQUESTED"}?.let {updates.tryEmit(it)}
         }
     }
 
     /** Call only during startup, after engine.recover(), before accepting new work. */
     suspend fun recover() {
+        for(r in store.cancellations()) cancelInternal(r.runId,false)
         for (r in store.active()) {
             if (r.state == SkillState.RUNNING) save(r, r.copy(state = SkillState.READY))
             resume(r.runId)

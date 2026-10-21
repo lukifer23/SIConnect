@@ -66,10 +66,10 @@ class RuntimeGraph(val context: Context) {
             ui.recover()
             privileged.refresh()
             engine.recover(); runner.recover()
-            if (skills.get("diagnostics.snapshot") == null) skills.install(SkillDefinition("diagnostics.snapshot", 1, "Real native device snapshot", steps=listOf(
+            if (!skills.exists("diagnostics.snapshot")) skills.install(SkillDefinition("diagnostics.snapshot", 1, "Real native device snapshot", steps=listOf(
                 SkillStep("status", "device.status"), SkillStep("battery", "device.battery"), SkillStep("memory", "device.memory")),
                 output=buildJsonObject { put("device", JsonPrimitive("\${steps.status.output}")); put("battery", JsonPrimitive("\${steps.battery.output}")); put("memory", JsonPrimitive("\${steps.memory.output}")) }))
-            if(skills.get("weather.commute_check")==null) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
+            if(!skills.exists("weather.commute_check")) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
             events.trim(System.currentTimeMillis() - settings.eventRetentionDays * 86_400_000L)
             scheduler.restore()
             reminders.restore()
@@ -199,6 +199,26 @@ class RuntimeGraph(val context: Context) {
             w.setTransactionSuccessful()
         } finally {w.endTransaction()}
     }
+    /** Local owner only. A package allowance is separate from family scope and broad shell. */
+    fun setSemanticPackagePermissionFromOwner(agentId:String,targetPackage:String,enabled:Boolean) {
+        require(!agentId.startsWith("local-")) {"Select a remote identity"}
+        require(targetPackage.length<=200 && targetPackage.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+"))) {"Enter an Android application package"}
+        require(targetPackage!=context.packageName && !dev.siconnect.app.accessibility.SemanticUiRules.protectedPackage(targetPackage)) {"Owner, system permission and biometric surfaces are protected"}
+        val ids=setOf("ui.click","ui.set_text")
+        val constraints=mapOf("packageName" to JsonPrimitive(targetPackage))
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val a=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
+            require(!a.grant.revoked && (a.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
+            if(enabled) require(ids.all {id->a.grant.scopes.any {PolicyEngine.globMatches(it,id)} && a.grant.denied.none {PolicyEngine.globMatches(it,id)}}) {"Allow the UI interaction family first"}
+            val retained=a.grant.standing.filterNot {it.capabilityId in ids && it.backend==BackendKind.ACCESSIBILITY && it.actionHash==null && it.constraints==constraints}
+            val added=if(enabled) ids.map {id->StandingGrant(id,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=BackendKind.ACCESSIBILITY,note="Owner-selected semantic app access")} else emptyList()
+            agents.put(a.copy(grant=a.grant.copy(standing=retained+added)))
+            events.emit(Event(System.currentTimeMillis(),eventType="grant.semantic_app.changed",agentId=agentId,detail="Local owner ${if(enabled) "allowed" else "removed"} semantic clicks/text for $targetPackage"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
+
     /** Persist revocation and its audit event together; callers are local management screens only. */
     fun revokeAgentFromOwner(agentId: String) {
         require(!agentId.startsWith("local-")) { "Local identities cannot be revoked as remote bots" }

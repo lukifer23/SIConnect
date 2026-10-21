@@ -18,11 +18,11 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime, Android 0.4.2.** Grok Bot, Dots/ChatGPT and Hermes have operated the actual Fold through the existing hosted gateway. This pass adds explicit pairing identities, verified package metadata, shell/process recovery, paginated activity, managed files and time-window weather. Hermes also completed disposable file operations and delivered an exact reminder while the Fold remained locked with its screen off. Generic third-party app navigation still uses the shared screen. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [capability coverage](docs/capability-coverage.md).
+> **Status: working development runtime, Android 0.5.0-dev (version code 6), SQLite schema 6.** The installed registry advertises 81 tools through the existing hosted gateway. Grokbot and official MCP SDK calls were freshly exercised this pass, including actual bundled shell UID 2000. Dots/ChatGPT and Hermes have prior real-device success; fresh provider-specific evidence is tracked separately in [device testing](docs/device-testing.md) and [provider compatibility](docs/provider-compatibility.md).
 
-A real sparse 24-hour hosted observation is underway; no completed soak or battery-life conclusion is claimed. Pass 4 adds recoverable automation slots, wall-clock recurrence, cooperative screen leases, bounded Binder results, native Calendar Provider and owner-selected SAF tools. Calendar/SAF writes still require owner setup and physical verification. Phone-only privileged bootstrap, MediaStore integration and broad background lifecycle validation remain unfinished.
+The owner UI now has Home, Agents, Automations, Activity and Settings with adaptive navigation. Home shows actual missing-access setup cards; enabling Android Accessibility and notification-listener access removed the corresponding cards on the physical Fold. Automations can be created/edited with native date/time inputs, inspected, run once without changing their schedule, and cancelled. These changes preserve existing identities, grants, requests and reminders. Comprehensive fold/posture/font-scale verification remains pending.
 
-Pass 4 also completed a real Grokbot → Telegram → Hermes → phone chain. The current UI includes a shared vector identity, system/light/dark appearance, bounded Activity history and an on-demand RAM/CPU/storage card. Privileged app-process recovery retains its Binder lifetime observer; reboot still requires authorized bootstrap.
+Native notification-action discovery and supported RemoteInput replies now use exact live action references. A separate disposable test APK received one real reply broadcast, with its receipt digest/count checked independently. Production results report `DISPATCHED`, not recipient delivery. Semantic screen tools are implemented with cooperative leases, strict stale-reference checks and protected-owner/password exclusions; their normal-process physical harness is currently blocked because Android marks the owner-enabled Accessibility service crashed/disconnected after lifecycle testing. Owner off/on restoration is required before that validation can continue. Calendar/SAF write tests still need owner-selected disposable resources. No completed battery study or unattended privileged reboot recovery is claimed.
 
 ## Design principles
 
@@ -33,6 +33,14 @@ Pass 4 also completed a real Grokbot → Telegram → Hermes → phone chain. Th
 - **Durable requests.** Every request has an id, an optional idempotency key, an expiry and a persisted state machine. Duplicates return the existing record instead of re-executing.
 - **Deterministic automation.** Skills are declarative JSON workflows over existing capabilities. Routine checks (for example the weather/commute reminder) run on the device without calling a model.
 
+## Using the phone
+
+1. Open Home to see connection/backend state and any missing Android access. Enable only the access needed for your workflow.
+2. Open Agents to select the exact bot identity and allow its capability families. Standing screen access for a selected app and broad privileged shell are separate deliberate permissions.
+3. Open Automations to choose a reminder, device snapshot or configured commute check, review timing/permissions and save. Activity retains request results; pending approvals remain reviewable until resolved or expired.
+
+Remote agents still use the same authenticated MCP endpoint. Existing OAuth connections do not need to be replaced for this update. See [permissions and owner controls](docs/permissions.md) for the exact setup and approval behavior.
+
 ## Repository layout
 
 | Path | Contents |
@@ -40,7 +48,7 @@ Pass 4 also completed a real Grokbot → Telegram → Hermes → phone chain. Th
 | `core/` | Pure Kotlin/JVM: models, capability registry, JSON-schema subset validator, policy engine, execution engine, skill runtime. Host-testable. |
 | `app/` | Android application (Kotlin, Jetpack Compose): backends, capabilities, persistence, approvals, transport, UI. |
 | `gateway/` | MCP gateway for Cloudflare Workers. |
-| `tools/` | Mac-side tooling: ADB audit harness, diagnostics analyzer. |
+| `tools/` | ADB audit/profiling tools and opt-in disposable physical-test fixtures. |
 | `docs/` | Architecture, decisions, device audit, security model, status and handoff. |
 
 ## Requirements
@@ -69,6 +77,10 @@ Device setup, gateway deployment and agent pairing are covered in [docs/developm
 - [Provider compatibility](docs/provider-compatibility.md)
 - [Security model](docs/security-model.md)
 - [Project status](docs/project-status.md) and [next steps](docs/next-steps.md)
+- [Gateway setup](docs/gateway-deployment.md), [owner permissions](docs/permissions.md) and [performance](docs/performance.md)
+- [Reusable Hermes phone-control skill](integrations/skills/siconnect/SKILL.md)
+
+Never include live credentials or personal device evidence in issues or commits.
 
 ## Disclaimer
 
@@ -77,5 +89,3 @@ SIConnect is designed to give software agents powerful control over a device, up
 ## License
 
 [MIT](LICENSE)
-
-OAuth pairing for Dots/ChatGPT is implemented and actual phone calls were verified. See [gateway setup](docs/gateway-deployment.md), [client evidence](docs/provider-compatibility.md), [permissions](docs/permissions.md), [capability coverage](docs/capability-coverage.md) and [performance](docs/performance.md). Hermes has a reusable [phone-control skill](integrations/skills/siconnect/SKILL.md). Never include live credentials or personal device evidence in issues or commits.

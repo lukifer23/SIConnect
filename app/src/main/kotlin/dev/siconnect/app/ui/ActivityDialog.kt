@@ -16,9 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import dev.siconnect.core.RequestState
 
-/** Bounded metadata only. Full arguments/results are read only after an explicit selection. */
+/** Shared bounded history browser for full-screen and modal entry points. */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable internal fun ActivityDialog(store:SqlRequestStore,revision:Int,labels:Map<String,String>,title:(String)->String,onClose:()->Unit,onOpen:(String)->Unit) {
+@Composable private fun ActivityContent(store:SqlRequestStore,revision:Int,labels:Map<String,String>,title:(String)->String,modifier:Modifier,onOpen:(String)->Unit) {
     var filter by rememberSaveable { mutableStateOf("All") }
     var selectedAgent by rememberSaveable { mutableStateOf<String?>(null) }
     var newest by rememberSaveable { mutableStateOf(true) }
@@ -38,8 +38,7 @@ import dev.siconnect.core.RequestState
             more=loaded.size>100;page=loaded.take(100)
         } catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {error="Could not load history: ${e.javaClass.simpleName}"} finally {loading=false}
     }
-    val bodyHeight=(LocalConfiguration.current.screenHeightDp * 0.62f).dp
-    AlertDialog(onDismissRequest=onClose,title={Text("Activity")},text={Column(Modifier.fillMaxWidth().heightIn(max=bodyHeight),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+    Column(modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text("Page ${cursors.size} · ${page.size} requests. Tap an action for its result and audit trail.",style=MaterialTheme.typography.bodySmall)
         FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
             listOf("All","Needs attention","Completed").forEach { name -> FilterChip(selected=filter==name,onClick={filter=name},label={Text(name)}) }
@@ -73,7 +72,21 @@ import dev.siconnect.core.RequestState
             TextButton(onClick={cursors=cursors.dropLast(1)},enabled=!loading && cursors.size>1) {Text("Previous page")}
             TextButton(onClick={page.lastOrNull()?.let {cursors=cursors+it}},enabled=!loading && more) {Text("Next page")}
         }
-    }},confirmButton={TextButton(onClick=onClose) {Text("Close")}})
+    }
+}
+
+@Composable internal fun ActivityScreen(store:SqlRequestStore,revision:Int,labels:Map<String,String>,title:(String)->String,onOpen:(String)->Unit) {
+    Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Text("Activity",style=MaterialTheme.typography.headlineMedium)
+        ActivityContent(store,revision,labels,title,Modifier.weight(1f),onOpen)
+    }
+}
+
+@Composable internal fun ActivityDialog(store:SqlRequestStore,revision:Int,labels:Map<String,String>,title:(String)->String,onClose:()->Unit,onOpen:(String)->Unit) {
+    val bodyHeight=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.62f
+    AlertDialog(onDismissRequest=onClose,title={Text("Activity")},text={
+        ActivityContent(store,revision,labels,title,Modifier.heightIn(max=bodyHeight),onOpen)
+    },confirmButton={TextButton(onClick=onClose) {Text("Close")}})
 }
 
 internal fun actionStateLabel(state:RequestState):String = when(state) {

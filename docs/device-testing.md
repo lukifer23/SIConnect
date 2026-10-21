@@ -81,3 +81,30 @@ Android 0.4.2 was installed and launched in place; the final seven-call hosted p
 
 
 The final catalog/layout increment was rebuilt, linted, installed in place and reattached. Fresh hosted discovery confirmed the raw-diagnostic title/guidance; native compact inspection succeeded (`40dbb305-6001-457f-8606-54ea72bc4017`). The final wrapped history controls were inspected again on the Fold without opening any real approval.
+
+
+## Pass 6 execution record
+
+Starting commit `690e5fe`, target 0.5.0-dev/code 6, same SQLite 6. Evidence is kept outside the public repository. Real device checks below used the explicitly selected physical Fold; no personal messages, files, calendars or installed personal apps were test fixtures.
+
+| Check | Classification | Actual outcome |
+| --- | --- | --- |
+| Core / Android JVM / Python | Host fixtures | 35 / 35 / 10 passed; no failures/skips in those suites |
+| Android APK, instrumentation APK, lint | Host build/static checks | Passed; in-place installation and native Home startup observed |
+| `ManualAutomationDeviceTest` | Physical Android/SQLite/WorkManager | 2 passed: same-slot manual execution leaves schedule unchanged; queued cancellation prevents a later worker from executing |
+| `UiLeaseDeviceTest` | Physical engine/SQLite | 2 passed: independent agents contend correctly while background reads continue; package click/text grant is durable, narrow and revocable |
+| `NotificationActionDeviceTest` | Physical independent disposable APK | 1 passed in 10.241 s; real RemoteInput receipt/digest, one duplicate-suppressed delivery, stale/auth-required refusal |
+| Official SDK hosted smoke | Actual deployed gateway and phone | 7 succeeded, native plus actual ADB_SERVICE UID 2000; 81 tools discovered |
+| Grokbot read-only smoke | Actual provider | New status and shell-identity requests succeeded and matched persisted device records |
+| Hermes native agent smoke | Actual provider | Post-update status and shell identity both succeeded; first attempt during restart returned DEVICE_OFFLINE |
+| Home setup | Physical owner interaction | Both cards present before access; owner enabled services; both cards absent after binding |
+| Semantic instrumentation | Physical attempt | Fixture skipped: service did not bind in instrumented process despite configured access; not counted as a semantic pass |
+| Control-center instrumentation | Physical attempt | Timed out while expected control-center content was not visible; not counted as passed |
+| Calendar / SAF writes | Physical dependency | Pending explicit writable disposable resources |
+| Biometric success/cancel, full folded/unfolded/font/theme matrix | Owner-interactive dependency | Not yet verified in this pass |
+
+Use `-e allowControlCenterUi true` only in a coordinated screen window for `ControlCenterDeviceTest`. It never saves an automation or changes a grant. Test setup must select/clear the intended activity task; an existing fixture on top of the app task is not the Home screen.
+
+`tools/semantic_ui_smoke.py --serial <authorized-serial> --allow-disposable-ui-fixture` exercises the actual normal-process accessibility service through the existing authenticated debug loopback endpoint over an ADB forward. It uses a debug-only disposable Activity and short-lived `ui.*` identity. This is **physical authenticated loopback evidence**, not hosted MCP evidence. It never enables Android accessibility access, approves an owner action or modifies a live bot grant. Session cleanup must finish before success is reported. Pre-action stale-reference refusals may be re-observed with bounded retries; accepted/unknown mutations are never blindly repeated.
+
+Earlier harness attempts exposed service binding, initial window-event and session-cleanup timing problems. Retain their failed/skipped classifications; a later passing normal-process run must be documented separately. Do not count JUnit's aggregate `OK` line as proof that an assumption-skipped fixture executed.

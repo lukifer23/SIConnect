@@ -20,6 +20,9 @@ class SqlSkillRunStore(private val db: SIConnectDb) : SkillRunStore {
     }
     override fun active() = db.readableDatabase.query("skill_runs", arrayOf("json"), "state IN ('READY','RUNNING','AWAITING_APPROVAL')", null, null, null, null)
         .mapAll { AppJson.decodeFromString(SkillExecution.serializer(), it.getString(0)) }
+    override fun cancellations() = db.readableDatabase.query("skill_runs",arrayOf("json"),"state = ?",arrayOf(SkillState.UNKNOWN_OUTCOME.name),null,null,null)
+        .mapAll {AppJson.decodeFromString(SkillExecution.serializer(),it.getString(0))}
+        .filter {it.error in setOf("CANCELLATION_REQUESTED","CANCELLATION_HANDOFF_UNCERTAIN")}
     private fun values(r: SkillExecution) = ContentValues().apply {
         put("run_id", r.runId); put("state", r.state.name); put("revision", r.revision); put("json", AppJson.encodeToString(SkillExecution.serializer(), r))
     }
@@ -33,8 +36,10 @@ class SkillCatalog(private val db: SIConnectDb, private val registry: Capability
             put("installed_at", System.currentTimeMillis()); put("json", SkillJson.json.encodeToString(SkillDefinition.serializer(), def))
         }, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
     }
-    fun all(): List<SkillDefinition> = db.readableDatabase.query("skills", arrayOf("json"), "enabled=1", null, null, null, null)
+    fun all(includeDisabled:Boolean=false): List<SkillDefinition> = db.readableDatabase.query("skills", arrayOf("json"), if(includeDisabled) null else "enabled=1", null, null, null, null)
         .mapAll { SkillJson.parse(it.getString(0)) }
+    fun exists(id:String):Boolean = db.readableDatabase.query("skills",arrayOf("skill_id"),"skill_id=?",arrayOf(id),null,null,null,"1").use {it.moveToFirst()}
+    fun isEnabled(id:String):Boolean = db.readableDatabase.query("skills",arrayOf("enabled"),"skill_id=?",arrayOf(id),null,null,null,"1").use {it.moveToFirst() && it.getInt(0)==1}
     fun get(id:String):SkillDefinition? = db.readableDatabase.query("skills",arrayOf("json"),"skill_id=? AND enabled=1",arrayOf(id),null,null,null,"1")
         .mapAll {SkillJson.parse(it.getString(0))}.firstOrNull()
     fun enable(id: String, enabled: Boolean) { db.writableDatabase.update("skills", ContentValues().apply { put("enabled", if (enabled) 1 else 0) }, "skill_id=?", arrayOf(id)) }
