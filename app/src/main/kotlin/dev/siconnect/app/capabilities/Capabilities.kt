@@ -142,12 +142,13 @@ fun registerCapabilities(g: RuntimeGraph) {
     op("notifications.dismiss", "Dismiss notification", objectSchema { string("key", "Exact notification key", true, maxLength=1000) }, RiskClass.MODERATE_IMPACT, listenerAvailable) { a, _ ->
         (NotificationCaptureService.instance ?: throw CapabilityException("PERMISSION_REQUIRED", "Listener disconnected")).cancelNotification(a.str("key")); buildJsonObject { put("dispatched", true) }
     }
-    // All privileged tools share one UserService backend. No app-shell fallback exists.
+    // All privileged tools use the same explicitly selected backend.
     fun shell(id: String, title: String, schema: JsonObject, risk: RiskClass = RiskClass.HIGH_IMPACT,
+              description:String=title,
               command: (JsonObject) -> ShellRequest) {
-        g.registry.register(Operation(CapabilityDescriptor(id, title=title, description=title, inputSchema=schema,
+        g.registry.register(Operation(CapabilityDescriptor(id, title=title, description=description, inputSchema=schema,
             backend=g.privileged.kind, risk=risk, timeoutMs=125_000,interaction=if(risk==RiskClass.READ_ONLY) InteractionMode.BACKGROUND else InteractionMode.MAY_OPEN_SCREEN,
-            sideEffects=if (risk > RiskClass.READ_ONLY) listOf("May change device state under the Shizuku identity") else emptyList()),
+            sideEffects=if (risk > RiskClass.READ_ONLY) listOf("May change device state under the owner-selected privileged identity") else emptyList()),
             available={ if (g.privileged.available()) Availability.IMPLEMENTED else Availability.PRIVILEGE_REQUIRED }, detail={ g.privileged.detail() },
             assessment={ a -> RiskAssessment(risk, title, target=(a["package"] ?: a["key"])?.jsonPrimitive?.content,
                 shellCommand=if (id == "shell.execute") a.str("command") else null,
@@ -175,7 +176,8 @@ fun registerCapabilities(g: RuntimeGraph) {
     shell("apps.list_privileged", "Packages in Android user 0", objectSchema(), RiskClass.READ_ONLY) { ShellRequest("", argv=listOf("/system/bin/pm", "list", "packages", "--user", "0")) }
     val pkgSchema = objectSchema { string("package", "Exact package name in user 0", true, maxLength=200) }
     fun pkg(a: JsonObject): String = a.str("package").also { require(it.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+"))) }
-    shell("apps.inspect_privileged", "Inspect package", pkgSchema, RiskClass.READ_ONLY) { ShellRequest("", argv=listOf("/system/bin/dumpsys", "package", pkg(it))) }
+    shell("apps.inspect_privileged", "Raw package diagnostic dump", pkgSchema, RiskClass.READ_ONLY,
+        description="Raw dumpsys package diagnostics for explicit troubleshooting. Output can be large or truncated and may include multiple Android user states. For installation, version, enabled state and installer verification, use apps_inspect_detailed with packageName and user 0 instead. A successful dump exit is not verification of complete metadata.") { ShellRequest("", argv=listOf("/system/bin/dumpsys", "package", pkg(it))) }
     shell("apps.uninstall", "Uninstall package from user 0", pkgSchema) { ShellRequest("", argv=listOf("/system/bin/pm", "uninstall", "--user", "0", pkg(it))) }
     shell("apps.install", "Install APK into user 0", objectSchema { string("path", "APK path readable by shell", true, maxLength=1000) }) {
         val path=it.str("path"); require(path.startsWith("/") && !path.contains('\u0000'))

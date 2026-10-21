@@ -49,3 +49,9 @@ The earlier sparse collector lost its output during host cleanup. Its observed s
 
 
 A fresh 60.552-second connected interval after app-process recovery sampled five times: app CPU increased by 0.17 seconds (0.2833% of one core), daemon CPU by 0.00 seconds at the available counter resolution; app PSS ranged 48,393–49,161 KiB. This interval is not an equivalent before/after comparison. Foreground/idle classification was not independently captured per sample, so the file name does not establish controlled foreground idle. No battery/radio/24-hour inference follows. The observation harness should add per-sample process importance and screen state before comparing lifecycle modes.
+
+
+The installed 0.4.2 checkpoint debug APK measured 36,529,327 bytes before the subsequent small catalog/layout-only increment. Debug artifact size is build-specific. The real Hermes chain highlighted a raw package result of approximately 71k characters; registry descriptions now direct normal package checks to the existing compact typed operation. No end-to-end latency/token saving is claimed until that workflow is repeated with the compact operation.
+
+
+The compact native package check against the installed 0.4.2 app returned a 323-byte output object and a 3,100-byte complete MCP result in 211 ms in one hosted observation. Updated raw-tool selection guidance was confirmed through live discovery. The earlier Hermes raw-result character count is a different measurement boundary, so no percentage/token reduction is calculated from those two numbers.

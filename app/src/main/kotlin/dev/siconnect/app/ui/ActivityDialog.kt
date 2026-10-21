@@ -1,8 +1,6 @@
 package dev.siconnect.app.ui
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,6 +17,7 @@ import kotlinx.coroutines.withContext
 import dev.siconnect.core.RequestState
 
 /** Bounded metadata only. Full arguments/results are read only after an explicit selection. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun ActivityDialog(store:SqlRequestStore,revision:Int,labels:Map<String,String>,title:(String)->String,onClose:()->Unit,onOpen:(String)->Unit) {
     var filter by rememberSaveable { mutableStateOf("All") }
     var selectedAgent by rememberSaveable { mutableStateOf<String?>(null) }
@@ -42,7 +41,7 @@ import dev.siconnect.core.RequestState
     val bodyHeight=(LocalConfiguration.current.screenHeightDp * 0.62f).dp
     AlertDialog(onDismissRequest=onClose,title={Text("Activity")},text={Column(Modifier.fillMaxWidth().heightIn(max=bodyHeight),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text("Page ${cursors.size} · ${page.size} requests. Tap an action for its result and audit trail.",style=MaterialTheme.typography.bodySmall)
-        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+        FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
             listOf("All","Needs attention","Completed").forEach { name -> FilterChip(selected=filter==name,onClick={filter=name},label={Text(name)}) }
         }
         Row {
@@ -70,7 +69,7 @@ import dev.siconnect.core.RequestState
                 HorizontalDivider()
             }
         }
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+        FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
             TextButton(onClick={cursors=cursors.dropLast(1)},enabled=!loading && cursors.size>1) {Text("Previous page")}
             TextButton(onClick={page.lastOrNull()?.let {cursors=cursors+it}},enabled=!loading && more) {Text("Next page")}
         }
