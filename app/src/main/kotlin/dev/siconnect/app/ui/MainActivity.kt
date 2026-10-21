@@ -78,7 +78,6 @@ open class MainActivity: ComponentActivity() {
         var manageBotId by rememberSaveable { mutableStateOf<String?>(null) }
         val manageBot=bots.firstOrNull { it.grant.agentId==manageBotId }
         var labels by remember { mutableStateOf(emptyMap<String,String>()) }
-        var openedApproval by rememberSaveable { mutableStateOf<String?>(null) }
         var reminders by remember { mutableStateOf(emptyList<dev.siconnect.app.capabilities.Reminder>()) }
         var reminder by remember { mutableStateOf<dev.siconnect.app.capabilities.Reminder?>(null) }
         var exactAccess by remember { mutableStateOf(false) }
@@ -97,7 +96,15 @@ open class MainActivity: ComponentActivity() {
         LaunchedEffect(Unit) { g.engine.recordUpdates.collect { record -> changed++;if(reviewId==record.requestId) review=record } }
         LaunchedEffect(pending,permissionRevision) {
             val target=intent.getStringExtra("requestId")
-            if(target!=null && target!=openedApproval) pending.firstOrNull { it.requestId==target }?.let { reviewId=it.requestId;review=it; openedApproval=target }
+            if(target!=null) {
+                val stored=withContext(Dispatchers.IO) { g.ready.await();g.requests.get(target) }
+                if(stored!=null) {
+                    advanced=false;reviewId=stored.requestId;review=stored
+                    // Consume this delivery, not the request identity: a later notification tap
+                    // must reopen the same action, including its resolved/expired result.
+                    intent.removeExtra("requestId")
+                }
+            }
         }
         LaunchedEffect(inspected) { inspectedEvents=withContext(Dispatchers.IO) { inspected?.let { g.events.query(requestId=it.requestId,limit=30) } ?: emptyList() } }
         LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null; pairedBot=key?.let(g::authenticate) } }
@@ -446,39 +453,47 @@ open class MainActivity: ComponentActivity() {
 }
 
 /** Shared owner review: one path for Home and detailed management. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun OwnerApprovalDialog(r: RequestRecord,busy:Boolean=false,error:String="",onClose:()->Unit,onDeny:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
     var broad by remember(r.requestId) { mutableStateOf(false) }
     val critical=r.assessment?.risk==RiskClass.CRITICAL
     val pending=r.state==RequestState.AWAITING_APPROVAL
     val expired=System.currentTimeMillis()>=(r.approvalExpiresAtMs ?: r.expiresAtMs)
     val canDecide=pending && !busy && !expired
-    AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),
-        title={Text(if(!pending) "Action ${r.state.name.lowercase().replace('_',' ')}" else if(broad) "Always allow shell commands?" else "Allow this action?")},
-        text={Column(Modifier.heightIn(max=380.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            Text(r.agentId)
-            Text("Review stays open until you close it.",style=MaterialTheme.typography.bodySmall)
-            if(pending) Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(r.approvalExpiresAtMs ?: r.expiresAtMs))}")
-            if(broad && pending) Text("This bot may run any command using this phone's privileged shell without asking again. This can change apps, settings and data. Critical operations still require approval. Manage this permission under Your bots.")
-            else {
-                Text(r.assessment?.shellCommand ?: r.arguments.toString())
-                Text("Risk: ${r.assessment?.risk}\n${r.assessment?.sideEffects?.joinToString() ?: ""}")
-                if(pending) Text("Always allow this action saves only these exact arguments and this backend. Other actions still follow your policy.",style=MaterialTheme.typography.bodySmall)
-            }
-            if(busy) {LinearProgressIndicator(Modifier.fillMaxWidth());Text("Saving your decision and checking current permissions…")}
-            if(expired && pending) Text("This request expired. Ask the bot to submit a new request.",color=MaterialTheme.colorScheme.error)
-            r.errorMessage?.let {Text(it,color=MaterialTheme.colorScheme.error)}
-            if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
-        }},confirmButton={Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.End) {
-            if(canDecide) {
-                if(broad) Button(onClick={onApprove(false,true)}) { Text("Always allow shell commands") }
-                else {
-                    Button(onClick={onApprove(false,false)}) {Text("Allow once")}
-                    if(!critical) OutlinedButton(onClick={onApprove(true,false)}) {Text("Always allow this action")}
-                    if(!critical && r.assessment?.shellCommand!=null) TextButton(onClick={broad=true}) {Text("Allow all shell commands…")}
+    BasicAlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false)) {
+        Surface(shape=RoundedCornerShape(28.dp),tonalElevation=6.dp) {
+            Column(Modifier.fillMaxWidth().heightIn(max=androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp*0.85f).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                Text(if(!pending) "Action ${r.state.name.lowercase().replace('_',' ')}" else if(broad) "Always allow shell commands?" else "Allow this action?",style=MaterialTheme.typography.headlineSmall)
+                Column(Modifier.weight(1f,fill=false).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Text(r.agentId)
+                    Text("Review stays open until you close it.",style=MaterialTheme.typography.bodySmall)
+                    if(pending) Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(r.approvalExpiresAtMs ?: r.expiresAtMs))}")
+                    if(broad && pending) Text("This bot may run any command using this phone's privileged shell without asking again. This can change apps, settings and data. Critical operations still require approval. Manage this permission under Your bots.")
+                    else {
+                        Text(r.assessment?.shellCommand ?: r.arguments.toString())
+                        Text("Risk: ${r.assessment?.risk}\n${r.assessment?.sideEffects?.joinToString() ?: ""}")
+                        if(pending) Text("Always allow this action saves only these exact arguments and this backend. Other actions still follow your policy.",style=MaterialTheme.typography.bodySmall)
+                    }
+                    if(busy) {LinearProgressIndicator(Modifier.fillMaxWidth());Text("Saving your decision and checking current permissions…")}
+                    if(expired && pending) Text("This request expired. Ask the bot to submit a new request.",color=MaterialTheme.colorScheme.error)
+                    r.errorMessage?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+                    if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
                 }
-                TextButton(onClick=onDeny) {Text("Deny",color=MaterialTheme.colorScheme.error)}
+                Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.End,verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                    if(canDecide) {
+                        if(broad) Button(onClick={onApprove(false,true)},modifier=Modifier.fillMaxWidth()) {Text("Always allow shell commands")}
+                        else {
+                            Button(onClick={onApprove(false,false)},modifier=Modifier.fillMaxWidth()) {Text("Allow once")}
+                            if(!critical) OutlinedButton(onClick={onApprove(true,false)},modifier=Modifier.fillMaxWidth()) {Text("Always allow this action")}
+                            if(!critical && r.assessment?.shellCommand!=null) TextButton(onClick={broad=true}) {Text("Allow all shell commands…")}
+                        }
+                        TextButton(onClick=onDeny) {Text("Deny",color=MaterialTheme.colorScheme.error)}
+                    }
+                    TextButton(onClick={if(broad && pending) broad=false else onClose()},enabled=!busy) {Text(if(broad && pending) "Back" else "Close")}
+                }
             }
-        }},dismissButton={TextButton(onClick={if(broad && pending) broad=false else onClose()},enabled=!busy) {Text(if(broad && pending) "Back" else "Close")}})
+        }
+    }
 }
 
 @Composable private fun ShellPermissionDialog(label: String,busy:Boolean=false,allowed:Boolean=false,onClose:()->Unit,onAllow:()->Unit) {

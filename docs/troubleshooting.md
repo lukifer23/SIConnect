@@ -27,3 +27,5 @@ Prefer typed tools and request status lookup over repeated screen capture. A com
 ## Package inspection output is truncated
 
 `apps.inspect_privileged` currently returns a bounded raw Android package dump. For packages with large resolver tables, truncation can occur before version and per-user state. `SUCCEEDED`/exit 0 means the dump command ran; it does not prove that omitted metadata was verified. A typed bounded result remains required. The real Dots install was verified using a bounded privileged package query and an independent user-0 check, rather than treating a truncated dump as complete evidence.
+
+Reopening an owner review must consume each incoming intent rather than permanently suppressing a request ID. The installed activity now supports closing and reopening the same stored action, including a terminal result. A bounded review layout keeps its action controls outside the scrollable text region. Instrumentation that inspects Compose dialogs should traverse their actual accessibility window children; framework find-by-text can omit the virtual nodes on the tested runtime.

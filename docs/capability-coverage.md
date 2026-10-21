@@ -7,7 +7,7 @@ Updated October 20, 2026. Implemented means registered production code exists. P
 | Device diagnostics | Status, battery, storage, memory, network, thermal | Real native values through engine/SQLite and hosted MCP |
 | Native apps | List, inspect, launch | Real package query; visibility follows Android |
 | Privileged shell | Execute, identity, health | Real bundled UID 2000; arbitrary commands, approvals and durable broad grant exercised; cancellation/output stress pending |
-| Privileged apps | List, inspect, install, uninstall | Package inspection through hosted MCP; official Play Store installs via Hermes tool runtime and actual Dots verified; Grok install/uninstall owner-confirmed; structured disposable uninstall still pending |
+| Privileged apps | List, inspect, install, uninstall | Package inspection through hosted MCP; official Play Store installs via Hermes tool runtime and actual Dots verified; Grok install/uninstall owner-confirmed; Dots structured test-app uninstall waited for actual owner approval and removal was independently verified; isolated disposable-APK stress coverage still pending |
 | Settings/system | Get/put, dumpsys, system command through common backend | Production registration; not every mutating operation physically exercised |
 | Notifications | Listener list/dismiss, native post | Policy-backed reminder notification physically delivered; listener revocation and dismissal need expanded testing |
 | Alarms | Next alarm | Actual Clock test alarm and matching next-alarm state verified; creation used authorized shell/Clock UI |

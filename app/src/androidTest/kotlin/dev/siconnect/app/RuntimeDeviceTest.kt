@@ -1,6 +1,9 @@
 package dev.siconnect.app
 
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.core.app.ActivityScenario
+import android.content.Intent
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.siconnect.app.data.*
 import dev.siconnect.core.*
@@ -34,6 +37,49 @@ class RuntimeDeviceTest {
         try { g.engine.submit(req.copy(capabilityId="device.battery"),Origin.LOCAL_OWNER); Assert.fail("collision accepted") }
         catch(e: CapabilityException) { Assert.assertEquals("IDEMPOTENCY_CONFLICT",e.code) }
         Assert.assertTrue(g.events.query(requestId=id).any { it.eventType=="execution.finished" })
+    }
+    /** Real singleTop intent reentry, using a resolved native record; no approval is created. */
+    @Test fun ownerReviewCanReopenSameResolvedRequest()=runBlocking {
+        val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.status"),Origin.LOCAL_OWNER)
+        Assert.assertEquals(RequestState.SUCCEEDED,r.state)
+        val instrumentation=InstrumentationRegistry.getInstrumentation()
+        fun intent()=Intent(g.context,dev.siconnect.app.approvals.ApprovalActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("requestId",r.requestId)
+        val automation=instrumentation.uiAutomation
+        automation.serviceInfo=automation.serviceInfo.apply {flags=flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS}
+        // Compose virtual nodes are exposed through children, not framework find-by-text.
+        fun node(text:String):AccessibilityNodeInfo? {
+            val todo=java.util.ArrayDeque<AccessibilityNodeInfo>()
+            automation.windows.mapNotNull {it.root}.forEach(todo::add)
+            var visited=0
+            while(todo.isNotEmpty() && visited++<5000) {
+                val n=todo.removeFirst()
+                if(n.text?.toString()==text && n.packageName?.toString()==g.context.packageName) return n
+                for(i in 0 until n.childCount) n.getChild(i)?.let(todo::add)
+            }
+            return null
+        }
+        suspend fun waitFor(text:String,present:Boolean,phase:String) {
+            try {withTimeout(10000) {while((node(text)!=null)!=present) delay(50)}}
+            catch(e:TimeoutCancellationException) {
+                instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                    java.io.File(g.context.noBackupFilesDir,"review-test-failure.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+                }
+                val root=instrumentation.uiAutomation.rootInActiveWindow
+                val matches=root?.findAccessibilityNodeInfosByText(text).orEmpty()
+                throw AssertionError("Review stage $phase timed out; root=${root?.packageName}; matches=${matches.map {it.text?.toString()+"@"+it.packageName}}",e)
+            }
+        }
+        ActivityScenario.launch<dev.siconnect.app.approvals.ApprovalActivity>(intent()).use { scenario ->
+            waitFor("Action succeeded",true,"initial resolved review")
+            var close=requireNotNull(node("Close"))
+            while(!close.isClickable) close=requireNotNull(close.parent)
+            Assert.assertTrue(close.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            waitFor("Action succeeded",false,"explicit close")
+            scenario.onActivity {it.startActivity(intent())}
+            waitFor("Action succeeded",true,"same-request intent reentry")
+            Assert.assertNull("Resolved review must not offer another approval",node("Allow once"))
+        }
     }
     @Test fun bundledBackendActuallyRunsAsShell()=runBlocking {
         authority()
