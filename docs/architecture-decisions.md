@@ -34,7 +34,7 @@ The gateway remains trusted: it handles the forwarding credential and plaintext 
 ## ADR-005: Framework SQLite instead of Room
 
 - **Decision:** Use `SQLiteOpenHelper` with explicit versioned migrations.
-- **Why:** The schema is small: requests, events, agents, skills, automations and key-value settings. This avoids annotation processing (KSP) with AGP 9's built-in Kotlin and keeps compare-and-set updates explicit.
+- **Why:** The schema is small: requests/transitions, events, agents, skills/runs, automations/runs, reminders and notification metadata. Ordinary settings use preferences; encrypted credential preferences use Android Keystore. This avoids annotation processing (KSP) with AGP 9's built-in Kotlin and keeps compare-and-set updates explicit.
 - **Rejected:** Room. It is fine, but adds KSP and generated code for little gain here.
 
 ## ADR-006: JSON-schema subset validator

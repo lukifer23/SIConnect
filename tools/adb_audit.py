@@ -176,7 +176,10 @@ def run_bounded(argv: list[str], timeout: float = 30, limit: int = MAX_OUTPUT) -
                 timed_out = True
     finally:
         if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # It exited between poll and kill; retain the observed timeout/output.
         process.wait()
         selector.close()
         process.stdout.close()
