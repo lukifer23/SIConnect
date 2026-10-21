@@ -5,21 +5,22 @@
 ## Layers
 
 1. **External intelligence.** MCP clients such as ChatGPT connectors, the OpenAI Responses API, Codex, Grok and the xAI API, or self-hosted agents. They plan and choose tools. They never hold device authority beyond what the owner granted to their agent identity.
-2. **Control plane (gateway).** A Cloudflare Worker that terminates MCP over HTTPS, authenticates agents and routes calls to a target device by `device_id`. It queues requests for offline devices and returns structured results. It is deliberately thin: it makes no policy decisions beyond authentication and rate limits.
+2. **Control plane (gateway).** A Cloudflare Worker that terminates MCP over HTTPS, authenticates agents and routes calls to the device bound to the authenticated principal. Offline requests fail explicitly; there is no durable offline execution queue. It returns structured results. It is deliberately thin: it makes no policy decisions beyond authentication and rate limits.
 3. **Execution plane (Android app).** Owns the capability registry, policy engine, approvals, execution backends, scheduler, skills, persistence and audit log. It enforces policy locally regardless of what the gateway claims.
 
 ## Request lifecycle
 
 ```
 gateway invoke --> ExecutionEngine.submit
-  1. idempotency / duplicate-id check  (returns existing record, never re-executes)
+  1. idempotency / duplicate-id check (same fingerprint returns existing; changed operation conflicts)
   2. persist RECEIVED
   3. resolve capability, expiry check, JSON-schema validation
   4. capability.assess(args)    -> RiskAssessment (risk, target, exact shell command, side effects)
   5. PolicyEngine.evaluate      -> ALLOW | REQUIRE_APPROVAL | DENY | UNAVAILABLE
   6a. ALLOW            -> EXECUTING -> (VERIFYING) -> SUCCEEDED | FAILED | UNKNOWN_OUTCOME
   6b. REQUIRE_APPROVAL -> AWAITING_APPROVAL -> notification -> owner approves (bound to args hash)
-                          -> re-check kill switches and availability -> execute stored args
+                          -> re-check current agent/grant/scope/revocation/expiry, controls,
+                             version/backend, exact hash and deadlines -> execute stored args
   6c. DENY / UNAVAILABLE -> DENIED / FAILED with reason
 ```
 
@@ -36,36 +37,41 @@ The first matching rule wins:
 3. Agent denylist, then scope globs: **DENY**.
 4. Capability availability not executable: **UNAVAILABLE**.
 5. Privileged backend while privileged execution is disabled: **UNAVAILABLE**.
-6. Effective risk (the maximum of the descriptor baseline and the per-argument assessment) is `CRITICAL`: **REQUIRE_APPROVAL**.
-7. Operation runs an arbitrary shell command:
-   - `BROAD` grant: **ALLOW**.
-   - `STANDING_COMMANDS` with an exact string match: **ALLOW**.
-   - Otherwise: **REQUIRE_APPROVAL**.
-8. Matching standing grant (exact-match argument constraints, risk cap, expiry): **ALLOW**.
-9. Risk at or below the agent's `autoApproveUpTo`: **ALLOW**. Otherwise: **REQUIRE_APPROVAL**.
+6. Missing shell assessment for `shell.execute`: **DENY**.
+7. Effective risk (maximum of descriptor and argument assessment) is `CRITICAL`: **REQUIRE_APPROVAL**.
+8. Matching standing action grant (canonical capability/version/arguments hash, backend, risk cap, expiry): **ALLOW**. Shell cannot use a generic unconstrained grant here.
+9. Arbitrary shell assessment: explicit `BROAD` grants **ALLOW**; an exact configured standing command **ALLOWS**; otherwise **REQUIRE_APPROVAL**.
+10. Risk at or below `autoApproveUpTo`: **ALLOW**; otherwise **REQUIRE_APPROVAL**.
+
+Acceptance of an exact owner approval revalidates eligibility/deny checks without asking for the same risk approval again. Approval cannot revive a revoked or expired grant.
 
 ## Execution backends
 
 | Backend | Identity | Used for |
 | --- | --- | --- |
-| `NATIVE` | app uid | Android framework APIs: calendar, alarms, notifications, packages, battery, SMS |
-| `APP_SHELL` | app uid | `sh -c` inside the app sandbox (explicitly selected; low privilege) |
-| `SHIZUKU` | `uid=2000(shell)` via a Shizuku UserService | `pm`, `settings`, `dumpsys`, `cmd`, `input`, package install/uninstall, general shell |
+| `NATIVE` | app uid | Implemented framework diagnostics, packages, notifications and next-alarm access; calendar/SMS provider tools are not implemented |
+| `ADB_SERVICE` | actual bundled daemon identity, verified UID 2000 | Authorized `app_process` Binder service, no companion; common bounded shell runner |
+| `APP_SHELL` | app uid | Model value; not a silent substitute for privileged execution |
+| `SHIZUKU` | actual UserService identity when authorized | Optional explicitly selected backend using the common shell executor; current physical shell evidence uses the bundled backend |
 | `ACCESSIBILITY` | app accessibility service | UI tree inspection and semantic interaction *(planned)* |
 | `NETWORK` | app uid | Outbound HTTP data sources, e.g. the Open-Meteo forecast |
 | `ROOT` | uid 0 | Reserved; not used on stock devices |
 
-Results always report the backend and identity that actually executed. A request that requires `SHIZUKU` fails with `PRIVILEGE_REQUIRED` when Shizuku is down. It is never retried as `APP_SHELL`.
+Results always report the backend and identity that actually executed. A request whose selected privileged backend is unavailable fails with `PRIVILEGE_REQUIRED`. It is never retried as `APP_SHELL`.
 
 ## Skills and automations
 
 A skill (`core/.../Skills.kt`) is a versioned JSON workflow made of capability steps. It supports `${input.*}`/`${steps.<id>.output.*}` templates, `when` conditions (`and/or/not/eq/ne/gt/gte/lt/lte/in/exists/truthy`) and per-step `onError`. Every step is submitted through `ExecutionEngine.submit` under the invoking agent's identity, so a skill cannot exceed the agent's own grant. Nested skills are rejected. Missing data never satisfies a numeric threshold.
 
-Automations bind a trigger (time, interval or device event) to a skill invocation. They run under a local automation agent identity with its own grant.
+Durable skills persist their execution cursor, step records and pending approval reference. Resume uses stable child request IDs and does not repeat a completed mutation. Runs distinguish partial success, cancellation and unknown outcome. Runtime completion events can continue a waiting workflow.
 
-## Multi-device model
+Implemented automations bind one-time/interval timing to skills under the local automation grant, with WorkManager/AlarmManager scheduling, durable slot uniqueness and reboot restoration. Generic event-driven triggers and comprehensive missed-run/timezone behavior remain unfinished; do not infer them from the data model. Exact and deferrable reminders use separate appropriate APIs.
 
-The gateway routes by stable, randomly generated `device_id` values. These are not hardware identifiers. Each device registers its own capability catalog and agent list. MCP tools take an optional `device_id` argument, which is required when more than one device is online. Desktop nodes can implement the same device-transport contract (`hello` / `invoke` / `result`) without changes to the MCP surface.
+## Device and client routing
+
+Device IDs are randomly generated app identities, not hardware identifiers. Each Durable Object routes an authenticated principal to its bound phone and stores that phone's capability catalog. OAuth pairing binds the same device and a local agent credential. The current MCP surface does not offer arbitrary `device_id` selection or a tested multi-device chooser. Each phone independently enforces its current grant. Existing same-name OAuth clients remain distinct principals; the owner UI and request-linked permission review distinguish them.
+
+SQLiteOpenHelper v3 stores requests, transitions, events, agents, skills, skill runs, step results, automations, scheduler runs, reminders and notification metadata. Keystore-wrapped private preferences hold credentials and pending pairing data; ordinary settings use preferences. Startup checks database integrity, recovers uncertain in-flight work without replay, restores pending approvals/schedules and starts the owner-enabled outbound connection. ONLINE requires protocol-2 acknowledgement. Pairing publication also requires acknowledgement.
 
 ## Module boundaries
 

@@ -159,6 +159,33 @@ class RuntimeGraph(val context: Context) {
             w.setTransactionSuccessful()
         } finally { w.endTransaction() }
     }
+    /** Owner-selected capability family; every invocation still passes the shared policy engine. */
+    fun setCapabilityFamilyFromOwner(agentId:String,family:String,enabled:Boolean) {
+        require(family.matches(Regex("[a-z][a-z0-9_]*")) && registry.statuses().any { it.descriptor.id.startsWith("$family.") }) { "Unknown capability family" }
+        require(!agentId.startsWith("local-"))
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val agent=requireNotNull(agents.get(agentId))
+            require(!agent.grant.revoked && (agent.grant.expiresAtMs?.let { it>System.currentTimeMillis() } ?: true)) { "Bot is revoked or expired" }
+            val prefix="$family.";val pattern="$family.*"
+            val grant=if(enabled) agent.grant.copy(scopes=(agent.grant.scopes+pattern).distinct(),denied=agent.grant.denied.filterNot { it==pattern || it.startsWith(prefix) })
+                else agent.grant.copy(scopes=agent.grant.scopes.filterNot { it==pattern || it.startsWith(prefix) },denied=(agent.grant.denied+pattern).distinct())
+            agents.put(agent.copy(grant=grant))
+            events.emit(Event(System.currentTimeMillis(),eventType="grant.family.changed",agentId=agentId,deviceId=settings.deviceId,detail="Local owner ${if(enabled) "allowed" else "denied"} $pattern"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
+    /** Persist revocation and its audit event together; callers are local management screens only. */
+    fun revokeAgentFromOwner(agentId: String) {
+        require(!agentId.startsWith("local-")) { "Local identities cannot be revoked as remote bots" }
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val agent=requireNotNull(agents.get(agentId)) { "Bot no longer exists" }
+            agents.put(agent.copy(grant=agent.grant.copy(revoked=true)))
+            events.emit(Event(System.currentTimeMillis(),eventType="agent.revoked",agentId=agentId,deviceId=settings.deviceId,detail="Local owner revoked bot"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
     fun authenticate(token: String): AgentRecord? {
         if (token.length !in 20..300) return null
         val hashed = Settings.sha256Hex(token).toByteArray()

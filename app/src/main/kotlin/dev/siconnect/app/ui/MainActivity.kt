@@ -13,6 +13,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
@@ -67,27 +68,34 @@ open class MainActivity: ComponentActivity() {
         var hasBotKey by remember { mutableStateOf(false) }
         var pairedBot by remember { mutableStateOf<AgentRecord?>(null) }
         var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
+        var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
         var review by remember { mutableStateOf<RequestRecord?>(null) }
         var inspected by remember { mutableStateOf<RequestRecord?>(null) }
         var inspectedEvents by remember { mutableStateOf(emptyList<Event>()) }
+        var bots by remember { mutableStateOf(emptyList<AgentRecord>()) }
+        var manageBotId by rememberSaveable { mutableStateOf<String?>(null) }
+        val manageBot=bots.firstOrNull { it.grant.agentId==manageBotId }
         var labels by remember { mutableStateOf(emptyMap<String,String>()) }
-        var openedApproval by remember { mutableStateOf<String?>(null) }
+        var openedApproval by rememberSaveable { mutableStateOf<String?>(null) }
         var reminders by remember { mutableStateOf(emptyList<dev.siconnect.app.capabilities.Reminder>()) }
         var reminder by remember { mutableStateOf<dev.siconnect.app.capabilities.Reminder?>(null) }
         var exactAccess by remember { mutableStateOf(false) }
         var notifications by remember { mutableStateOf(getSystemService(NotificationManager::class.java).areNotificationsEnabled()) }
         fun work(block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: Exception) { note=e.message ?: "Action failed" } finally { busy=false } } }
         LaunchedEffect(changed,health,connection,permissionRevision) {
-            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(50); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); labels=g.agents.all().associate { it.grant.agentId to it.grant.label }
+            withContext(Dispatchers.IO) { runCatching { g.ready.await(); recent=g.requests.recent(50); pending=g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)); bots=g.agents.all().filter { !it.grant.agentId.startsWith("local-") && !it.grant.revoked };labels=g.agents.all().associate { it.grant.agentId to botDisplayName(it,g.agents.all()) }
                 reminders=g.reminders.all().filter { it.state in setOf("SCHEDULED","BLOCKED") }.sortedBy { it.fireAtMs };exactAccess=g.reminders.canScheduleExact()
                 reminder=reminder?.let { g.reminders.get(it.id) }
             } }
             notifications=getSystemService(NotificationManager::class.java).areNotificationsEnabled()
         }
-        LaunchedEffect(Unit) { g.engine.recordUpdates.collect { changed++ } }
+        LaunchedEffect(reviewId,changed) {
+            review=withContext(Dispatchers.IO) { g.ready.await();reviewId?.let(g.requests::get) }
+        }
+        LaunchedEffect(Unit) { g.engine.recordUpdates.collect { record -> changed++;if(reviewId==record.requestId) review=record } }
         LaunchedEffect(pending,permissionRevision) {
             val target=intent.getStringExtra("requestId")
-            if(target!=null && target!=openedApproval) pending.firstOrNull { it.requestId==target }?.let { review=it; openedApproval=target }
+            if(target!=null && target!=openedApproval) pending.firstOrNull { it.requestId==target }?.let { reviewId=it.requestId;review=it; openedApproval=target }
         }
         LaunchedEffect(inspected) { inspectedEvents=withContext(Dispatchers.IO) { inspected?.let { g.events.query(requestId=it.requestId,limit=30) } ?: emptyList() } }
         LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null; pairedBot=key?.let(g::authenticate) } }
@@ -120,7 +128,7 @@ open class MainActivity: ComponentActivity() {
                         Text(r.assessment?.shellCommand ?: r.capabilityId,style=MaterialTheme.typography.titleMedium,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         Text(r.assessment?.sideEffects?.joinToString() ?: "Review the exact action before allowing it")
                         Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                            Button(onClick={review=r}) { Text("Review") }
+                            Button(onClick={note="";reviewId=r.requestId;review=r}) { Text("Review") }
                             OutlinedButton(onClick={work { g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash) }}) { Text("Deny") }
                         }
                     } } }
@@ -134,6 +142,15 @@ open class MainActivity: ComponentActivity() {
                     Button(onClick={setup=true},modifier=Modifier.fillMaxWidth().height(52.dp)) { Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connection details" else "Connect a bot") }
                     if(config.baseUrl.isNotBlank()) Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
                 } }
+                recent.filter { it.state==RequestState.DENIED && it.policy?.rule=="agent_scope" && it.capabilityId.startsWith("apps.") }
+                    .distinctBy { it.agentId }.filter { r -> bots.any { it.grant.agentId==r.agentId && !it.grant.scopes.contains("apps.*") && !it.grant.scopes.contains("*") } }.take(3).forEach { r ->
+                        Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                            Text("${labels[r.agentId] ?: "Your bot"} needs app permission",style=MaterialTheme.typography.titleMedium)
+                            Text("The phone received this request and blocked it. This connection is working; app management is not enabled for this bot.")
+                            Text(r.capabilityId,style=MaterialTheme.typography.bodySmall)
+                            Button(onClick={note="";manageBotId=r.agentId}) {Text("Review this bot’s permissions")}
+                        } }
+                    }
                 Text("Access",style=MaterialTheme.typography.titleLarge)
                 Card(shape=RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment=Alignment.CenterVertically) {
@@ -146,6 +163,15 @@ open class MainActivity: ComponentActivity() {
                         TextButton(onClick={work { g.privileged.refresh(); if(!g.privileged.available()) controlHelp=true }}) { Text(if(g.privileged.available()) "Check" else "Enable") }
                     }
                 } }
+                if(bots.isNotEmpty()) {
+                    Text("Your bots",style=MaterialTheme.typography.titleLarge)
+                    bots.sortedByDescending { bot -> recent.firstOrNull { it.agentId==bot.grant.agentId }?.createdAtMs ?: 0 }.forEach { bot -> Card(onClick={manageBotId=bot.grant.agentId},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                        Text(botDisplayName(bot,bots),style=MaterialTheme.typography.titleMedium)
+                        Text(if(bot.grant.shellMode==ShellMode.BROAD) "Device control always allowed" else "Sensitive actions ask first",style=MaterialTheme.typography.bodySmall)
+                        val last=recent.firstOrNull { it.agentId==bot.grant.agentId }
+                        Text(last?.let { "Last request: ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it.updatedAtMs))} · ${it.state.name.lowercase().replace('_',' ')}" } ?: "Paired locally · no tool call recorded yet",style=MaterialTheme.typography.bodySmall)
+                    } } }
+                }
                 Button(onClick={ work {
                     val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.status"),Origin.LOCAL_OWNER)
                     check(r.state==RequestState.SUCCEEDED) { r.errorMessage ?: "Device test failed" }
@@ -178,6 +204,19 @@ open class MainActivity: ComponentActivity() {
                 Text(if(health.startsWith("Ready")) "On-device engine ready" else health,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        manageBot?.let { bot -> AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text(botDisplayName(bot,bots))},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text("Apps");Text("Install, inspect and remove apps. Sensitive actions still ask first.",style=MaterialTheme.typography.bodySmall) }
+                val appsAllowed=(bot.grant.scopes.any { it=="*" || it=="apps.*" }) && bot.grant.denied.none { it=="*" || it=="apps.*" }
+                Switch(appsAllowed,{enabled -> work {g.setCapabilityFamilyFromOwner(bot.grant.agentId,"apps",enabled);note="App permission saved for ${botDisplayName(bot,bots)}"}},enabled=!busy)
+            }
+            if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(note.isNotBlank()) Text(note)
+            Text("Permissions are saved on this phone. This screen stays open until you tap Done. Ask your bot to retry after changing a permission. Previously denied requests stay denied.")
+            if(bot.grant.shellMode==ShellMode.BROAD) OutlinedButton(onClick={manageBotId=null;work {g.setShellPermissionFromOwner(bot.grant.agentId,false)}}) {Text("Ask before device control")}
+            else OutlinedButton(onClick={manageBotId=null;allowBot=bot}) {Text("Always allow device control…")}
+            TextButton(onClick={manageBotId=null;work {g.revokeAgentFromOwner(bot.grant.agentId)}}) {Text("Revoke this bot",color=MaterialTheme.colorScheme.error)}
+        }},confirmButton={TextButton(onClick={manageBotId=null}) {Text("Done")}}) }
         if(controlHelp) AlertDialog(onDismissRequest={controlHelp=false},title={Text("Enable full device control")},
             text={Text("SIConnect includes its own control service. No companion app is needed.\n\nOn your connected Mac, double-click Start SIConnect. Then tap Check here.\n\nAndroid requires this authorized setup again after a phone restart. Native tools keep working.")},
             confirmButton={TextButton(onClick={controlHelp=false;work { g.privileged.refresh(); note=if(g.privileged.available()) "Device control is ready" else "Setup has not connected yet" }}) {Text("Check connection")}},
@@ -219,11 +258,11 @@ open class MainActivity: ComponentActivity() {
             } else {
                 Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(pairCode!!.expiresAt))}. Works once. Paste it only into your gateway’s SIConnect sign-in page.")
                 Text(pairCode!!.code,style=MaterialTheme.typography.bodySmall)
-                Text("Sensitive actions still ask you first. Manage this bot’s permission in Advanced → Agents.")
+                Text("Sensitive actions still ask you first. Tap this bot under Your bots to manage its permissions.")
             }
         }},confirmButton={Button(onClick={if(pairCode==null) work { pairError="";try { pairCode=g.pairing.create(pairName) } catch(e:Exception) { pairError=if(e is TimeoutCancellationException) "Gateway did not save the code. Check connection and try again." else e.message ?: "Could not create pairing code" } } else if(pairCode!!.expiresAt<=System.currentTimeMillis()) {pairCode=null;pairError="Code expired. Create a new code."} else copyForBot(pairCode!!.code,true)},enabled=!busy && pairName.isNotBlank()) {Text(if(pairCode==null) "Create pairing code" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
-        review?.let { r -> OwnerApprovalDialog(r,onClose={review=null},onApprove={always,broad ->
-            review=null; work { val result=g.approveFromOwner(r.requestId,r.argsHash,always,broad); note="Action ${result.state.name.lowercase()}" }
+        review?.let { r -> OwnerApprovalDialog(r,busy=busy,error=note,onClose={reviewId=null;review=null},onDeny={work {review=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
+            work { review=g.approveFromOwner(r.requestId,r.argsHash,always,broad) }
         }) }
         inspected?.let { r -> AlertDialog(onDismissRequest={inspected=null},title={Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId)},
             text={Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -235,8 +274,8 @@ open class MainActivity: ComponentActivity() {
                 HorizontalDivider(); Text("Audit trail",style=MaterialTheme.typography.titleMedium)
                 inspectedEvents.reversed().forEach { Text("${it.eventType} · ${it.policyDecision ?: it.executionStatus ?: it.errorCode ?: ""}",style=MaterialTheme.typography.bodySmall) }
             }},confirmButton={TextButton(onClick={inspected=null}) { Text("Close") }}) }
-        allowBot?.let { a -> ShellPermissionDialog(a.grant.label,onClose={allowBot=null},onAllow={
-            allowBot=null; work {g.setShellPermissionFromOwner(a.grant.agentId,true);note="Always allowed. Saved on this phone until you revoke it."}
+        allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,onClose={allowBot=null},onAllow={
+            work {g.setShellPermissionFromOwner(a.grant.agentId,true);allowBot=g.agents.get(a.grant.agentId);note="Always allowed. Saved on this phone until you revoke it."}
         }) }
         reminder?.let { r -> AlertDialog(onDismissRequest={reminder=null},title={Text(r.title)},
             text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -283,7 +322,7 @@ open class MainActivity: ComponentActivity() {
                     skills=g.skills.all(); automations=g.scheduler.all(); capabilities=g.registry.statuses() }
             }
         }
-        LaunchedEffect(Unit) { g.engine.recordUpdates.collect { refresh++ } }
+        LaunchedEffect(Unit) { g.engine.recordUpdates.collect { record -> refresh++;if(approve?.requestId==record.requestId) approve=record } }
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Text("SIConnect",style=MaterialTheme.typography.headlineMedium)
             Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -315,7 +354,7 @@ open class MainActivity: ComponentActivity() {
                         agents.forEach { a ->
                             Text("${a.grant.label} · ${if(a.grant.revoked) "REVOKED" else "active"}")
                             Text("Scopes: ${a.grant.scopes.joinToString()}\nShell: ${a.grant.shellMode}\nExpires: ${a.grant.expiresAtMs ?: "no expiry"}")
-                            if(!a.grant.agentId.startsWith("local-")) Button(onClick={ action { g.agents.put(a.copy(grant=a.grant.copy(revoked=true))) } },enabled=!a.grant.revoked) { Text("Revoke ${a.grant.label}") }
+                            if(!a.grant.agentId.startsWith("local-")) Button(onClick={ action { g.revokeAgentFromOwner(a.grant.agentId) } },enabled=!a.grant.revoked) { Text("Revoke ${a.grant.label}") }
                         }
                     }
                     "Approvals" -> {
@@ -389,37 +428,56 @@ open class MainActivity: ComponentActivity() {
             }
             TextButton(onClick={refresh++}) { Text("Refresh runtime state") }
         }
-        approve?.let { r -> OwnerApprovalDialog(r,onClose={approve=null},onApprove={always,broad ->
-            approve=null; action { val result=g.approveFromOwner(r.requestId,r.argsHash,always,broad); message="${result.state}: ${result.errorCode ?: "completed"}" }
+        approve?.let { r -> OwnerApprovalDialog(r,error=message,onClose={approve=null},onDeny={action {approve=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
+            action { approve=g.approveFromOwner(r.requestId,r.argsHash,always,broad) }
         }) }
     }
 }
 
 /** Shared owner review: one path for Home and detailed management. */
-@Composable private fun OwnerApprovalDialog(r: RequestRecord,onClose:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
+@Composable private fun OwnerApprovalDialog(r: RequestRecord,busy:Boolean=false,error:String="",onClose:()->Unit,onDeny:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
     var broad by remember(r.requestId) { mutableStateOf(false) }
     val critical=r.assessment?.risk==RiskClass.CRITICAL
-    AlertDialog(onDismissRequest=onClose,title={Text(if(broad) "Always allow shell commands?" else "Allow this action?")},
-        text={Column(Modifier.heightIn(max=340.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+    val pending=r.state==RequestState.AWAITING_APPROVAL
+    val expired=System.currentTimeMillis()>=(r.approvalExpiresAtMs ?: r.expiresAtMs)
+    val canDecide=pending && !busy && !expired
+    AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),
+        title={Text(if(!pending) "Action ${r.state.name.lowercase().replace('_',' ')}" else if(broad) "Always allow shell commands?" else "Allow this action?")},
+        text={Column(Modifier.heightIn(max=380.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Text(r.agentId)
-            if(broad) Text("This bot may run any command using this phone's privileged shell without asking again. This can change apps, settings and data. Critical operations still require approval. You can revoke this in Advanced → Agents.")
+            Text("Review stays open until you close it.",style=MaterialTheme.typography.bodySmall)
+            if(pending) Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(r.approvalExpiresAtMs ?: r.expiresAtMs))}")
+            if(broad && pending) Text("This bot may run any command using this phone's privileged shell without asking again. This can change apps, settings and data. Critical operations still require approval. Manage this permission under Your bots.")
             else {
                 Text(r.assessment?.shellCommand ?: r.arguments.toString())
                 Text("Risk: ${r.assessment?.risk}\n${r.assessment?.sideEffects?.joinToString() ?: ""}")
-                Text("Always allow this action saves only these exact arguments and this backend. Other actions still follow your policy.",style=MaterialTheme.typography.bodySmall)
+                if(pending) Text("Always allow this action saves only these exact arguments and this backend. Other actions still follow your policy.",style=MaterialTheme.typography.bodySmall)
             }
+            if(busy) {LinearProgressIndicator(Modifier.fillMaxWidth());Text("Saving your decision and checking current permissions…")}
+            if(expired && pending) Text("This request expired. Ask the bot to submit a new request.",color=MaterialTheme.colorScheme.error)
+            r.errorMessage?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+            if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
         }},confirmButton={Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.End) {
-            if(broad) Button(onClick={onApprove(false,true)}) { Text("Always allow shell commands") }
-            else {
-                Button(onClick={onApprove(false,false)}) {Text("Allow once")}
-                if(!critical) OutlinedButton(onClick={onApprove(true,false)}) {Text("Always allow this action")}
-                if(!critical && r.assessment?.shellCommand!=null) TextButton(onClick={broad=true}) {Text("Allow all shell commands…")}
+            if(canDecide) {
+                if(broad) Button(onClick={onApprove(false,true)}) { Text("Always allow shell commands") }
+                else {
+                    Button(onClick={onApprove(false,false)}) {Text("Allow once")}
+                    if(!critical) OutlinedButton(onClick={onApprove(true,false)}) {Text("Always allow this action")}
+                    if(!critical && r.assessment?.shellCommand!=null) TextButton(onClick={broad=true}) {Text("Allow all shell commands…")}
+                }
+                TextButton(onClick=onDeny) {Text("Deny",color=MaterialTheme.colorScheme.error)}
             }
-        }},dismissButton={TextButton(onClick={if(broad) broad=false else onClose()}) {Text("Back")}})
+        }},dismissButton={TextButton(onClick={if(broad && pending) broad=false else onClose()},enabled=!busy) {Text(if(broad && pending) "Back" else "Close")}})
 }
 
-@Composable private fun ShellPermissionDialog(label: String,onClose:()->Unit,onAllow:()->Unit) {
-    AlertDialog(onDismissRequest=onClose,title={Text("Always allow device control?")},
-        text={Text("$label will be allowed to run arbitrary shell commands and read its request results without asking each time. This can change apps, settings and data. Critical operations still require approval.\n\nThis choice is saved on your phone across app restarts. Emergency stop and agent revocation still apply. You can switch back to asking each time in Connection details.")},
-        confirmButton={Button(onClick=onAllow) {Text("Always allow")}},dismissButton={TextButton(onClick=onClose) {Text("Back")}})
+@Composable private fun ShellPermissionDialog(label: String,busy:Boolean=false,allowed:Boolean=false,onClose:()->Unit,onAllow:()->Unit) {
+    AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text("Always allow device control?")},
+        text={Text("$label will be allowed to run arbitrary shell commands and read its request results without asking each time. This can change apps, settings and data. Critical operations still require approval.\n\nThis choice is saved on your phone across app restarts. Emergency stop and agent revocation still apply. You can switch back to asking each time under Your bots.")},
+        confirmButton={if(allowed) Button(onClick=onClose) {Text("Saved · Close")} else Button(onClick=onAllow,enabled=!busy) {Text(if(busy) "Saving…" else "Always allow")}},dismissButton={if(!allowed) TextButton(onClick=onClose,enabled=!busy) {Text("Back")}})
+}
+
+/** A display name never selects an authenticated identity. Distinguish existing same-name clients. */
+private fun botDisplayName(bot:AgentRecord,bots:List<AgentRecord>):String {
+    val label=if(bot.grant.label=="ADB development client") "Personal bot" else bot.grant.label
+    return if(bots.count { it.grant.label==bot.grant.label }>1) "$label · ${bot.grant.agentId.takeLast(6)}" else label
 }

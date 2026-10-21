@@ -83,11 +83,13 @@ class Settings(context: Context) {
     fun botToken(): String? = getSecret("bot_token")
     fun setBotToken(token: String) { require(token.length in 20..300); putSecret("bot_token", token) }
 
+    fun pairedBotToken(agentId:String):String? = getSecret("paired_"+agentId)
+    fun setPairedBotToken(agentId:String,token:String) { require(agentId.matches(Regex("bot_[A-Za-z0-9_-]{16}")));require(token.length in 20..300);putSecret("paired_"+agentId,token) }
     fun pendingPairing(): dev.siconnect.app.transport.PairingInvitation? = getSecret("oauth_pairing")?.let {
         runCatching { AppJson.decodeFromString(dev.siconnect.app.transport.PairingInvitation.serializer(),it) }.getOrNull()
     }
     fun setPendingPairing(value: dev.siconnect.app.transport.PairingInvitation?) {
-        if(value==null) secretPrefs.edit().remove("oauth_pairing").commit()
+        if(value==null) check(secretPrefs.edit().remove("oauth_pairing").commit()) { "Could not clear consumed pairing" }
         else putSecret("oauth_pairing",AppJson.encodeToString(dev.siconnect.app.transport.PairingInvitation.serializer(),value))
     }
 
@@ -104,7 +106,7 @@ class Settings(context: Context) {
     private fun putSecret(name: String, value: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         val blob = cipher.iv + cipher.doFinal(value.toByteArray())
-        secretPrefs.edit().putString(name, Base64.encodeToString(blob, Base64.NO_WRAP)).apply()
+        check(secretPrefs.edit().putString(name, Base64.encodeToString(blob, Base64.NO_WRAP)).commit()) { "Could not persist encrypted credential" }
     }
 
     private fun getSecret(name: String): String? {

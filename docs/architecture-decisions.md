@@ -19,15 +19,17 @@ Updated after physical testing and the owner's companion-free requirement. The A
   - A temporary tunnel. It is not durable.
   - A VPS. It works but costs money and needs maintenance; the gateway code is portable enough to rehost.
   - Push-only (FCM). It would need a Firebase project and is best-effort. It remains a possible wake hint later.
-- **Consequence:** The gateway sees plaintext requests and results. It keeps only routing metadata, queued requests until they expire, and recent results for a bounded TTL.
+- **Consequence:** The gateway sees plaintext requests and results. This implementation persists device/catalog and pairing/OAuth metadata, and correlates bounded in-flight requests. It does not implement a durable offline execution queue or a durable result cache. The phone is the durable request/result authority.
 
 ## ADR-003: Official MCP TypeScript SDK v2
 
 The initial hand-written dual-era proposal is superseded. SDK 2.3.1 `createMcpHandler` works in Workers with its Cloudflare JSON validator. Actual v1/v2 clients passed local Worker integration tests; v2 and Grok Bot subsequently called the real phone through the deployed Worker. Keep stateless Streamable HTTP compatibility in the maintained SDK.
 
-## ADR-004: Private bearer delivered; OAuth remains required work
+## ADR-004: OAuth for hosted clients; private bearer remains supported
 
-Current production code validates configured private bearer hashes, authenticated principal/device bindings, expiry and revocation. The phone independently authenticates the forwarded bearer and its current grant. Grok Bot accepted its secure secret form and connected. A compromised gateway can impersonate a bearer it forwards; independent signatures are not implemented. OAuth 2.1 authorization/protected-resource endpoints and Dots onboarding remain unimplemented. Do not describe the intended OAuth design as delivered.
+The same Worker uses pinned `@cloudflare/workers-oauth-provider` 1.2.3 for authorization-code flow, S256 PKCE, discovery, CIMD/DCR, consent, refresh and resource binding. The phone creates a one-use encrypted pairing invitation and a least-privileged local agent. Actual ChatGPT/Dots consent and phone tool calls completed. Existing private-bearer clients continue to work. The phone authenticates the forwarded agent credential and rechecks its current grant for every operation and accepted approval. Display names never identify or merge principals. Consent expiration is resolved with a fresh browser session/code, without relaxing CSRF protection.
+
+The gateway remains trusted: it handles the forwarding credential and plaintext results, so it can impersonate that credential within the phone's existing grant. End-to-end agent signatures are not implemented. Token lifetimes and phone grant lifetimes are separate; revocation on the phone remains authoritative.
 
 ## ADR-005: Framework SQLite instead of Room
 

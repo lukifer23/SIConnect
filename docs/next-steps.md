@@ -1,10 +1,13 @@
 # Next steps
 
-1. Finish the currently authorized messaging interaction and confirm the sent state on the physical phone. Never retry a send solely because a transport result is lost.
-2. Verify persistent standing and broad permissions across ordinary process death, then exercise changed arguments, revocation and emergency stop on the physical runtime.
-3. Validate approval notification entry directly, permission changes, and all visible Home controls. Keep pending approvals above setup/status content.
-4. Add phone-only authorized wireless-debugging pairing/bootstrap so full control does not require the Mac after a reboot. Preserve the bundled Binder authority checks and optional Shizuku integration.
-5. Complete OAuth/pairing UX and Dots onboarding using an actual supported client. Private bearer support must remain clearly labeled.
-6. Validate real scheduled skills, weather workflows, notification delivery and boot/network recovery. Add the remaining native families through the same registry/policy/engine.
-7. Exercise disposable package operations, shell cancellation/output limits and lost-result handling. Improve the audit harness's pipeline/error safeguards.
-8. Collect reproducible startup/memory/idle/network/storage measurements; do not extrapolate short runs into 24-hour battery claims.
+Current checkpoint: real Dots OAuth/native/shell invocation works; the active Dots agent's app-management scope is the current install-test blocker. See [project status](project-status.md) for evidence and limits.
+
+1. On the installed Home, open the blocked Dots request's permission card, deliberately enable Apps for that exact connection and retry with a new request. Verify package/installer and avoid login. Do not create another plugin or copy another bot's grant. Complete the separate requested Dots email test once, with actual sent-state verification.
+2. Validate the new explicit-close approval and permission screens with the owner, including long review, fold/rotation, duplicate actions, expiry, backend loss, revocation and ordinary process death. Stop concurrent phone automation while an owner reviews a dialog.
+3. Improve the single Home flow: readable authorization reasons, directly accessible per-bot permissions, activity filtering/sorting, complete request transitions, connection history and clearly separated local-owner versus remote actions. Preserve the unified policy/engine.
+4. Finish idle resource measurements and compare connected/background/screen-off observations using private reproducible evidence. Optimize measured wakeups, hierarchy capture and agent orchestration; do not promise zero battery drain or unrestricted background execution.
+5. Physically verify the newly deployed longer request envelope during an actual ten-minute owner approval window. Retain bounded synchronous routing and same-request result retrieval.
+6. Add phone-only authorized wireless-debugging pairing/bootstrap. Preserve Binder caller checks and the optional Shizuku backend; after reboot privileged setup is still required.
+7. Exercise cancellation/output limits, lost-result handling, structured disposable install/uninstall and audit-harness pipeline safeguards. Keep personal apps and private evidence out of tests/commits.
+8. Validate scheduled skills, weather branching, exact versus deferrable reminders, network switching, idle/screen-off behavior and reboot recovery. Reboot requires separate owner authorization. Calendar/files native families remain unimplemented.
+9. Separate the existing shared private-bearer Grok/Hermes principal if independent per-client revocation is desired. Keep OAuth agents independently scoped; implement end-to-end signatures only if that stronger gateway threat boundary is required.

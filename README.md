@@ -6,7 +6,7 @@ It is not a chatbot and not a local LLM. External agents decide *what* to do. SI
 
 ```
 External agents (ChatGPT, Codex, Grok, OpenAI/xAI APIs, any MCP client)
-        |  MCP over HTTPS (private bearer mode)
+        |  MCP over HTTPS (OAuth or private bearer)
         v
 SIConnect gateway (Cloudflare Worker + Durable Object, self-hosted)
         |  authenticated outbound WebSocket opened by the phone
@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime.** The APK is installed on the Galaxy Z Fold 7. Real Grok Bot calls through the deployed personal Cloudflare gateway have executed native diagnostics, opened apple.com and created a verified Clock alarm. SQLite requests, approvals and owner-selected standing permissions are integrated. OAuth, phone-only privileged bootstrap and extended lifecycle validation remain unfinished. See [project status](docs/project-status.md) and [device testing](docs/device-testing.md).
+> **Status: working development runtime.** The APK is installed on a Galaxy Z Fold 7. Grok Bot, Dots/ChatGPT and Hermes have made real hosted MCP calls to the phone. Native diagnostics, privileged shell, owner approvals, durable requests, reminders and deterministic skills are integrated. Dots OAuth is connected; app-management requests are currently blocked by its local grant. Phone-only privileged bootstrap and extended lifecycle/battery validation remain unfinished. See [project status](docs/project-status.md), [device testing](docs/device-testing.md) and [troubleshooting](docs/troubleshooting.md).
 
 ## Design principles
 
@@ -55,7 +55,7 @@ cd SIConnect
 ./gradlew :core:test
 ```
 
-Device setup, gateway deployment and agent pairing are covered in [docs/development-setup.md](docs/development-setup.md) and will grow as those components land.
+Device setup, gateway deployment and agent pairing are covered in [docs/development-setup.md](docs/development-setup.md) .
 
 ## Documentation
 
@@ -74,4 +74,4 @@ SIConnect is designed to give software agents powerful control over a device, up
 
 [MIT](LICENSE)
 
-OAuth pairing for Dots/ChatGPT is now implemented in the existing gateway; actual hosted onboarding remains in progress. See [gateway setup](docs/gateway-deployment.md) and [client evidence](docs/provider-compatibility.md). Hermes has a reusable [phone-control skill](integrations/skills/siconnect/SKILL.md). Never include live credentials or personal device evidence in issues or commits.
+OAuth pairing for Dots/ChatGPT is implemented and actual phone calls were verified. See [gateway setup](docs/gateway-deployment.md), [client evidence](docs/provider-compatibility.md), [permissions](docs/permissions.md), [capability coverage](docs/capability-coverage.md) and [performance](docs/performance.md). Hermes has a reusable [phone-control skill](integrations/skills/siconnect/SKILL.md). Never include live credentials or personal device evidence in issues or commits.

@@ -1,7 +1,7 @@
 ---
 name: siconnect
 description: Operate the owner's paired Android phone.
-version: 0.3.0
+version: 0.4.0
 author: SIConnect contributors
 license: MIT
 metadata:
@@ -37,3 +37,11 @@ For weather, use a real forecast for a confirmed location and check its freshnes
 ## Verification
 
 Correlate the MCP request ID with the phone's Bot activity and audit trail. Verify visible effects in the actual target app where practical. Keep personal messages, phone numbers, coordinates, screenshots and raw device outputs outside public repositories. Report completed actions, pending approvals, unavailable dependencies and uncertain outcomes accurately.
+
+## Fast, deterministic execution
+
+Prefer typed capability calls and reusable validated skills to long model-driven screen loops. Check installed package state before an install; open the exact official Play Store package, verify its publisher, perform the requested install once and verify package/version/installer. Do not log in or activate VPN/network changes unless requested. Stop immediately when the requested state is verified.
+
+Use bounded, compressed UI hierarchy capture only when needed. Do not assume desktop utilities such as `bc` exist on Android. Avoid long fixed sleep chains; use a deadline and short bounded state checks. A script containing sleeps and UI capture reports their combined time, not isolated capture latency.
+
+For `agent_scope` denial, stop and ask for the owner to change the exact requesting bot's permission on the phone. An existing same-name connection may have a different grant. Scope denial does not generate an approval prompt. Do not re-pair, switch identity or substitute another bot's credential to bypass it.

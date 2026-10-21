@@ -23,7 +23,7 @@ class AndroidApprovals(private val c: Context) : ApprovalGate {
         nm.notify(record.requestId.hashCode(), Notification.Builder(c, "approvals").setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("Approval: ${record.agentId}").setContentText(exact)
             .setStyle(Notification.BigTextStyle().bigText("${record.assessment?.risk}: $exact\n${record.assessment?.sideEffects?.joinToString()}"))
-            .setContentIntent(open).setAutoCancel(false).setTimeoutAfter(((record.approvalExpiresAtMs ?: record.expiresAtMs) - System.currentTimeMillis()).coerceAtLeast(1))
+            .setContentIntent(open).setAutoCancel(false).setOngoing(true).setTimeoutAfter(((record.approvalExpiresAtMs ?: record.expiresAtMs) - System.currentTimeMillis()).coerceAtLeast(1))
             .addAction(Notification.Action.Builder(null, "Review action", open).build())
             .addAction(Notification.Action.Builder(null, "Deny", deny).build()).build())
     }

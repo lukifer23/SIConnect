@@ -53,3 +53,7 @@ bugreport*.zip
 logcat*.txt
 screenshots/
 pairing/
+
+# Python tool bytecode
+__pycache__/
+*.py[cod]

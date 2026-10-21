@@ -171,7 +171,7 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
             const response = await bridge.fetch(new Request('https://internal/invoke', {
               method: 'POST', signal: context.mcpReq.signal,
               body: JSON.stringify({ agentId: authorization.agentId, agentToken: authorization.agentToken, request: {
-                requestId, traceId: requestId, capabilityId: descriptor.id, arguments: args, expiresAtMs: Date.now() + 120_000
+                requestId, traceId: requestId, capabilityId: descriptor.id, arguments: args, expiresAtMs: Date.now() + 15 * 60_000
               } })
             }));
             const record = await response.json() as Record<string, unknown>;
