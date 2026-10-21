@@ -32,13 +32,13 @@ Initial new-code lint failed because the app picker used API-33-only PackageMana
 | Hosted MCP | Seven official SDK calls passed; native diagnostics and actual bundled shell UID 2000; 85 discovered tools |
 | Hermes provider | Existing real agent session completed native status and shell identity; both actual native/shell request IDs independently matched device SQLite |
 | Grokbot provider | Fresh existing-connection status/identity pair SUCCEEDED; both request IDs independently matched device SQLite |
-| Dots provider | Existing OAuth identities preserved; fresh application test pending |
+| Dots provider | Existing OAuth identities preserved; fresh application invocation blocked on identifying/exposing the actual Dots conversation safely. Hidden Classic window refused background input; no foreground takeover or new OAuth connection |
 | Semantic mutations | Normal-process physical run passed in 3.393 seconds: status/inspect/find/text-readback/click/checkbox/scroll/wait/cancel/stale/protected/password/bounds/back/home/lease renew/release; cleanup verified |
-| Owner authentication/UI | Inbox biometric acceptance, cancellation and automation form-save not yet owner-verified |
+| Owner authentication/UI | Real diagnostics form-save completed after Android owner authentication; exact SQLite readback matched. Authentication method and cancellation matrix not independently classified; Inbox acceptance remains pending |
 | Calendar / SAF | No disposable calendar/folder selected yet; write tests not executed |
 | Messaging | No fresh personal sends. Prior RemoteInput fixture evidence remains historical |
 
-Physical Inbox acceptance used the trusted local API in an instrumentation test. It is **not** a claim that a human completed the biometric UI flow. The native request ran under the disposable agent and `REMOTE` origin, was independently read back and had one execution-start event. Test principals/proposals were removed. Original five grant/credential hashes still matched, three reminders remained, and there were no existing automations to migrate. No live credentials or owner grants were changed.
+Physical Inbox acceptance used the trusted local API in an instrumentation test. It is **not** a claim that a human completed the biometric UI flow. The native request ran under the disposable agent and `REMOTE` origin, was independently read back and had one execution-start event. Test principals/proposals were removed. Original five grant/credential hashes still matched, three reminders remained, and there were no existing automations to migrate. A subsequent real owner-UI test saved one disposable diagnostics automation with its schedule disabled. SQLite readback matched `diagnostics.snapshot`, DAILY recurrence, configured timezone, label and revision zero; it did not enable recurring work. The separate Run now owner-authentication step remains pending. This disposable disabled row is retained for that test, not silently removed. No live credentials or owner grants were changed.
 
 ## Semantic failure history and final evidence
 
@@ -61,10 +61,16 @@ The existing sparse 24-hour collector was preserved and remained running. At an 
 ## Remaining work
 
 1. Extend the now-passing normal-process semantic fixture to TTL expiry, cross-agent stale references, lock-mid-action and service-death recovery. Preserve identity checks and avoid needless instrumentation interruptions.
-2. Complete real owner biometric acceptance/cancel and native automation form-save, then folded/unfolded/light/dark/font/inset QA.
+2. Complete the pending Run now confirmation, Inbox acceptance/cancel and authentication-method/lifecycle matrix, then unfolded/light/dark/font/inset QA. The real folded dark Home, native form and saved automation detail were inspected; this does not constitute the full layout matrix.
 3. Finish fresh Dots/Grokbot provider checks; preserve historical success separately from fresh evidence.
 4. Select a disposable writable calendar and SAF folder, then run existing real CRUD tests.
 5. Verify the configured live commute forecast/reminder workflow and broader interruption/multi-agent scenarios using disposable resources.
 6. Analyze the unfinished soak after it actually completes. Phone-only privileged reboot recovery remains unsupported; reboot was not performed.
 
 Gateway endpoint, OAuth state and device enrollment remain unchanged. The gateway remains a trusted plaintext boundary. Broad shell can bypass cooperative screen leases and app-level file isolation; the new Inbox does not change that limitation. Full proposal arguments can contain private action data in device SQLite, so submit minimal source references and apply the same device-diagnostic privacy precautions as request results.
+
+## Delivery checkpoint
+
+Implementation commit `1992bee68aef7b7736924353d029009351c712ac` was pushed to `origin/main`. All three [GitHub CI jobs](https://github.com/lukifer23/SIConnect/actions/runs/39557617888) passed, including the new minified-release isolation checks. The working tree was clean at that checkpoint. The installed debug APK includes all production-code changes in that implementation; later documentation updates do not change the APK. The source change covers 36 files, 885 insertions and 33 deletions. No Cloudflare deployment was required; the existing gateway discovered the updated device registry. No release signing key was supplied or fabricated; the release artifact is unsigned and was not installed over the working debug identity.
+
+Raw host-window and phone screenshot captures were cleaned after inspection. Sanitized test summaries and the unfinished active collector were preserved outside Git. No personal communication, calendar/file mutation, reboot or credential rotation was used for these checks.
