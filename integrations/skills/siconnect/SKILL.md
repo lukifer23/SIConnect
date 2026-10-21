@@ -1,7 +1,7 @@
 ---
 name: siconnect
 description: Operate the owner's paired Android phone.
-version: 0.4.0
+version: 0.5.0
 author: SIConnect contributors
 license: MIT
 metadata:
@@ -45,3 +45,11 @@ Prefer typed capability calls and reusable validated skills to long model-driven
 Use bounded, compressed UI hierarchy capture only when needed. Do not assume desktop utilities such as `bc` exist on Android. Avoid long fixed sleep chains; use a deadline and short bounded state checks. A script containing sleeps and UI capture reports their combined time, not isolated capture latency.
 
 For `agent_scope` denial, stop and ask for the owner to change the exact requesting bot's permission on the phone. An existing same-name connection may have a different grant. Scope denial does not generate an approval prompt. Do not re-pair, switch identity or substitute another bot's credential to bypass it.
+
+## Background and locked-phone execution
+
+Prefer tools whose live descriptor reports `interaction: BACKGROUND`. Diagnostics, detailed package inspection, managed files, weather and reminders do not open an Activity. `device_runtime` reports screen/keyguard/device-lock state; `device_capabilities` reports live backend availability and the current agent's scope. Scope alone does not remove risk approvals or emergency-stop checks. General shell may open the screen depending on the command, and `apps_launch` deliberately opens an app. Do not use screen-tap workflows as a substitute for a supported background API.
+
+Use `apps_inspect_detailed` for bounded version/installer/installation verification. Managed `files_*` tools access SIConnect's own storage only and require explicit agent scope; they do not imply arbitrary other-app data access. For commute weather, pass an explicit local target date, IANA timezone and start/end hours to `weather_forecast`; inspect `summaryScope`, completeness and freshness. Missing location/data is an error, not permission to invent a forecast.
+
+A gateway reconnect can interrupt a response after execution. Retain its request ID and retrieve it with `requests_get`; do not resubmit the mutation. Locked-phone native execution, disposable shell-file creation/removal and an exact reminder were verified through Hermes's native MCP runtime. This does not establish every third-party app workflow, uninterrupted Doze access or reboot privilege recovery. Sending through Gmail/Messages UI remains a shared-screen operation; universal background RCS/email sending is not implemented.

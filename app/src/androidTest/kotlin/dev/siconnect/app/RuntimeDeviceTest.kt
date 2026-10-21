@@ -130,6 +130,60 @@ class RuntimeDeviceTest {
             g.db.writableDatabase.delete("reminders","reminder_id=?",arrayOf(id))
         }
     }
+    @Test fun managedFilesRoundTripAndTraversalBoundary()=runBlocking {
+        val agent="file-fixture:"+UUID.randomUUID();val token=Settings.randomToken("test_")
+        val folder="fixture-"+UUID.randomUUID()
+        g.agents.put(AgentRecord(AgentGrant(agent,"Disposable file fixture",scopes=listOf("files.*"),autoApproveUpTo=RiskClass.MODERATE_IMPACT),Settings.sha256Hex(token),System.currentTimeMillis(),tokenHint="test only"))
+        suspend fun call(cap:String,args:JsonObject):RequestRecord=g.remoteInvoke(buildJsonObject {put("capabilityId",cap);put("arguments",args)},token)
+        fun path(value:String)=buildJsonObject {put("path",value)}
+        try {
+            Assert.assertEquals(RequestState.SUCCEEDED,call("files.mkdir",path(folder)).state)
+            val written=call("files.write",buildJsonObject {put("path","$folder/original.txt");put("content","SIConnect fixture")})
+            Assert.assertEquals(RequestState.SUCCEEDED,written.state)
+            val read=call("files.read",buildJsonObject {put("path","$folder/original.txt");put("encoding","utf8")})
+            Assert.assertEquals("SIConnect fixture",read.result!!.output.jsonObject.getValue("content").jsonPrimitive.content)
+            Assert.assertEquals(written.result!!.output.jsonObject["sha256"],call("files.hash",path("$folder/original.txt")).result!!.output.jsonObject["sha256"])
+            Assert.assertEquals(RequestState.SUCCEEDED,call("files.copy",buildJsonObject {put("path","$folder/original.txt");put("destination","$folder/copy.txt")}).state)
+            Assert.assertEquals(RequestState.SUCCEEDED,call("files.move",buildJsonObject {put("path","$folder/copy.txt");put("destination","$folder/renamed.txt")}).state)
+            val listing=call("files.list",path(folder));Assert.assertEquals(listing.errorMessage,RequestState.SUCCEEDED,listing.state)
+            Assert.assertEquals(2,listing.result!!.output.jsonObject.getValue("entries").jsonArray.size)
+            Assert.assertEquals("INVALID_PATH",call("files.read",path("../siconnect.db")).errorCode)
+            Assert.assertEquals(RequestState.SUCCEEDED,call("files.delete",path("$folder/original.txt")).state)
+            Assert.assertEquals(RequestState.SUCCEEDED,call("files.delete",path("$folder/renamed.txt")).state)
+            Assert.assertEquals(RequestState.SUCCEEDED,call("files.delete",path(folder)).state)
+        } finally {
+            // Cleanup is confined to this test's unique app-owned disposable directory.
+            java.io.File(g.context.filesDir,"managed/$folder").deleteRecursively();g.agents.delete(agent)
+        }
+    }
+    @Test fun executionStateRollsBackIfItsAuditInsertFails()=runBlocking {
+        val id="audit-fixture:"+UUID.randomUUID()
+        val trigger="siconnect_test_audit_failure"
+        val w=g.db.writableDatabase
+        // SQLite-backed fault injection is test-only and scoped to this request ID.
+        w.execSQL("CREATE TEMP TRIGGER $trigger BEFORE INSERT ON events WHEN NEW.request_id='$id' AND NEW.event_type='execution.started' BEGIN SELECT RAISE(ABORT,'test audit insert failure'); END")
+        try {
+            try {g.engine.submit(InvocationRequest(requestId=id,agentId="local-owner",capabilityId="device.status"),Origin.LOCAL_OWNER);Assert.fail("Audit failure must prevent execution")}
+            catch(_:android.database.sqlite.SQLiteException) {}
+            Assert.assertEquals(RequestState.VALIDATED,g.requests.get(id)!!.state)
+            Assert.assertFalse(g.events.query(requestId=id).any {it.eventType=="execution.started" || it.eventType=="execution.finished"})
+        } finally {w.execSQL("DROP TRIGGER IF EXISTS $trigger");g.engine.cancel(id,"fixture cleanup")}
+    }
+    @Test fun historyKeysetPaginationHandlesEqualTimestampsAndFilters()=runBlocking {
+        val agent="history-fixture:"+UUID.randomUUID();val now=System.currentTimeMillis()
+        val ids=(1..5).map {"$agent:$it"}
+        try {
+            ids.forEach {id -> Assert.assertTrue(g.requests.insert(RequestRecord(id,id,agent,g.settings.deviceId,"device.status",arguments=JsonObject(emptyMap()),argsHash="fixture",origin=Origin.REMOTE.name,state=RequestState.SUCCEEDED,createdAtMs=now,updatedAtMs=now,expiresAtMs=now+60000)))}
+            val first=g.requests.historyPage(2,agentId=agent)
+            val second=g.requests.historyPage(2,first.last(),agentId=agent)
+            val third=g.requests.historyPage(2,second.last(),agentId=agent)
+            Assert.assertEquals(ids.sortedDescending(),(first+second+third).map {it.requestId})
+            Assert.assertTrue(g.requests.historyPage(agentId=agent,states=setOf(RequestState.FAILED)).isEmpty())
+            Assert.assertEquals(ids.sorted(),g.requests.historyPage(agentId=agent,newest=false).map {it.requestId})
+        } finally {
+            ids.forEach {id->g.db.writableDatabase.delete("request_transitions","request_id=?",arrayOf(id));g.db.writableDatabase.delete("requests","request_id=?",arrayOf(id))}
+        }
+    }
     @Test fun structuredPackageInspectionUsesRealPackageManager()=runBlocking {
         suspend fun inspect(name:String)=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="apps.inspect_detailed",arguments=buildJsonObject {put("packageName",name);put("user",0)}),Origin.LOCAL_OWNER)
         for(name in listOf(g.context.packageName,"android")) {

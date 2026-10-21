@@ -1,6 +1,6 @@
 # Capability coverage
 
-Updated October 20, 2026. Implemented means registered production code exists. Physical evidence is listed separately. The gateway advertises 31 tools at the latest connection check; availability can change with permissions/backend state.
+Updated October 20, 2026. Implemented means registered production code exists. Physical evidence is listed separately. The catalog is generated from the installed registry; availability and scope are separate. Use `device.capabilities` for current state. Tool count changes with installed builds.
 
 | Family | Implemented | Physical evidence / remaining limits |
 | --- | --- | --- |
@@ -15,8 +15,13 @@ Updated October 20, 2026. Implemented means registered production code exists. P
 | Weather | Real forecast/cache/normalization | Live provider fetch; deterministic branching/long-running weather workflows need broader validation |
 | Request control | Own request lookup and cancellation | Real hosted lookup; cancellation and unknown-outcome stress pending |
 | Skills | Durable JSON skill validation/storage/execution and continuation | Real native diagnostics skill; host approval/continuation tests; expanded scheduled workflows pending |
-| Calendar/files | Not implemented | Do not infer functionality from permission controls or planned schemas |
+| Managed files | List, metadata, bounded UTF-8/base64 read/write, SHA-256, mkdir, copy, move/rename, delete empty directory/file | Physical engine/authenticated fixture round trip passed, including traversal rejection and postconditions. App-owned storage only; SAF, MediaStore and other apps’ private storage are not implemented. |
+| Calendar | Not implemented | Calendar runtime permissions are currently off; permission controls do not add tools |
 
 Client-specific grants are independent of capability implementation. Dots read-only native/shell tools worked, while its initial app inspection was denied by scope. The owner has since corrected the exact agent’s grant; its actual installation retry subsequently succeeded, with package/version/installer independently verified. That is a permission blocker, not proof of missing implementation or a disconnected phone. See [permissions](permissions.md) and [provider compatibility](provider-compatibility.md).
 
 Pass 3 shell lifecycle stress passed on the actual bundled backend: text/stderr, stdin/environment, nonzero exit, 8 KiB truncation, binary bytes, timeout, cancellation before start and owned parent/child termination. This does not establish every maximum-size Binder/WebSocket or hostile-process case. Exact reminder interrupted-claim reconciliation passed with a disposable test notification; extended process-death/idle/reboot cases remain pending.
+
+Hermes's locked-phone file check used the actual privileged shell and a unique disposable `/data/local/tmp` file; do not confuse that evidence with locked-screen validation of every native `files.*` operation. Native managed-file operations were physically exercised separately through authenticated engine calls. `apps.launch` is SCREEN; arbitrary shell is MAY_OPEN_SCREEN; native diagnostics/files/reminders/weather are BACKGROUND. These describe interaction, not a guarantee of uninterrupted idle/reboot execution.
+
+Weather windows now accept date/timezone/local start/end hours, use Unix hourly instants, account for preceding-hour precipitation and report missing-data completeness. A real explicit four-hour provider window was fetched; deterministic commute notification/branching skills are still unfinished.

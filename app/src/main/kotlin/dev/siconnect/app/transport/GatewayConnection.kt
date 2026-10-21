@@ -38,6 +38,15 @@ class GatewayConnection(private val g: RuntimeGraph) {
         } finally { pairingAcks.remove(hash,ack) }
     }
     private val generation=java.util.concurrent.atomic.AtomicLong()
+    /** Refresh discovery after backend/permission changes using the same authoritative registry. */
+    fun refreshCatalog() {
+        if(state.value!=ConnectionState.ONLINE) return
+        g.scope.launch {socket?.send(hello())}
+    }
+    private fun hello()=buildJsonObject {
+        put("type","hello");put("deviceId",g.settings.deviceId)
+        put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses()))
+    }.toString()
     private var loop: Job?=null
     @Volatile private var socket: WebSocket?=null
     @Synchronized fun stop() { generation.incrementAndGet(); loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; state.value=ConnectionState.DISABLED }
@@ -71,8 +80,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     override fun onOpen(ws: WebSocket,r: Response) {
                         if(generation.get()!=epoch) {ws.cancel();done.complete(Unit);return}
                         state.value=ConnectionState.AUTHENTICATING
-                        ws.send(buildJsonObject { put("type","hello"); put("deviceId",g.settings.deviceId)
-                            put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses())) }.toString())
+                        ws.send(hello())
                         g.scope.launch {
                             delay(10_000)
                             if(socket===ws && state.value==ConnectionState.AUTHENTICATING) { detail.value="Gateway did not confirm connection";ws.close(1002,"Handshake timeout");done.complete(Unit) }
@@ -88,8 +96,9 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                 val type=msg["type"]?.jsonPrimitive?.content
                                 if(type=="hello_ack") {
                                     require(msg.getValue("protocol").jsonPrimitive.int>=2) { "Gateway update required" }
+                                    val reconnect=state.value!=ConnectionState.ONLINE
                                     state.value=ConnectionState.ONLINE;detail.value="Connected";attempt=0
-                                    g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                                    if(reconnect) g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
                                 } else if(type=="pairing_saved") {
                                     pairingAcks[msg.getValue("hash").jsonPrimitive.content]?.complete(Unit)
                                 } else if(type=="pairing_consumed") {

@@ -82,6 +82,8 @@ class RuntimeGraph(val context: Context) {
             ready.await()
             while (isActive) { delay(60_000); engine.expireStale(); skillRuns.active().filter { it.deadlineMs <= System.currentTimeMillis() }.forEach { runner.resume(it.runId) } }
         }
+        scope.launch {ready.await();privileged.directStatus.collect {gateway.refreshCatalog()}}
+        scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}
         ready.invokeOnCompletion { e -> if (e != null) health.value = "Startup failed: ${e.javaClass.simpleName}" }
     }
     /** Owner-only local UI action. Default development scope allows diagnostics and approval-gated shell. */
@@ -188,8 +190,9 @@ class RuntimeGraph(val context: Context) {
     }
     fun authenticate(token: String): AgentRecord? {
         if (token.length !in 20..300) return null
-        val hashed = Settings.sha256Hex(token).toByteArray()
-        return agents.all().firstOrNull { it.tokenSha256.isNotEmpty() && MessageDigest.isEqual(it.tokenSha256.toByteArray(), hashed) && !it.grant.revoked && (it.grant.expiresAtMs?.let { e -> e > System.currentTimeMillis() } ?: true) }
+        val hash=Settings.sha256Hex(token)
+        val agent=agents.byCredentialHash(hash) ?: return null
+        return agent.takeIf { MessageDigest.isEqual(it.tokenSha256.toByteArray(),hash.toByteArray()) && !it.grant.revoked && (it.grant.expiresAtMs?.let {e->e>System.currentTimeMillis()} ?: true) }
     }
     suspend fun remoteInvoke(body: JsonObject, token: String): RequestRecord {
         ready.await()

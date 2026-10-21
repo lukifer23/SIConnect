@@ -74,9 +74,13 @@ class SIConnectDb(context: Context) : SQLiteOpenHelper(context, "siconnect.db", 
             db.execSQL("CREATE TABLE step_results (run_id TEXT NOT NULL, step_id TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY(run_id, step_id))")
         }
         if (old < 3) db.execSQL("ALTER TABLE reminders ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+        if (old < 4) {
+            db.execSQL("CREATE INDEX requests_history ON requests(updated_at DESC,request_id DESC)")
+            db.execSQL("CREATE INDEX agents_credential ON agents(token_sha256)")
+        }
     }
 
-    companion object { const val VERSION = 3 }
+    companion object { const val VERSION = 4 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
@@ -87,6 +91,10 @@ inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
 data class RequestSummary(val requestId:String,val agentId:String,val capabilityId:String,val state:RequestState,val createdAtMs:Long,val updatedAtMs:Long)
 
 class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
+    override fun <T> atomic(block:()->T):T {
+        val w=db.writableDatabase;w.beginTransaction()
+        try {val result=block();w.setTransactionSuccessful();return result} finally {w.endTransaction()}
+    }
     override fun insert(record: RequestRecord): Boolean {
         val w = db.writableDatabase
         w.beginTransaction()
@@ -132,9 +140,27 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
             null, null, "updated_at DESC", limit.toString()).mapAll { decode(it.getString(0)) }
     }
 
-    fun recentSummaries(limit:Int=100):List<RequestSummary> = db.readableDatabase.query("requests",
-        arrayOf("request_id","agent_id","capability_id","state","created_at","updated_at"),null,null,null,null,"updated_at DESC, request_id DESC",limit.coerceIn(1,500).toString())
-        .mapAll { RequestSummary(it.getString(0),it.getString(1),it.getString(2),RequestState.valueOf(it.getString(3)),it.getLong(4),it.getLong(5)) }
+    fun recentSummaries(limit:Int=100):List<RequestSummary> = historyPage(limit=limit)
+
+    /** Stable keyset pagination; no OFFSET scans and no full result JSON in history queries. */
+    fun historyPage(limit:Int=100,cursor:RequestSummary?=null,agentId:String?=null,
+                    states:Set<RequestState>?=null,newest:Boolean=true):List<RequestSummary> {
+        val where=mutableListOf<String>();val args=mutableListOf<String>()
+        if(cursor!=null) {
+            val comparison=if(newest) "<" else ">"
+            where+="(updated_at $comparison ? OR (updated_at = ? AND request_id $comparison ?))"
+            args+=listOf(cursor.updatedAtMs.toString(),cursor.updatedAtMs.toString(),cursor.requestId)
+        }
+        agentId?.let {where+="agent_id=?";args+=it}
+        states?.let {
+            if(it.isEmpty()) return emptyList()
+            where+="state IN (${it.joinToString(",") { "?" }})";args+=it.map {state->state.name}
+        }
+        val direction=if(newest) "DESC" else "ASC"
+        return db.readableDatabase.query("requests",arrayOf("request_id","agent_id","capability_id","state","created_at","updated_at"),
+            where.takeIf {it.isNotEmpty()}?.joinToString(" AND "),args.toTypedArray(),null,null,"updated_at $direction,request_id $direction",limit.coerceIn(1,500).toString())
+            .mapAll {RequestSummary(it.getString(0),it.getString(1),it.getString(2),RequestState.valueOf(it.getString(3)),it.getLong(4),it.getLong(5))}
+    }
 
     fun recentDeniedApps():List<RequestRecord> = db.readableDatabase.query("requests",arrayOf("json"),"state = ? AND capability_id LIKE ?",
         arrayOf(RequestState.DENIED.name,"apps.%"),null,null,"updated_at DESC","10").mapAll {decode(it.getString(0))}
@@ -215,6 +241,9 @@ class AgentStore(private val db: SIConnectDb) : AgentDirectory {
 
     fun all(): List<AgentRecord> = db.readableDatabase.query("agents", arrayOf("json"), null, null, null, null, "created_at")
         .mapAll { decode(it.getString(0)) }
+
+    fun byCredentialHash(hash:String):AgentRecord? = db.readableDatabase.query("agents",arrayOf("json"),"token_sha256=?",
+        arrayOf(hash),null,null,null,"2").mapAll {decode(it.getString(0))}.singleOrNull()
 
     fun put(record: AgentRecord) {
         db.writableDatabase.insertWithOnConflict("agents", null, ContentValues().apply {

@@ -56,3 +56,5 @@ Re-run with:
 tools/adb_audit.py --list-devices
 tools/adb_audit.py --serial <serial> --out /path/outside/repo/audit.json
 ```
+
+Pass 3 hardening bounds both subprocess pipes during collection, preserves partial timeout output, reports per-stream truncation, uses Android shell pipefail and stops loop probes on failures. Shizuku process matching happens locally after a successful process query. Reports and optional raw files must be outside the repository and use exclusive-create mode 0600. A pipeline failure/truncated result is not proof of a supported capability. Four actual host subprocess/path tests passed; two read-only device probes verified the updated harness. Timeout of the host ADB client does not prove every remote command was terminated; mutating probe outcomes require verification.

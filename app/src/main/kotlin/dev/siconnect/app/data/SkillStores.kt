@@ -35,7 +35,8 @@ class SkillCatalog(private val db: SIConnectDb, private val registry: Capability
     }
     fun all(): List<SkillDefinition> = db.readableDatabase.query("skills", arrayOf("json"), "enabled=1", null, null, null, null)
         .mapAll { SkillJson.parse(it.getString(0)) }
-    fun get(id: String) = all().firstOrNull { it.id == id }
+    fun get(id:String):SkillDefinition? = db.readableDatabase.query("skills",arrayOf("json"),"skill_id=? AND enabled=1",arrayOf(id),null,null,null,"1")
+        .mapAll {SkillJson.parse(it.getString(0))}.firstOrNull()
     fun enable(id: String, enabled: Boolean) { db.writableDatabase.update("skills", ContentValues().apply { put("enabled", if (enabled) 1 else 0) }, "skill_id=?", arrayOf(id)) }
     fun remove(id: String) { db.writableDatabase.delete("skills", "skill_id=?", arrayOf(id)) }
 }

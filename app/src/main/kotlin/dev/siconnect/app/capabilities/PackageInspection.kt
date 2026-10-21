@@ -26,7 +26,14 @@ class PackageInspectionCapability(private val context:Context):Capability {
     override val descriptor=CapabilityDescriptor("apps.inspect_detailed",title="Inspect package and installation source",
         description="Structured package/version/enabled/installer metadata for Android user 0. Confirms installation state with a second PackageManager query. No raw dumps, app data, or Secure Folder access. Use this instead of dumpsys to verify installs and removals.",
         inputSchema=objectSchema {string("packageName","Exact package identifier",true,maxLength=200);integer("user","Android user (only user 0 is supported)",min=0,max=0)},
-        backend=BackendKind.NATIVE,risk=RiskClass.READ_ONLY,verification="Second PackageManager query confirms package state")
+        outputSchema=objectSchema {
+            string("packageName","Package identifier",true);integer("user","Android user",true);boolean("installed","Installed in this user",true)
+            string("versionName","Version name");integer("versionCode","Long version code");boolean("enabled","Application enabled")
+            string("installerPackage","Installing package");string("initiatingPackage","Initiating package");string("originatingPackage","Originating package")
+            integer("firstInstallTimeMs","First installation timestamp");integer("lastUpdateTimeMs","Last update timestamp")
+            string("completeness","Metadata completeness",true,enum=listOf("COMPLETE","PARTIAL"));stringArray("errors","Metadata error codes",true)
+            string("source","Metadata source",true);integer("verifiedAtMs","Observation timestamp",true)
+        },backend=BackendKind.NATIVE,risk=RiskClass.READ_ONLY,interaction=InteractionMode.BACKGROUND,verification="Second PackageManager query confirms package state")
     override fun availability()=Availability.IMPLEMENTED
     private val pm get()=context.packageManager
     private fun info(name:String):PackageInfo? = try {

@@ -29,8 +29,8 @@ import kotlinx.serialization.json.*
 
 open class MainActivity: ComponentActivity() {
     private var permissionRevision by mutableIntStateOf(0)
-    private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissionRevision++ }
-    override fun onResume() { super.onResume(); permissionRevision++ }
+    private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissionRevision++;graph.gateway.refreshCatalog() }
+    override fun onResume() { super.onResume(); permissionRevision++;graph.gateway.refreshCatalog() }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent);setIntent(intent);permissionRevision++ }
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -41,6 +41,7 @@ open class MainActivity: ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        graph.gateway.refreshCatalog()
         if(graph.settings.gateway.value.enabled) startForegroundService(Intent(this,ConnectionService::class.java))
     }
 
@@ -49,6 +50,7 @@ open class MainActivity: ComponentActivity() {
         val scope=rememberCoroutineScope()
         val config by g.settings.gateway.collectAsState()
         val connection by g.gateway.state.collectAsState()
+        val connectionDetail by g.gateway.detail.collectAsState()
         val direct by g.privileged.directStatus.collectAsState()
         val controls by g.settings.controls.collectAsState()
         val health by g.health.collectAsState()
@@ -131,7 +133,13 @@ open class MainActivity: ComponentActivity() {
             Column(Modifier.widthIn(max=640.dp).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(18.dp)) {
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text("SIConnect",style=MaterialTheme.typography.headlineLarge); Text("Your phone. Your bots.",color=MaterialTheme.colorScheme.onSurfaceVariant) }
-                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "● CONNECTED" else "● SETUP",color=MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelMedium)
+                    Text(when(connection) {
+                        dev.siconnect.app.transport.ConnectionState.ONLINE->"CONNECTED"
+                        dev.siconnect.app.transport.ConnectionState.BACKOFF->"RECONNECTING"
+                        dev.siconnect.app.transport.ConnectionState.AUTH_FAILED->"NEEDS ATTENTION"
+                        dev.siconnect.app.transport.ConnectionState.DISABLED->if(config.baseUrl.isBlank()) "SETUP" else "PAUSED"
+                        else->"CONNECTING"
+                    },color=if(connection==dev.siconnect.app.transport.ConnectionState.AUTH_FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelMedium)
                 }
                 if(pending.isNotEmpty()) {
                     Text("Needs your approval",style=MaterialTheme.typography.titleLarge)
@@ -146,7 +154,8 @@ open class MainActivity: ComponentActivity() {
                     } } }
                 }
                 Card(shape=RoundedCornerShape(24.dp)) { Column(Modifier.padding(22.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Ready for your bot" else "Connect your phone",style=MaterialTheme.typography.headlineSmall)
+                    Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Ready for your bot" else if(config.enabled && config.baseUrl.isNotBlank()) "Restoring your connection" else "Connect your phone",style=MaterialTheme.typography.headlineSmall)
+                    if(config.baseUrl.isNotBlank()) Text(connectionDetail,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Requests run on this phone. You approve sensitive actions here." else "Enable access, then connect your bot. Every action is checked and logged.",color=MaterialTheme.colorScheme.onSurfaceVariant)
                     recent.firstOrNull { r -> bots.any {it.grant.agentId==r.agentId} }?.let { last ->
                         Text("Last bot request: ${java.time.Instant.ofEpochMilli(last.createdAtMs).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm:ss a"))}",style=MaterialTheme.typography.labelLarge)
@@ -220,12 +229,15 @@ open class MainActivity: ComponentActivity() {
                 Text(if(health.startsWith("Ready")) "On-device engine ready" else health,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if(activity) ActivityDialog(recent,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> work {inspected=g.requests.get(id)}})
+        if(activity) ActivityDialog(g.requests,changed,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> work {inspected=g.requests.get(id)}})
         manageBot?.let { bot -> AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text(botDisplayName(bot,bots))},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment=Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("Apps");Text("Install, inspect and remove apps. Sensitive actions still ask first.",style=MaterialTheme.typography.bodySmall) }
-                val appsAllowed=(bot.grant.scopes.any { it=="*" || it=="apps.*" }) && bot.grant.denied.none { it=="*" || it=="apps.*" }
-                Switch(appsAllowed,{enabled -> work {g.setCapabilityFamilyFromOwner(bot.grant.agentId,"apps",enabled);note="App permission saved for ${botDisplayName(bot,bots)}"}},enabled=!busy)
+            listOf("apps" to ("Apps" to "Install, inspect and remove apps. Sensitive actions still ask first."),
+                "files" to ("Managed files" to "SIConnect’s own files only. Other apps’ private data stays isolated.")).forEach { (family,text) ->
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {Text(text.first);Text(text.second,style=MaterialTheme.typography.bodySmall)}
+                    val allowed=bot.grant.scopes.any {it=="*" || it=="$family.*"} && bot.grant.denied.none {it=="*" || it=="$family.*"}
+                    Switch(allowed,{enabled -> work {g.setCapabilityFamilyFromOwner(bot.grant.agentId,family,enabled);note="${text.first} permission saved for ${botDisplayName(bot,bots)}"}},enabled=!busy)
+                }
             }
             if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if(note.isNotBlank()) Text(note)
@@ -380,7 +392,7 @@ open class MainActivity: ComponentActivity() {
                     }
                     "Capabilities" -> capabilities.forEach { cap ->
                         Text(cap.descriptor.id,style=MaterialTheme.typography.titleMedium)
-                        Text("${cap.availability} · ${cap.descriptor.backend} · physical verification: see coverage ledger")
+                        Text("${cap.availability} · ${cap.descriptor.backend} · ${cap.descriptor.interaction}")
                         Text(cap.detail ?: cap.descriptor.description)
                         if(cap.descriptor.permissions.isNotEmpty()) Text(cap.descriptor.permissions.joinToString())
                         HorizontalDivider()

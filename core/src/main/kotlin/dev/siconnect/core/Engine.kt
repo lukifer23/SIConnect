@@ -58,6 +58,9 @@ data class RequestRecord(
 )
 
 interface RequestStore {
+    /** Persistent stores wrap record transitions and their EventSink writes in one transaction.
+     * In-memory implementations may use the default for compatibility. No suspending work inside. */
+    fun <T> atomic(block:()->T):T = block()
     /** Returns false if a record with the same id or (agentId, idempotencyKey) already exists. */
     fun insert(record: RequestRecord): Boolean
     /** Compare-and-set on state; returns false if the stored state differs from [expected]. */
@@ -153,14 +156,15 @@ class ExecutionEngine(
             operationFingerprint = fingerprint, selectedBackend = capability?.descriptor?.backend, origin = origin.name, state = RequestState.RECEIVED, createdAtMs = now, updatedAtMs = now,
             expiresAtMs = req.expiresAtMs ?: (now + defaultExpiryMs), parentRequestId = req.parentRequestId,
         )
-        if (!store.insert(record)) {
+        val inserted=store.atomic {
+            store.insert(record).also {if(it) log(record,"request.received")}
+        }
+        if (!inserted) {
             // Lost a race with a concurrent duplicate; return whatever won.
             return duplicate(store.get(req.requestId)
                 ?: req.idempotencyKey?.let { store.findByIdempotencyKey(req.agentId, it) }
                 ?: error("insert conflict without existing record"))
         }
-        log(record, "request.received")
-
         if (capability == null) return fail(record, "UNKNOWN_CAPABILITY", "No capability '${req.capabilityId}'")
         if (now >= record.expiresAtMs) return transition(record, RequestState.EXPIRED, "request.expired") { it }
 
@@ -372,8 +376,11 @@ class ExecutionEngine(
     ): RequestRecord? {
         check(r.state.canTransitionTo(next)) { "Illegal transition ${r.state} -> $next for ${r.requestId}" }
         val updated = mutate(r).copy(state = next, updatedAtMs = clock.nowMs())
-        if (!store.update(updated, r.state)) return null // someone else moved it; theirs wins
-        log(updated, eventType, decision, backend, durationMs, verification, error ?: updated.errorCode, detail)
+        val committed=store.atomic {
+            if(!store.update(updated,r.state)) false
+            else {log(updated,eventType,decision,backend,durationMs,verification,error ?: updated.errorCode,detail);true}
+        }
+        if(!committed) return null // someone else moved it; theirs wins
         updates.tryEmit(updated)
         return updated
     }

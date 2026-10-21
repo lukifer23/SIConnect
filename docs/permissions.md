@@ -28,3 +28,7 @@ The app is sideloaded. Do not claim special access is an ordinary runtime dialog
 ## New bot, resume and reconnect
 
 Pair another bot creates a fresh independent identity. Identical names do not share credentials or grants. A pending invitation survives closing the screen and ordinary process death; reopening resumes that exact invitation. Renew and copy code replaces an expired invitation while preserving its intended agent. Dismissing an invitation leaves its identity intact and a previously published code expires normally. Select an existing bot card's Reconnect this bot action only when you intentionally want another connection to that same identity and grant. Revoked or expired identities cannot reconnect. The legacy separately configured bearer connection retains its existing setup.
+
+Managed files is a separate owner-selected bot scope for the new `files.*` family. It covers SIConnect's own managed directory; it does not grant unrestricted phone storage or another app's private files. File mutations still follow risk/approval policy. New and existing agents do not gain this family automatically.
+
+Capabilities now distinguish background execution from actions that use the shared screen. Live runtime reports screen/keyguard/device-lock state. Hermes package inspection, disposable approved-shell file operations and exact reminder delivery were verified while locked/screen off. This does not make visible-app navigation a background action or guarantee Doze connectivity indefinitely.

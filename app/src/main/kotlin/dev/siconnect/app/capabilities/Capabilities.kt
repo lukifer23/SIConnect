@@ -33,13 +33,14 @@ fun JsonObject.long(key: String, default: Long): Long = (get(key) as? JsonPrimit
 private fun native(out: JsonElement) = CapabilityResult(out, BackendKind.NATIVE, "uid=${Process.myUid()}")
 
 fun registerCapabilities(g: RuntimeGraph) {
+    registerFileCapabilities(g)
     g.registry.register(PackageInspectionCapability(g.context))
     val c = g.context
     fun op(id: String, title: String, schema: JsonObject = objectSchema(), risk: RiskClass = RiskClass.READ_ONLY,
            available: () -> Availability = { Availability.IMPLEMENTED }, detail: () -> String? = { null },
            body: suspend (JsonObject, ExecutionContext) -> JsonElement) {
-        g.registry.register(Operation(CapabilityDescriptor(id, title = title, description = title, inputSchema = schema,
-            backend = BackendKind.NATIVE, risk = risk, sideEffects = if (risk > RiskClass.READ_ONLY) listOf(title) else emptyList()), available, detail,
+        g.registry.register(Operation(CapabilityDescriptor(id, title = title, description = title + if(id=="apps.launch") ". Opens the target app on the shared device screen." else ". Runs without opening an Activity or navigating the shared screen.", inputSchema = schema,
+            interaction=if(id=="apps.launch") InteractionMode.SCREEN else InteractionMode.BACKGROUND,backend = BackendKind.NATIVE, risk = risk, sideEffects = if (risk > RiskClass.READ_ONLY) listOf(title) else emptyList()), available, detail,
             body = { a, ctx -> native(body(a, ctx)) }))
     }
     op("requests.get", "Inspect your own request", objectSchema { string("requestId", "Request ID", true, maxLength=200) }) { a, ctx ->
@@ -56,10 +57,21 @@ fun registerCapabilities(g: RuntimeGraph) {
         put("model", Build.MODEL); put("manufacturer", Build.MANUFACTURER); put("android", Build.VERSION.RELEASE)
         put("api", Build.VERSION.SDK_INT); put("deviceId", g.settings.deviceId); put("uptimeMs", SystemClock.elapsedRealtime())
     } }
+    op("device.capabilities", "Live capabilities and this agent’s scope") { _,ctx ->
+        val grant=g.agents.grant(ctx.agentId)
+        JsonArray(g.registry.statuses().map {status -> buildJsonObject {
+            val d=status.descriptor
+            put("id",d.id);put("title",d.title);put("backend",d.backend.name);put("availability",status.availability.name)
+            put("interaction",d.interaction.name);put("risk",d.risk.name)
+            put("scopeGranted",grant!=null && !grant.revoked && (grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true) && grant.scopes.any {PolicyEngine.globMatches(it,d.id)} && grant.denied.none {PolicyEngine.globMatches(it,d.id)})
+            status.detail?.let {put("detail",it)}
+        }})
+    }
     op("device.runtime", "SIConnect process and connection resource measurements") { _, _ ->
         val memory=Debug.MemoryInfo().also(Debug::getMemoryInfo)
         val dbFile=c.getDatabasePath("siconnect.db")
         buildJsonObject {
+            put("appVersion",dev.siconnect.app.BuildConfig.VERSION_NAME);put("appVersionCode",dev.siconnect.app.BuildConfig.VERSION_CODE)
             put("observedAtMs",System.currentTimeMillis());put("elapsedRealtimeMs",SystemClock.elapsedRealtime())
             put("processStartedAtElapsedMs",Process.getStartElapsedRealtime());put("processCpuMs",Process.getElapsedCpuTime())
             put("appPssKiB",memory.totalPss);put("appPrivateDirtyKiB",memory.totalPrivateDirty)
@@ -67,6 +79,8 @@ fun registerCapabilities(g: RuntimeGraph) {
             put("appUidTxBytes",android.net.TrafficStats.getUidTxBytes(Process.myUid()))
             put("databaseBytes",dbFile.length());put("databaseWalBytes",java.io.File(dbFile.path+"-wal").length())
             put("screenInteractive",c.getSystemService(PowerManager::class.java).isInteractive)
+            put("keyguardLocked",c.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
+            put("deviceLocked",c.getSystemService(KeyguardManager::class.java).isDeviceLocked)
             put("charging",c.getSystemService(BatteryManager::class.java).isCharging)
             put("gatewayState",g.gateway.state.value.name);put("privilegedBackend",g.privileged.kind.name)
             put("privilegedAvailable",g.privileged.available())
@@ -118,7 +132,7 @@ fun registerCapabilities(g: RuntimeGraph) {
     fun shell(id: String, title: String, schema: JsonObject, risk: RiskClass = RiskClass.HIGH_IMPACT,
               command: (JsonObject) -> ShellRequest) {
         g.registry.register(Operation(CapabilityDescriptor(id, title=title, description=title, inputSchema=schema,
-            backend=g.privileged.kind, risk=risk, timeoutMs=125_000,
+            backend=g.privileged.kind, risk=risk, timeoutMs=125_000,interaction=if(risk==RiskClass.READ_ONLY) InteractionMode.BACKGROUND else InteractionMode.MAY_OPEN_SCREEN,
             sideEffects=if (risk > RiskClass.READ_ONLY) listOf("May change device state under the Shizuku identity") else emptyList()),
             available={ if (g.privileged.available()) Availability.IMPLEMENTED else Availability.PRIVILEGE_REQUIRED }, detail={ g.privileged.detail() },
             assessment={ a -> RiskAssessment(risk, title, target=(a["package"] ?: a["key"])?.jsonPrimitive?.content,

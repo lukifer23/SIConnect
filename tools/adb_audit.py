@@ -19,9 +19,12 @@ import json
 import os
 import re
 import subprocess
+import selectors
+import signal
+import shlex
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 MAX_OUTPUT = 64 * 1024
@@ -39,6 +42,7 @@ class Probe:
     risk: str = READ_ONLY
     summarize: str = "lines"  # lines | first_line | count | none
     note: str = ""
+    line_filter: str | None = None
 
 
 PROBES: list[Probe] = [
@@ -57,7 +61,7 @@ PROBES: list[Probe] = [
     Probe("priv.selinux", "privilege", "getenforce", summarize="first_line"),
     Probe("priv.su", "privilege", "command -v su || echo absent", summarize="first_line"),
     Probe("priv.shizuku_pkg", "privilege", "pm list packages --user 0 moe.shizuku.privileged.api", summarize="lines"),
-    Probe("priv.shizuku_proc", "privilege", "ps -A -o USER,NAME | grep -i shizuku || echo not-running", summarize="lines"),
+    Probe("priv.shizuku_proc", "privilege", "ps -A -o USER,NAME", summarize="lines", line_filter="(?i)shizuku"),
     Probe("priv.users", "privilege", "pm list users | grep -c UserInfo", summarize="first_line",
           note="count only; user names are personal"),
     # --- device state ---
@@ -71,7 +75,7 @@ PROBES: list[Probe] = [
     Probe("pkg.count_user0", "packages", "pm list packages --user 0 | wc -l", summarize="first_line"),
     Probe("pkg.count_third_party", "packages", "pm list packages --user 0 -3 | wc -l", summarize="first_line"),
     Probe("pkg.roles", "packages",
-          "for r in SMS HOME DIALER BROWSER ASSISTANT; do echo $r=$(cmd role get-role-holders android.app.role.$r); done",
+          "for r in SMS HOME DIALER BROWSER ASSISTANT; do value=$(cmd role get-role-holders android.app.role.$r) || exit $?; echo \"$r=$value\"; done",
           summarize="lines"),
     Probe("pkg.dump_sample", "packages", "dumpsys package com.android.settings | grep -m3 -E 'versionName|firstInstallTime'",
           summarize="lines"),
@@ -79,7 +83,7 @@ PROBES: list[Probe] = [
     Probe("svc.list_count", "framework", "service list | wc -l", summarize="first_line"),
     Probe("svc.key_services", "framework",
           "for s in activity package notification alarm jobscheduler accessibility appwidget statusbar input settings; "
-          "do service check $s; done", summarize="lines"),
+          "do service check $s || exit $?; done", summarize="lines"),
     Probe("svc.cmd_help_alarm", "framework", "cmd alarm help 2>&1 | head -20", summarize="lines"),
     Probe("svc.next_alarm", "framework", "dumpsys alarm | grep -m2 -iE 'nextAlarmClock|next wake'", summarize="lines"),
     Probe("svc.notification_listeners", "framework", "cmd notification allowed_listeners 2>&1 | wc -l", summarize="first_line"),
@@ -128,19 +132,82 @@ def redact(text: str, serial: str | None) -> str:
     return text
 
 
-def adb(args: list[str], timeout: float = 30) -> tuple[int, str, str, float]:
-    t0 = time.monotonic()
+@dataclass
+class CommandResult:
+    code: int
+    stdout: str
+    stderr: str
+    seconds: float
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    timed_out: bool = False
+
+
+def run_bounded(argv: list[str], timeout: float = 30, limit: int = MAX_OUTPUT) -> CommandResult:
+    """Drain both pipes with bounded retention, a real deadline and owned-process cleanup."""
+    start = time.monotonic()
+    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    outputs = [bytearray(), bytearray()]
+    truncated = [False, False]
+    timed_out = False
+    selector = selectors.DefaultSelector()
+    assert process.stdout is not None and process.stderr is not None
+    selector.register(process.stdout, selectors.EVENT_READ, 0)
+    selector.register(process.stderr, selectors.EVENT_READ, 1)
     try:
-        p = subprocess.run(["adb", *args], capture_output=True, timeout=timeout)
-        return p.returncode, p.stdout.decode(errors="replace"), p.stderr.decode(errors="replace"), time.monotonic() - t0
-    except subprocess.TimeoutExpired:
-        return -1, "", "timeout", time.monotonic() - t0
+        while selector.get_map():
+            remaining = timeout - (time.monotonic() - start)
+            if remaining <= 0:
+                timed_out = True
+                break
+            for key, _ in selector.select(min(remaining, .2)):
+                chunk = os.read(key.fileobj.fileno(), 8192)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                index = key.data
+                room = limit - len(outputs[index])
+                outputs[index].extend(chunk[:room])
+                truncated[index] |= len(chunk) > room
+        if not timed_out:
+            try:
+                process.wait(timeout=max(.001, timeout - (time.monotonic() - start)))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+    return CommandResult(-1 if timed_out else process.returncode, outputs[0].decode(errors="replace"),
+                         outputs[1].decode(errors="replace"), time.monotonic() - start,
+                         truncated[0], truncated[1], timed_out)
+
+
+def adb(args: list[str], timeout: float = 30) -> CommandResult:
+    return run_bounded(["adb", *args], timeout)
+
+
+def outside_repository(path: Path) -> Path:
+    target = path.expanduser().resolve()
+    if target.is_relative_to(REPO_ROOT):
+        raise ValueError("Device evidence must be outside the public repository")
+    return target
+
+
+def private_new_file(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w")
 
 
 def list_devices() -> list[dict]:
-    code, out, _, _ = adb(["devices", "-l"])
+    result = adb(["devices", "-l"])
+    if result.code != 0 or result.stdout_truncated:
+        raise RuntimeError("ADB device discovery failed or was truncated")
     devices = []
-    for line in out.splitlines()[1:]:
+    for line in result.stdout.splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 2:
             devices.append({"serial": parts[0], "state": parts[1],
@@ -179,9 +246,13 @@ def main() -> int:
     if a.serial not in {d["serial"] for d in list_devices() if d["state"] == "device"}:
         print("error: serial not connected/authorized", file=sys.stderr)
         return 2
-    if a.raw_dir and REPO_ROOT in a.raw_dir.resolve().parents:
-        print("error: --raw-dir must be outside the repository", file=sys.stderr)
-        return 2
+    try:
+        if a.raw_dir:
+            a.raw_dir = outside_repository(a.raw_dir)
+            a.raw_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        report_output = private_new_file(outside_repository(a.out)) if a.out else None
+    except (ValueError, OSError) as error:
+        ap.error(str(error))
 
     allowed = {READ_ONLY} | ({LOW} if a.allow_risk in (LOW, MODERATE) else set()) | ({MODERATE} if a.allow_risk == MODERATE else set())
     selected = [p for p in PROBES if not a.only or p.group in a.only.split(",") or p.id in a.only.split(",")]
@@ -194,17 +265,21 @@ def main() -> int:
             if input(f"Run {p.risk} probe {p.id!r}: {p.command!r}? [y/N] ").strip().lower() != "y":
                 results.append({"id": p.id, "group": p.group, "risk": p.risk, "skipped": "declined"})
                 continue
-        code, out, err, dt = adb(["-s", a.serial, "shell", p.command])
-        truncated = len(out) > MAX_OUTPUT
-        out = out[:MAX_OUTPUT]
+        # Android mksh pipefail preserves upstream failures instead of trusting head/wc.
+        result = adb(["-s", a.serial, "shell", "/system/bin/sh", "-o", "pipefail", "-c", shlex.quote(p.command)])
+        code, out, err, dt = result.code, result.stdout, result.stderr, result.seconds
+        truncated = result.stdout_truncated or result.stderr_truncated
         if a.raw_dir:
-            a.raw_dir.mkdir(parents=True, exist_ok=True)
-            (a.raw_dir / f"{p.id}.txt").write_text(f"$ {p.command}\nexit={code}\n--- stdout\n{out}\n--- stderr\n{err}")
-        red_out, red_err = redact(out, a.serial), redact(err, a.serial)
+            with private_new_file(a.raw_dir / f"{p.id}.txt") as raw:
+                raw.write(f"$ {p.command}\nexit={code}\ntruncated={truncated}\n--- stdout\n{out}\n--- stderr\n{err}")
+        displayed = "\n".join(line for line in out.splitlines() if re.search(p.line_filter, line)) if p.line_filter else out
+        red_out, red_err = redact(displayed, a.serial), redact(err, a.serial)
         denied = bool(re.search(r"(?i)permission denial|securityexception|permission denied|not allowed", out + err))
         results.append({
             "id": p.id, "group": p.group, "risk": p.risk, "command": p.command, "exit_code": code,
             "duration_ms": round(dt * 1000), "permission_failure": denied, "truncated": truncated,
+            "status": "TIMEOUT" if result.timed_out else "PERMISSION_DENIED" if denied else "COMMAND_FAILED" if code else "TRUNCATED" if truncated else "OBSERVED",
+            "stdout_truncated": result.stdout_truncated, "stderr_truncated": result.stderr_truncated,
             "summary": summarize(p.summarize, red_out), "stderr": red_err.strip()[:2000] or None, "note": p.note or None,
         })
         print(f"{'DENIED' if denied else ('ok' if code == 0 else 'exit ' + str(code)):>8}  {p.id}  ({round(dt*1000)} ms)")
@@ -216,8 +291,10 @@ def main() -> int:
         "probes": results,
     }
     if a.out:
-        a.out.write_text(json.dumps(report, indent=2))
-        print(f"wrote {a.out}")
+        assert report_output is not None
+        with report_output:
+            report_output.write(json.dumps(report, indent=2))
+        print("Wrote private audit report")
     else:
         print(json.dumps(report, indent=2))
     return 0

@@ -21,7 +21,7 @@ data class Reminder(val id: String, val fireAtMs: Long, val title: String, val t
 fun registerAutomationCapabilities(g: RuntimeGraph) {
     fun register(id: String, schema: JsonObject, risk: RiskClass, available: (JsonObject)->Availability={Availability.IMPLEMENTED}, body: suspend (JsonObject,ExecutionContext)->JsonElement) {
         g.registry.register(object : Capability {
-            override val descriptor=CapabilityDescriptor(id,title=id,description=id,inputSchema=schema,backend=BackendKind.NATIVE,risk=risk,
+            override val descriptor=CapabilityDescriptor(id,title=id,description=id,inputSchema=schema,backend=BackendKind.NATIVE,risk=risk,interaction=InteractionMode.BACKGROUND,
                 sideEffects=if(risk>RiskClass.READ_ONLY) listOf("Changes SIConnect reminders") else emptyList())
             override fun availability()=Availability.IMPLEMENTED
             override fun availability(arguments: JsonObject)=available(arguments)
@@ -63,30 +63,62 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
     }
     val http=OkHttpClient.Builder().callTimeout(20,TimeUnit.SECONDS).build()
     g.registry.register(object : Capability {
-        override val descriptor=CapabilityDescriptor("weather.forecast",title="Open-Meteo forecast",description="Real forecast for configured coordinates; personal/non-commercial Open-Meteo endpoint",
-            inputSchema=objectSchema { number("latitude","Latitude",min=-90.0,max=90.0); number("longitude","Longitude",min=-180.0,max=180.0) },backend=BackendKind.NETWORK,risk=RiskClass.READ_ONLY)
+        override val descriptor=CapabilityDescriptor("weather.forecast",title="Open-Meteo forecast",description="Real forecast. For a commute/date window provide targetDate (YYYY-MM-DD), timezone (IANA), startHour and endHour. Hourly accumulations use their actual preceding-hour intervals. Missing data is not zero. Without a date window, legacy two-day summary remains available and is explicitly labeled FULL_RESPONSE.",
+            inputSchema=objectSchema {
+                number("latitude","Latitude",min=-90.0,max=90.0);number("longitude","Longitude",min=-180.0,max=180.0)
+                string("targetDate","Target local date YYYY-MM-DD",maxLength=10);string("timezone","IANA timezone; default device timezone",maxLength=100)
+                integer("startHour","Window start local hour; default 6",min=0,max=23);integer("endHour","Exclusive local end hour; default 12 (24 is next midnight)",min=1,max=24)
+            },backend=BackendKind.NETWORK,risk=RiskClass.READ_ONLY,interaction=InteractionMode.BACKGROUND)
         override fun availability()=Availability.IMPLEMENTED
-        override suspend fun execute(args: JsonObject,ctx: ExecutionContext): CapabilityResult = withContext(Dispatchers.IO) {
-            val lat=(args["latitude"] as? JsonPrimitive)?.doubleOrNull ?: g.settings.weather.latitude ?: throw CapabilityException("LOCATION_REQUIRED","Configure weather coordinates")
-            val lon=(args["longitude"] as? JsonPrimitive)?.doubleOrNull ?: g.settings.weather.longitude ?: throw CapabilityException("LOCATION_REQUIRED","Configure weather coordinates")
-            val url="https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&hourly=temperature_2m,precipitation_probability,snowfall,weather_code&forecast_days=2&timezone=auto"
-            val cache=java.io.File(g.context.cacheDir,"forecast-${Settings.sha256Hex("$lat,$lon")}.json")
+        override suspend fun execute(args:JsonObject,ctx:ExecutionContext):CapabilityResult=withContext(Dispatchers.IO) {
+            val lat=args["latitude"]?.jsonPrimitive?.doubleOrNull ?: g.settings.weather.latitude ?: throw CapabilityException("LOCATION_REQUIRED","Configure weather coordinates")
+            val lon=args["longitude"]?.jsonPrimitive?.doubleOrNull ?: g.settings.weather.longitude ?: throw CapabilityException("LOCATION_REQUIRED","Configure weather coordinates")
+            val zone=java.time.ZoneId.of(args["timezone"]?.jsonPrimitive?.content ?: java.time.ZoneId.systemDefault().id)
+            val windowed=listOf("targetDate","startHour","endHour").any {it in args}
+            val date=args["targetDate"]?.jsonPrimitive?.content ?: java.time.LocalDate.now(zone).toString()
+            val bounds=if(windowed) ForecastWindow.bounds(date,zone.id,args.long("startHour",6).toInt(),args.long("endHour",12).toInt()) else null
+            if(windowed) require(java.time.LocalDate.parse(date) in java.time.LocalDate.now(zone)..java.time.LocalDate.now(zone).plusDays(6)) {"Forecast date must be within the next seven local dates"}
+            val days=if(windowed) 7 else 2
+            val url="https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&hourly=temperature_2m,precipitation_probability,precipitation,snowfall,weather_code&forecast_days=$days&timezone=${java.net.URLEncoder.encode(zone.id,"UTF-8")}&timeformat=unixtime"
+            val cache=java.io.File(g.context.cacheDir,"forecast-v2-${Settings.sha256Hex("$lat,$lon,${zone.id},$days")}.json")
             val now=System.currentTimeMillis()
-            if(cache.exists() && now-cache.lastModified() in 0..900_000) return@withContext CapabilityResult(Json.parseToJsonElement(cache.readText()),BackendKind.NETWORK,"Open-Meteo (cached <15m)")
-            val body=http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                if(!r.isSuccessful) throw CapabilityException("WEATHER_HTTP","Provider status ${r.code}",true)
-                val text=r.body.string(); require(text.length<256000); Json.parseToJsonElement(text).jsonObject
+            var fetchedAt=now
+            val cached=if(cache.exists() && now-cache.lastModified() in 0..900_000 && cache.length()<=256000) runCatching {Json.parseToJsonElement(cache.readText()).jsonObject}.getOrNull() else null
+            val body=if(cached!=null) {fetchedAt=cache.lastModified();cached} else {
+                val fresh=http.newCall(Request.Builder().url(url).build()).execute().use {r ->
+                    if(!r.isSuccessful) throw CapabilityException("WEATHER_HTTP","Provider status ${r.code}",true)
+                    val bytes=java.io.ByteArrayOutputStream()
+                    r.body.byteStream().use {input ->
+                        val buffer=ByteArray(8192)
+                        while(true) {val n=input.read(buffer);if(n<0) break
+                            if(bytes.size()+n>256000) throw CapabilityException("WEATHER_TOO_LARGE","Forecast exceeded response limit")
+                            bytes.write(buffer,0,n)
+                        }
+                    }
+                    Json.parseToJsonElement(bytes.toString("UTF-8")).jsonObject
+                }
+                // AtomicFile prevents concurrent readers/process interruption seeing half a forecast.
+                synchronized(http) {
+                    val atomic=android.util.AtomicFile(cache);val stream=atomic.startWrite()
+                    try {stream.write(fresh.toString().toByteArray());atomic.finishWrite(stream)} catch(e:Exception) {atomic.failWrite(stream);throw e}
+                }
+                fresh
             }
             val hourly=body.getValue("hourly").jsonObject
-            val normalized=buildJsonObject {
-                put("fetchedAtMs",now); put("expiresAtMs",now+900_000); put("provider","Open-Meteo"); put("stale",false)
-                put("maxRainProbability",hourly.getValue("precipitation_probability").jsonArray.mapNotNull { (it as? JsonPrimitive)?.doubleOrNull }.maxOrNull()?.let(::JsonPrimitive) ?: JsonNull)
-                put("expectedSnowCm",hourly.getValue("snowfall").jsonArray.mapNotNull { (it as? JsonPrimitive)?.doubleOrNull }.sum())
-                put("minimumTemperatureC",hourly.getValue("temperature_2m").jsonArray.mapNotNull { (it as? JsonPrimitive)?.doubleOrNull }.minOrNull()?.let(::JsonPrimitive) ?: JsonNull)
-                put("forecast",body)
+            val summary=if(bounds!=null) ForecastWindow.summarize(body,bounds.first,bounds.second) else buildJsonObject {
+                put("maxRainProbability",hourly.getValue("precipitation_probability").jsonArray.mapNotNull {it.jsonPrimitive.doubleOrNull}.maxOrNull()?.let(::JsonPrimitive) ?: JsonNull)
+                val snow=hourly.getValue("snowfall").jsonArray
+                put("expectedSnowCm",snow.mapNotNull {it.jsonPrimitive.doubleOrNull}.takeIf {it.size==snow.size}?.sum()?.let(::JsonPrimitive) ?: JsonNull)
+                put("minimumTemperatureC",hourly.getValue("temperature_2m").jsonArray.mapNotNull {it.jsonPrimitive.doubleOrNull}.minOrNull()?.let(::JsonPrimitive) ?: JsonNull)
             }
-            cache.writeText(normalized.toString())
-            CapabilityResult(normalized,BackendKind.NETWORK,"api.open-meteo.com")
+            val normalized=buildJsonObject {
+                put("fetchedAtMs",fetchedAt);put("expiresAtMs",fetchedAt+900_000);put("provider","Open-Meteo");put("stale",now-fetchedAt>900_000)
+                put("summaryScope",if(windowed) "EXPLICIT_WINDOW" else "FULL_RESPONSE")
+                put("deviceTimezone",java.time.ZoneId.systemDefault().id);put("forecastTimezone",body["timezone"] ?: JsonPrimitive(zone.id))
+                summary.forEach {(key,value)->put(key,value)}
+                if(!windowed) put("forecast",body)
+            }
+            CapabilityResult(normalized,BackendKind.NETWORK,if(cached!=null) "Open-Meteo (cached <15m)" else "api.open-meteo.com")
         }
     })
 }
