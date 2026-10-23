@@ -38,6 +38,16 @@ class SkillCatalog(private val db: SIConnectDb, private val registry: Capability
     }
     fun all(includeDisabled:Boolean=false): List<SkillDefinition> = db.readableDatabase.query("skills", arrayOf("json"), if(includeDisabled) null else "enabled=1", null, null, null, null)
         .mapAll { SkillJson.parse(it.getString(0)) }
+    /** Atomic owner update: a changed or disabled definition cannot be overwritten after review. */
+    fun replaceIfUnchanged(expected:SkillDefinition,replacement:SkillDefinition) {
+        require(expected.id==replacement.id && replacement.version>expected.version) {"Invalid workflow upgrade"}
+        require(SkillValidator.validate(replacement,registry).isEmpty()) {"Invalid replacement workflow"}
+        val json=SkillJson.json
+        val updated=db.writableDatabase.update("skills",ContentValues().apply {
+            put("version",replacement.version);put("json",json.encodeToString(SkillDefinition.serializer(),replacement));put("installed_at",System.currentTimeMillis())
+        },"skill_id=? AND enabled=1 AND json=?",arrayOf(expected.id,json.encodeToString(SkillDefinition.serializer(),expected)))
+        check(updated==1) {"Workflow changed or was disabled; reopen Automations before upgrading"}
+    }
     fun exists(id:String):Boolean = db.readableDatabase.query("skills",arrayOf("skill_id"),"skill_id=?",arrayOf(id),null,null,null,"1").use {it.moveToFirst()}
     fun isEnabled(id:String):Boolean = db.readableDatabase.query("skills",arrayOf("enabled"),"skill_id=?",arrayOf(id),null,null,null,"1").use {it.moveToFirst() && it.getInt(0)==1}
     fun get(id:String):SkillDefinition? = db.readableDatabase.query("skills",arrayOf("json"),"skill_id=? AND enabled=1",arrayOf(id),null,null,null,"1")

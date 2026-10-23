@@ -83,3 +83,10 @@ Overview metadata refresh is event-driven and unsubscribes while the owner scree
 ## Pass 10 observations
 
 A 60.812-second development interval with five samples recorded 0.21 app CPU-seconds over 59.959 valid counter seconds (0.3502% of one core). The privileged daemon was absent during that interval. This is neither a quiet-idle study nor a comparable optimization baseline. The retained collector completed at 25.13 hours, but 50 samples span only 17.83 hours, with a 150.22-minute maximum gap and a 7.31-hour tail gap; continuous 24-hour coverage is not established. Of 147 calls, 128 succeeded, 6 were DEVICE_OFFLINE and 13 shell identity calls failed UNAVAILABLE. Successful median 335 ms, maximum 1961 ms. No daily battery estimate, completed quiet soak or pairing/bootstrap performance improvement is claimed. Evidence remains private.
+
+
+## Background operations milestone
+
+Code 11 health scans perform six native reads per configured run, plus at most one opt-in warning step. They reuse the existing scheduler and do not add polling, a persistent ADB session or continuous screen observation. Connection history queries at most ten retained events when opened or when a gateway event is committed. Two owner-confirmed manual scans succeeded; future screen-off scheduling and quiet resource cost remain unverified in this increment.
+
+One fresh seven-call hosted sequence reported six native round trips of 276/295/298/212/154/254 ms and a Binder identity round trip of 356 ms. The final debug APK measured 45,219,622 bytes; the local unsigned minified release measured 4,782,114 bytes. These are development build observations, not a matched performance comparison or battery benchmark. Earlier soak limitations remain unchanged.

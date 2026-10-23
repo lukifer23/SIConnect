@@ -9,6 +9,7 @@ import dev.siconnect.app.data.AppJson
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import okhttp3.*
@@ -23,6 +24,11 @@ enum class ConnectionState { DISABLED, CONNECTING, AUTHENTICATING, ONLINE, BACKO
 class GatewayConnection(private val g: RuntimeGraph) {
     val state=MutableStateFlow(ConnectionState.DISABLED)
     val detail=MutableStateFlow("Remote connection disabled")
+    val historyRevision=MutableStateFlow(0L)
+    private fun recordEvent(event:Event) {
+        g.events.emit(event)
+        historyRevision.update {it+1}
+    }
     private val client=OkHttpClient.Builder().pingInterval(90,TimeUnit.SECONDS).build()
     private val pairingAcks=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<Unit>>()
     suspend fun publishPairing(invitation: PairingInvitation) {
@@ -49,7 +55,13 @@ class GatewayConnection(private val g: RuntimeGraph) {
     }.toString()
     private var loop: Job?=null
     @Volatile private var socket: WebSocket?=null
-    @Synchronized fun stop() { generation.incrementAndGet(); loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; state.value=ConnectionState.DISABLED }
+    @Synchronized fun stop() { generation.incrementAndGet(); loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; detail.value="Remote access paused";state.value=ConnectionState.DISABLED }
+    /** Local owner restriction; does not remove enrollment, identities or outstanding results. */
+    @Synchronized fun pauseFromOwner() {
+        stop()
+        g.settings.setGateway(g.settings.gateway.value.copy(enabled=false))
+        recordEvent(Event(System.currentTimeMillis(),eventType="gateway.paused",deviceId=g.settings.deviceId))
+    }
     @Synchronized fun start() {
         if(loop?.isActive==true) return
         loop=g.scope.launch {
@@ -74,6 +86,15 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 }
                 val done=CompletableDeferred<Unit>()
                 val epoch=generation.incrementAndGet()
+                val interruptionRecorded=java.util.concurrent.atomic.AtomicBoolean()
+                fun interrupted(reason:GatewayFailure) {
+                    if(generation.get()!=epoch || !interruptionRecorded.compareAndSet(false,true)) return
+                    detail.value=reason.guidance
+                    state.value=ConnectionState.BACKOFF
+                    g.scope.launch {
+                        runCatching {recordEvent(Event(System.currentTimeMillis(),eventType="gateway.interrupted",deviceId=g.settings.deviceId,errorCode=reason.name,detail=reason.guidance))}
+                    }
+                }
                 val request=Request.Builder().url(base.replaceFirst("https://","wss://").replaceFirst("http://","ws://")+"/device/${g.settings.deviceId}")
                     .header("Authorization","Bearer ${g.settings.deviceSecret()}").build()
                 val connectedSocket=client.newWebSocket(request,object:WebSocketListener() {
@@ -98,7 +119,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     require(msg.getValue("protocol").jsonPrimitive.int>=2) { "Gateway update required" }
                                     val reconnect=state.value!=ConnectionState.ONLINE
                                     state.value=ConnectionState.ONLINE;detail.value="Connected";attempt=0
-                                    if(reconnect) g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                                    if(reconnect) recordEvent(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
                                 } else if(type=="pairing_saved") {
                                     pairingAcks[msg.getValue("hash").jsonPrimitive.content]?.complete(Unit)
                                 } else if(type=="pairing_consumed") {
@@ -109,7 +130,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     val token=msg.getValue("agentToken").jsonPrimitive.content
                                     val result=g.remoteInvoke(msg.getValue("request").jsonObject,token)
                                     if(!ws.send(ResultEnvelope.result(correlation,result))) {
-                                        runCatching {g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.result_delivery_failed",requestId=result.requestId,traceId=result.traceId,agentId=result.agentId,deviceId=g.settings.deviceId,capabilityId=result.capabilityId,errorCode="RESULT_NOT_DELIVERED",executionStatus=result.state.name,detail="Stored request remains authoritative; retrieve the original request ID"))}
+                                        runCatching {recordEvent(Event(System.currentTimeMillis(),eventType="gateway.result_delivery_failed",requestId=result.requestId,traceId=result.traceId,agentId=result.agentId,deviceId=g.settings.deviceId,capabilityId=result.capabilityId,errorCode="RESULT_NOT_DELIVERED",executionStatus=result.state.name,detail="Stored request remains authoritative; retrieve the original request ID"))}
                                         ws.cancel();done.complete(Unit)
                                     }
                                 } else if(type=="cancel") {
@@ -121,19 +142,20 @@ class GatewayConnection(private val g: RuntimeGraph) {
                             }.onFailure { e ->
                                 if(e is CancellationException) throw e
                                 val code=when(e) {is CapabilityException->e.code;is SecurityException->"UNAUTHORIZED";is IllegalArgumentException->"INVALID_REQUEST";else->"UNKNOWN_OUTCOME"}
-                                runCatching {g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.protocol_error",deviceId=g.settings.deviceId,errorCode=code,detail="Incoming gateway message could not be processed"))}
+                                runCatching {recordEvent(Event(System.currentTimeMillis(),eventType="gateway.protocol_error",deviceId=g.settings.deviceId,errorCode=code,detail="Incoming gateway message could not be processed"))}
                                 val id=runCatching {Json.parseToJsonElement(text).jsonObject["id"]?.jsonPrimitive?.content}.getOrNull()
                                 ws.send(buildJsonObject {put("type","error");put("id",id);put("requestId",id);put("code",code)}.toString())
                             }
                         }
                     }
                     override fun onClosing(ws:WebSocket,code:Int,reason:String) {
+                        interrupted(GatewayFailure.closed(reason))
                         ws.close(code,reason);done.complete(Unit)
                     }
-                    override fun onClosed(ws: WebSocket,code: Int,reason: String) { done.complete(Unit) }
+                    override fun onClosed(ws: WebSocket,code: Int,reason: String) { interrupted(GatewayFailure.closed(reason));done.complete(Unit) }
                     override fun onFailure(ws: WebSocket,t: Throwable,r: Response?) {
                         if(generation.get()==epoch) {
-                            detail.value="Connection failed: ${r?.code ?: t.javaClass.simpleName}"
+                            interrupted(GatewayFailure.failure(t,r?.code))
                             if(r?.code==401 || r?.code==403) state.value=ConnectionState.AUTH_FAILED
                         }
                         done.complete(Unit)
@@ -141,6 +163,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 })
                 socket=connectedSocket
                 try { done.await() } finally {
+                    generation.compareAndSet(epoch,epoch+1)
                     connectedSocket.cancel()
                     if(socket===connectedSocket) socket=null
                     pairingAcks.values.forEach {it.completeExceptionally(IllegalStateException("Gateway connection lost; retry the same invitation"))}

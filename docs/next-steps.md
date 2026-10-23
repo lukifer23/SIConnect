@@ -1,6 +1,12 @@
 # Next steps
 
-## Pass 11 checkpoint — October 22, 2026
+## Background operations milestone — October 22, 2026
+
+Android **0.6.0-dev.3 / code 11**, SQLite **9**, **85** tools. Background health scans extend the existing snapshot workflow with storage/network/thermal readings, optional threshold notifications and readable stored results. The original workflow upgrades only through owner authentication; no schedule or permission is enabled automatically. Two real owner-flow manual worker runs succeeded on the Fold with six native readings each and warnings disabled. The existing schedule remains disabled. New connection history and pause/resume controls reuse enrollment and retained event storage. See [background operations](background-operations.md) and [pass 11 evidence](engineering-pass-11.md).
+
+The preceding UI/security checkpoint `0577d54` passed Linux CI run `39890573408`. The new milestone requires its own CI result. A manual worker run is not a new screen-off scheduled-run or reboot acceptance result. Remaining priorities: owner-confirmed future scheduled dispatch, controlled network-transition evidence, compatible signed distribution, Calendar/SAF resources and Action Inbox lifecycle.
+
+## Earlier pass 11 checkpoint — October 22, 2026
 
 Android **0.6.0-dev.2 / code 10**, schema **9**, installed in place. CI metadata regression fixed; Linux run `39886068956` passed. UI and recovery hardening removes duplicate editors, distinguishes granted access from service connection, reuses existing gateway enrollment and serializes setup/recovery. Original identities/grants/reminders/automation were preserved. Security updates target OkHttp 5.5.1 and Bouncy Castle 1.86 with strict checksums. See [pass 11 evidence and current limitations](engineering-pass-11.md); later app/security changes require their own physical/CI results. Headless workflow expansion, connection history and owner-interactive acceptance remain active priorities.
 

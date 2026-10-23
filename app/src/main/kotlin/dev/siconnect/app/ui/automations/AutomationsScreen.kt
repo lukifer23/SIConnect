@@ -129,12 +129,13 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
             if(definition==null) {Text("This workflow is unavailable. Enable it in workflow management before editing.");return@Column}
             val preview=runCatching {draft.preview(System.currentTimeMillis(),selected)}
             val inputErrors=Schema.validate(definition.inputs,draft.effectiveInputs())
-            val missing=definition.steps.map {it.capability}.distinct().filter {capability->
+            val requestedCapabilities=AutomationTemplates.requestedCapabilities(definition,draft.effectiveInputs())
+            val missing=requestedCapabilities.filter {capability->
                 val grant=automationGrant
                 grant==null || grant.revoked || (grant.expiresAtMs?.let {it<=System.currentTimeMillis()} ?: false) ||
                     grant.scopes.none {PolicyEngine.globMatches(it,capability)} || grant.denied.any {PolicyEngine.globMatches(it,capability)}
             }
-            val unavailable=definition.steps.map {it.capability}.distinct().mapNotNull {id->capabilities.firstOrNull {it.descriptor.id==id}?.takeIf {!it.availability.isExecutable}?.let {id+": "+it.availability.name}}
+            val unavailable=requestedCapabilities.mapNotNull {id->capabilities.firstOrNull {it.descriptor.id==id}?.takeIf {!it.availability.isExecutable}?.let {id+": "+it.availability.name}}
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 ChoiceField("What should happen?",skills.map {it.id},draft.skillId,{id->
                     val skill=skills.first {it.id==id}
@@ -144,6 +145,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                 },skills.associate {it.id to AutomationTemplates.title(it)})
                 OutlinedTextField(draft.label,{edit(draft.copy(label=it.take(120)))},label={Text(if(definition.id==AutomationTemplates.NOTICE_SKILL) "Reminder title" else "Name")},modifier=Modifier.fillMaxWidth(),singleLine=true)
                 Text(definition.description,style=MaterialTheme.typography.bodyMedium)
+                Text(BackgroundExecution.description(definition,capabilities),style=MaterialTheme.typography.titleSmall)
                 val mainWeather=setOf("wakeTime","departureTime","latitude","longitude")
                 if(definition.id=="weather.commute_check") {
                     Text("Choose a wake-time fallback and departure time. Your visible next alarm is used when suitable; your Clock alarms are never changed.")
@@ -206,7 +208,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     if(definition.id=="weather.commute_check") Button(onClick={authenticate("Allow commute automation",{work {g.enableWeatherAutomationFromOwner();message="Local commute calculations and reminder creation allowed"}},{message=it})},enabled=!busy) {Text("Allow local weather automation")}
                 }
                 if(unavailable.isNotEmpty()) Text("Android access: ${unavailable.joinToString()}",style=MaterialTheme.typography.bodySmall)
-                if(!notificationsAllowed && definition.steps.any {it.capability=="notifications.post"}) TextButton(onClick={
+                if(!notificationsAllowed && "notifications.post" in requestedCapabilities) TextButton(onClick={
                     runCatching {g.context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,g.context.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure {message="Open Android notification settings for SIConnect"}
                 }) {Text("Enable SIConnect notifications")}
                 Text("Runs as Local automations. Every step checks current permissions, availability, applicable device controls and approval policy. Remote emergency stop pauses bots; local schedules are managed here.",style=MaterialTheme.typography.bodySmall)
@@ -230,6 +232,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
             LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 item {
                     Text("${skills.firstOrNull {it.id==selected.skillId}?.let(AutomationTemplates::title) ?: selected.skillId}\n${selected.scheduleState.lowercase().replace('_',' ')}")
+                    skills.firstOrNull {it.id==selected.skillId}?.let {Text(BackgroundExecution.description(it,capabilities),style=MaterialTheme.typography.bodySmall)}
                     if(selected.enabled) Text("Next: ${formatTime(selected.nextAtMs,selected.zoneId,locale)}")
                     else Text("Future runs are disabled. Existing active runs remain separate.")
                     selected.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
@@ -261,11 +264,15 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                             val execution=inspectedRun
                             if(execution!=null) {
                                 Text("${execution.cursor} of ${execution.definition.steps.size} steps recorded",style=MaterialTheme.typography.bodySmall)
-                                execution.steps.forEach {step->Text("${step.id}: ${step.state}${step.error?.let {" · $it"} ?: ""}")}
                                 if(execution.state==SkillState.AWAITING_APPROVAL) Text("Waiting for owner review. Open pending approvals; this workflow is not complete.")
+                                if(execution.definition.id==AutomationTemplates.HEALTH_SKILL)
+                                    HealthScanSummary.lines(execution.output).forEach {Text(it)}
                                 if(execution.state in setOf(SkillState.READY,SkillState.RUNNING,SkillState.AWAITING_APPROVAL)) TextButton(onClick={val id=run.runId;work {g.scheduler.cancelRun(id);message="Run cancellation requested"}},enabled=!busy) {Text("Cancel this run")}
+                                var showSteps by rememberSaveable(run.runId) {mutableStateOf(false)}
+                                TextButton(onClick={showSteps=!showSteps}) {Text(if(showSteps) "Hide step details" else "Step details")}
+                                if(showSteps) execution.steps.forEach {step->Text("${step.id}: ${step.state}${step.error?.let {" · $it"} ?: ""}")}
                                 var output by rememberSaveable(run.runId) {mutableStateOf(false)}
-                                TextButton(onClick={output=!output}) {Text(if(output) "Hide result" else "Show result")}
+                                TextButton(onClick={output=!output}) {Text(if(output) "Hide raw result" else "Advanced: raw result")}
                                 if(output) {
                                     val text=execution.output.toString()
                                     Text(text.take(6000),style=MaterialTheme.typography.bodySmall)
@@ -283,7 +290,18 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
             LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 item {
                     Text("Set it once. SIConnect runs the saved workflow using local permissions, including while locked when its capabilities support background execution.")
+                    Text("Android may delay scheduled work. Workflows that use the screen or need approval require owner interaction.",style=MaterialTheme.typography.bodySmall)
                     if(skills.isEmpty()) Text("Enable an installed workflow before creating an automation.")
+                }
+                if(skills.any {it==AutomationTemplates.legacyHealth()}) item {
+                    OutlinedCard {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text("Upgrade background health scans",style=MaterialTheme.typography.titleMedium)
+                        Text("Add storage, network and thermal readings to Device health snapshot. Optional warning notifications start off. Existing schedules and permissions stay as configured; future runs use the upgraded workflow.")
+                        Button(onClick={authenticate("Upgrade device health workflow",{work {
+                            g.skills.replaceIfUnchanged(AutomationTemplates.legacyHealth(),AutomationTemplates.health())
+                            message="Health scans upgraded. Edit an automation to configure warning notifications."
+                        }},{message=it})},enabled=!busy) {Text("Upgrade health snapshot")}
+                    }}
                 }
                 if(automations.isEmpty()) item {Card {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Text("No automations yet",style=MaterialTheme.typography.titleMedium)
@@ -293,6 +311,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                 items(automations,key={it.id}) {a->
                     OutlinedCard(onClick={selectedId=a.id;inspectedRunId=null},modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                         Text(a.label.ifBlank {a.id},style=MaterialTheme.typography.titleMedium)
+                        skills.firstOrNull {it.id==a.skillId}?.let {Text(BackgroundExecution.description(it,capabilities),style=MaterialTheme.typography.bodySmall)}
                         Text(if(a.enabled) "${a.scheduleState.lowercase().replace('_',' ')} · ${formatTime(a.nextAtMs,a.zoneId,locale)}" else "Disabled")
                         a.lastState?.let {Text("Last run: ${it.lowercase().replace('_',' ')}",style=MaterialTheme.typography.bodySmall)}
                         a.error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}

@@ -93,6 +93,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         val config by g.settings.gateway.collectAsState()
         val connection by g.gateway.state.collectAsState()
         val connectionDetail by g.gateway.detail.collectAsState()
+        val connectionHistoryRevision by g.gateway.historyRevision.collectAsState()
         val direct by g.privileged.directStatus.collectAsState()
         val shizuku by g.shizuku.status.collectAsState()
         val controls by g.settings.controls.collectAsState()
@@ -124,6 +125,18 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var legacyCredential by remember {mutableStateOf(false)}
         var replaceGateway by remember {mutableStateOf(false)}
         var gatewayError by remember {mutableStateOf("")}
+        var showConnectionHistory by rememberSaveable {mutableStateOf(false)}
+        var connectionHistory by remember {mutableStateOf(emptyList<Event>())}
+        var historyError by remember {mutableStateOf("")}
+        LaunchedEffect(setup,showConnectionHistory,connectionHistoryRevision) {
+            if(setup && showConnectionHistory) {
+                try {
+                    connectionHistory=withContext(Dispatchers.IO) {g.ready.await();g.events.query(eventTypePrefix="gateway.",limit=10)}
+                    historyError=""
+                } catch(e:CancellationException) {throw e}
+                  catch(_:Exception) {historyError="Connection history is temporarily unavailable"}
+            }
+        }
         var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
         var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
         var review by remember { mutableStateOf<RequestRecord?>(null) }
@@ -208,6 +221,24 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),
             verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected. This phone can receive authorized agent requests." else connectionDetail)
+            if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE && config.enabled)
+                Text("Native schedules continue using available Android access. Interrupted actions are not automatically resubmitted.",style=MaterialTheme.typography.bodySmall)
+            TextButton(onClick={showConnectionHistory=!showConnectionHistory}) {Text(if(showConnectionHistory) "Hide connection history" else "Connection history")}
+            if(showConnectionHistory) {
+                if(historyError.isNotBlank()) Text(historyError,color=MaterialTheme.colorScheme.error)
+                else if(connectionHistory.isEmpty()) Text("No retained connection events",style=MaterialTheme.typography.bodySmall)
+                connectionHistory.forEach {event->
+                    val time=java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.SHORT).format(java.util.Date(event.timestampMs))
+                    Text("$time · "+when(event.eventType) {
+                        "gateway.connected"->"Connected"
+                        "gateway.paused"->"Remote access paused by owner"
+                        "gateway.interrupted"->event.detail ?: "Connection interrupted"
+                        "gateway.result_delivery_failed"->"Result delivery interrupted. Retrieve the original request outcome before retrying."
+                        else->"Gateway message could not be processed"
+                    },style=MaterialTheme.typography.bodySmall)
+                }
+                Text("Stored on this phone under the existing event retention policy. Pairing codes and credentials are excluded.",style=MaterialTheme.typography.bodySmall)
+            }
             if(config.baseUrl.isNotBlank()) {
                 Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) {Text("Copy MCP address")}
@@ -218,6 +249,11 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     }}
                     if(config.enabled) reconnect() else ownerAuthentication.authenticate("Enable existing gateway",reconnect,{gatewayError=it})
                 },enabled=!busy) {Text("Reconnect existing gateway")}
+                if(config.enabled) OutlinedButton(onClick={work {
+                    g.gateway.pauseFromOwner()
+                    withContext(Dispatchers.Main) {stopService(Intent(this@MainActivity,ConnectionService::class.java))}
+                    gatewayError=""
+                }},enabled=!busy) {Text("Pause remote access")}
                 TextButton(onClick={setup=false;destination=Destination.AGENTS}) {Text("Manage AI agents")}
                 TextButton(onClick={replaceGateway=!replaceGateway}) {Text(if(replaceGateway) "Keep existing gateway" else "Use a different gateway")}
             }

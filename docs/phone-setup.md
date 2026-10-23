@@ -1,6 +1,6 @@
 # Phone setup and advanced control
 
-Status: development build **0.6.0-dev.2 / code 10**, SQLite **9**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
+Status: development build **0.6.0-dev.3 / code 11**, SQLite **9**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
 
 ## Start with native features
 
@@ -41,3 +41,7 @@ If bundled control is already available, Check connection verifies a fresh `id -
 ## Install and update
 
 See [installation and signing](installation.md). Never install a differently signed APK over the current installation by uninstalling first: that would remove durable app state. The package installer requires Android’s own owner authorization. Updating the APK alone does not prove gateway or privileged readiness; check actual health and shell identity afterward.
+
+## Background work and connection history
+
+Automations identifies workflows that run without opening the screen and retains readable device-health results. Home → Gateway offers local connection history and Pause remote access; reconnect preserves existing enrollment and agents. See [background operations and scheduling limits](background-operations.md).

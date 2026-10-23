@@ -77,3 +77,7 @@ In Agents → Automatic screen actions, **Choose installed app** searches curren
 ## Android 17 local discovery
 
 Advanced control offers Android 17’s NSD system service picker as a permission-minimizing route. Manual/broad local discovery requires a contextual ACCESS_LOCAL_NETWORK runtime request and rechecks revocation before use. Manifest declaration alone is insufficient. Runtime networking authorization is separate from Android Wireless debugging pairing, local owner authentication, remote-agent grants and special-access services. Actual local pairing passed with runtime local-network access granted. Physical denial/revocation and system-picker-only acceptance remain open. See [phone setup](phone-setup.md).
+
+## Background scans and remote pause
+
+Health scan notifications are opt-in. A read-only scan does not request notification or broad local-network access. Upgrading the original snapshot requires owner authentication and preserves the workflow ID, existing schedules and grants. Remote pause restricts the bridge without revoking agents; resuming a saved paused connection requires owner authentication. See [background operations](background-operations.md).

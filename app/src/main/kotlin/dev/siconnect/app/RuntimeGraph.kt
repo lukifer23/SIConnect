@@ -70,9 +70,7 @@ class RuntimeGraph(val context: Context) {
             ui.recover()
             privileged.refresh()
             engine.recover(); runner.recover()
-            if (!skills.exists("diagnostics.snapshot")) skills.install(SkillDefinition("diagnostics.snapshot", 1, "Real native device snapshot", steps=listOf(
-                SkillStep("status", "device.status"), SkillStep("battery", "device.battery"), SkillStep("memory", "device.memory")),
-                output=buildJsonObject { put("device", JsonPrimitive("\${steps.status.output}")); put("battery", JsonPrimitive("\${steps.battery.output}")); put("memory", JsonPrimitive("\${steps.memory.output}")) }))
+            if (!skills.exists(dev.siconnect.app.automation.AutomationTemplates.HEALTH_SKILL)) skills.install(dev.siconnect.app.automation.AutomationTemplates.health())
             if(!skills.exists("weather.commute_check")) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
             events.trim(System.currentTimeMillis() - settings.eventRetentionDays * 86_400_000L)
             scheduler.restore()

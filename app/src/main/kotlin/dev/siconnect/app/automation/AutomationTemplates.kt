@@ -7,6 +7,37 @@ import java.time.*
 
 /** Templates install ordinary validated skills; execution always uses local-automation policy. */
 object AutomationTemplates {
+    const val HEALTH_SKILL="diagnostics.snapshot"
+    /** Exact previous builtin. Owner-authenticated upgrade never replaces a customized workflow. */
+    fun legacyHealth()=SkillDefinition(HEALTH_SKILL,1,"Real native device snapshot",steps=listOf(
+        SkillStep("status","device.status"),SkillStep("battery","device.battery"),SkillStep("memory","device.memory")),
+        output=buildJsonObject {put("device","\${steps.status.output}");put("battery","\${steps.battery.output}");put("memory","\${steps.memory.output}")})
+
+    fun health():SkillDefinition {
+        fun compare(op:String,left:String,right:JsonElement)=buildJsonObject {put("op",op);put("left",left);put("right",right)}
+        fun group(op:String,vararg conditions:JsonObject)=buildJsonObject {put("op",op);put("args",JsonArray(conditions.toList()))}
+        val warning=group("and",compare("eq","\${input.notifyProblems}",JsonPrimitive(true)),group("or",
+            group("and",compare("gte","\${steps.battery.output.percent}",JsonPrimitive(0)),
+                compare("lte","\${steps.battery.output.percent}",JsonPrimitive("\${input.minimumBatteryPercent}")),
+                compare("eq","\${steps.battery.output.charging}",JsonPrimitive(false))),
+            compare("lt","\${steps.storage.output.availableBytes}",JsonPrimitive(2_147_483_648L)),
+            compare("eq","\${steps.memory.output.lowMemory}",JsonPrimitive(true)),
+            compare("gte","\${steps.thermal.output.status}",JsonPrimitive(3))))
+        return SkillDefinition(HEALTH_SKILL,2,"Read battery, memory, storage, network and thermal health without opening the screen. Optionally notify when a threshold is reached.",
+            inputs=objectSchema {
+                prop("notifyProblems",false,buildJsonObject {put("type","boolean");put("description","Notify about health warnings");put("default",false)})
+                prop("minimumBatteryPercent",false,buildJsonObject {put("type","integer");put("description","Low battery threshold (%)");put("minimum",1);put("maximum",99);put("default",20)})
+            },steps=legacyHealth().steps+listOf(SkillStep("storage","device.storage"),SkillStep("network","device.network"),SkillStep("thermal","device.thermal"),
+                SkillStep("warn","notifications.post",buildJsonObject {put("title","Device health needs attention");put("text","A health scan found a battery, storage, memory or temperature warning. Review the run in SIConnect Automations.")},`when`=warning)),
+            output=JsonObject(legacyHealth().output+buildJsonObject {
+                put("storage","\${steps.storage.output}");put("network","\${steps.network.output}");put("thermal","\${steps.thermal.output}");put("warningState","\${steps.warn.state}")
+            }))
+    }
+
+    fun requestedCapabilities(definition:SkillDefinition,inputs:JsonObject):List<String> = definition.steps
+        .filterNot {definition.id==HEALTH_SKILL && definition==health() && it.id=="warn" && inputs["notifyProblems"]?.jsonPrimitive?.booleanOrNull!=true}
+        .map {it.capability}.distinct()
+
     const val NOTICE_SKILL="reminders.recurring_notice"
     fun notice()=SkillDefinition(NOTICE_SKILL,1,"Post a native reminder notification when the generic schedule fires.",
         inputs=objectSchema {
