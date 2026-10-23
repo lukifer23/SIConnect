@@ -53,3 +53,17 @@ Five original agent credential hashes and grant hashes match the private baselin
 After the final background APK update, all seven official-SDK hosted checks passed again: six native diagnostics and Binder shell identity, 161–310 ms each. The catalog remains 85 tools. No desktop Activity launch or external daemon bootstrap was used to restore this connection. Existing Grokbot/Dots/Hermes application sessions were not freshly exercised.
 
 Release packaging inspection found SPAKE2 in all four ABIs: arm64-v8a 28,192 bytes, armeabi-v7a 28,888, x86 42,156 and x86_64 35,128, plus the existing AndroidX graphics-path libraries. Seven license assets are packaged. Presence of notices and ABI files is not proof of complete license compliance or runtime testing on all ABIs.
+
+## Hosted lost-result acceptance
+
+Using the existing authorized identity, one remote shell mutation appended a byte to a uniquely named disposable temporary file, then waited before returning. Independent readback observed the byte before the official SDK client aborted and closed its transport. The original SQLite request was located without resubmitting the mutation; authenticated `requests_get` returned its original `SUCCEEDED` result under ADB_SERVICE. Final file size was exactly one byte. A separate authorized cleanup removed that exact fixture file and succeeded. No owner prompt, grant expansion or personal file was used. This proves this hosted client-abort/result-retrieval case, not a Durable Object restart or every transport-loss timing.
+
+Linux CI passed for implementation commit `3cd1d06` ([run 39903227036](https://github.com/lukifer23/SIConnect/actions/runs/39903227036)) and documentation checkpoint `ab0015c` ([run 39903499538](https://github.com/lukifer23/SIConnect/actions/runs/39903499538)): Android/core/release isolation, gateway and public hygiene/secret scan all green. Runner annotations flag older Node-20-targeting action versions and the ubuntu-latest image transition; these are remaining CI maintenance items, not failed jobs. Dependency verification stayed enabled.
+
+## Remaining priorities
+
+1. Offer convenient owner-reviewed standing access for recurring native mutations, without expanding unrelated agents or prompting on every already authorized run. Default owner writes correctly still require approval; the SAF harness now makes its own bounded fixture authorization explicit.
+2. Upgrade the installed stock health definition through its existing owner flow, complete actual cancellation/interrupted review and use a deliberately selected test calendar. No further prompts were sent after the owner requested a pause in approvals.
+3. Complete cover/inner-screen, font/rotation/theme and setup-interruption QA, including physically inspecting the new fixed Inbox decision controls.
+4. Validate network transitions and a separately authorized workstation-independent reboot. Distinguish instrumentation force-stop restrictions from ordinary service recovery.
+5. Exercise signed distribution through Android's package installer, complete native dependency/relinking review and run a genuine quiet interval/longer availability observation. Fresh Grokbot/Dots/Hermes application sessions and weather delivery also remain open.
