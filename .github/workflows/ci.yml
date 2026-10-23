@@ -21,7 +21,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
-      - run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease --console=plain
+      - run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :adb-bootstrap:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease --console=plain
       - name: Verify release debug isolation
         run: |
           python3 - <<'PY'

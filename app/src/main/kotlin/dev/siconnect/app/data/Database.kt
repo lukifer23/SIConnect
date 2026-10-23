@@ -116,9 +116,16 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE INDEX proposals_dispatch ON proposals(state,dispatch_attempt_at)")
         }
 
+        if (old < 9) {
+            db.execSQL("CREATE TABLE request_tombstones (request_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, idempotency_key TEXT, updated_at INTEGER NOT NULL, json TEXT NOT NULL)")
+            db.execSQL("CREATE UNIQUE INDEX tombstones_idem ON request_tombstones(agent_id,idempotency_key) WHERE idempotency_key IS NOT NULL")
+            db.execSQL("CREATE INDEX tombstones_updated ON request_tombstones(updated_at)")
+            db.execSQL("CREATE INDEX requests_parent ON requests(parent_request_id) WHERE parent_request_id IS NOT NULL")
+        }
+
     }
 
-    companion object { const val VERSION = 8 }
+    companion object { const val VERSION = 9 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
@@ -137,6 +144,9 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
         val w = db.writableDatabase
         w.beginTransaction()
         try {
+            // Insertion and tombstone lookup share SQLite's write ownership with pruning.
+            if (tombstone("request_id=?",arrayOf(record.requestId))!=null || record.idempotencyKey?.let {
+                    tombstone("agent_id=? AND idempotency_key=?",arrayOf(record.agentId,it))!=null }==true) return false
             w.insertOrThrow("requests", null, values(record))
             transition(w, record, null)
             w.setTransactionSuccessful()
@@ -163,10 +173,10 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     }
 
     override fun get(requestId: String): RequestRecord? =
-        query("request_id = ?", arrayOf(requestId)).firstOrNull()
+        query("request_id = ?", arrayOf(requestId)).firstOrNull() ?: tombstone("request_id=?",arrayOf(requestId))
 
     override fun findByIdempotencyKey(agentId: String, key: String): RequestRecord? =
-        query("agent_id = ? AND idempotency_key = ?", arrayOf(agentId, key)).firstOrNull()
+        query("agent_id = ? AND idempotency_key = ?", arrayOf(agentId, key)).firstOrNull() ?: tombstone("agent_id=? AND idempotency_key=?",arrayOf(agentId,key))
 
     override fun listByStates(states: Set<RequestState>): List<RequestRecord> =
         if (states.isEmpty()) emptyList()
@@ -203,11 +213,37 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     fun recentDeniedApps():List<RequestRecord> = db.readableDatabase.query("requests",arrayOf("json"),"state = ? AND capability_id LIKE ?",
         arrayOf(RequestState.DENIED.name,"apps.%"),null,null,"updated_at DESC","10").mapAll {decode(it.getString(0))}
 
-    fun prune(olderThanMs: Long): Int {
+    /** Bounded payload retention. Active links keep full records; terminal links resolve to compact
+     * outcome/idempotency tombstones, never an apparently missing execution eligible for replay.
+     * This maintenance API is not automatically enabled by a schema upgrade. */
+    fun prune(olderThanMs: Long): Int = atomic {
+        val w=db.writableDatabase
         val terminal = RequestState.TERMINAL.joinToString(",") { "'${it.name}'" }
-        // Keep idempotency tombstones for retained workflow children; pruning them would permit replay.
-        return db.writableDatabase.delete("requests", "updated_at < ? AND state IN ($terminal) AND parent_request_id IS NULL", arrayOf(olderThanMs.toString()))
+        val records=w.rawQuery("""SELECT r.json FROM requests r WHERE r.updated_at < ? AND r.state IN ($terminal) AND r.state!='UNKNOWN_OUTCOME'
+            AND r.parent_request_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM requests child WHERE child.parent_request_id=r.request_id)
+            AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.request_id=r.request_id AND p.state IN ('ACCEPTED','EXECUTING'))
+            ORDER BY r.updated_at,r.request_id LIMIT 100""",arrayOf(olderThanMs.toString())).mapAll {decode(it.getString(0))}
+        for(r in records) {
+            val compact=r.copy(arguments=kotlinx.serialization.json.JsonObject(emptyMap()),policy=null,assessment=null,
+                approvedBy=null,result=null,errorCode="RESULT_EXPIRED",
+                errorMessage="Execution payload expired under retention. Original outcome and idempotency identity are retained; do not resubmit this action.")
+            w.insertOrThrow("request_tombstones",null,ContentValues().apply {
+                put("request_id",r.requestId);put("agent_id",r.agentId);put("idempotency_key",r.idempotencyKey)
+                put("updated_at",r.updatedAtMs);put("json",AppJson.encodeToString(RequestRecord.serializer(),compact))
+            })
+            w.delete("requests","request_id=?",arrayOf(r.requestId))
+            w.delete("request_transitions","request_id=?",arrayOf(r.requestId))
+        }
+        // Keep compact tombstones for at least one year and while Inbox still references them.
+        // Referenced metadata survives without retaining private command/result payloads forever.
+        w.delete("request_tombstones","updated_at < ? AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.request_id=request_tombstones.request_id)",
+            arrayOf((minOf(olderThanMs,System.currentTimeMillis()-365L*86_400_000)).toString()))
+        records.size
     }
+
+    private fun tombstone(where:String,args:Array<String>):RequestRecord? =
+        db.readableDatabase.query("request_tombstones",arrayOf("json"),where,args,null,null,null,"1").mapAll {decode(it.getString(0))}.firstOrNull()
 
     private fun query(where: String, args: Array<String>) =
         db.readableDatabase.query("requests", arrayOf("json"), where, args, null, null, null).mapAll { decode(it.getString(0)) }
@@ -256,8 +292,11 @@ class SqlEventLog(private val db: SIConnectDb, private val maxEvents: Int = 50_0
 
     fun trim(olderThanMs: Long? = null) {
         val w = db.writableDatabase
-        olderThanMs?.let { w.delete("events", "ts < ?", arrayOf(it.toString())) }
-        w.execSQL("DELETE FROM events WHERE seq <= (SELECT MAX(seq) FROM events) - $maxEvents")
+        val protected="""NOT EXISTS (SELECT 1 FROM requests r WHERE r.request_id=events.request_id
+            AND r.state NOT IN ('SUCCEEDED','FAILED','CANCELLED','DENIED','EXPIRED'))
+            AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.request_id=events.request_id AND p.state IN ('ACCEPTED','EXECUTING'))"""
+        olderThanMs?.let { w.delete("events", "ts < ? AND $protected", arrayOf(it.toString())) }
+        w.execSQL("DELETE FROM events WHERE seq <= (SELECT MAX(seq) FROM events) - $maxEvents AND $protected")
     }
 }
 

@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.5.0-dev.3"
+        versionCode = 9
+        versionName = "0.6.0-dev.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -51,6 +51,7 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":adb-bootstrap"))
     implementation(libs.coroutines.android)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)

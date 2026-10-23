@@ -61,7 +61,7 @@ class ProposalDeviceTest {
             SIConnectDb(context,name).use {helper->
                 val db=helper.writableDatabase
                 db.execSQL("INSERT INTO agents(agent_id,token_sha256,created_at,json) VALUES('disposable','fixture',1,'fixture-preserved')")
-                db.execSQL("DROP TABLE proposals");db.version=6
+                db.execSQL("DROP TABLE proposals");db.execSQL("DROP TABLE request_tombstones");db.execSQL("DROP INDEX requests_parent");db.version=6
             }
             SIConnectDb(context,name).use {helper->
                 val db=helper.writableDatabase
@@ -86,6 +86,7 @@ class ProposalDeviceTest {
                 db.execSQL("DROP TABLE proposals")
                 db.execSQL("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,idempotency_key TEXT NOT NULL,created_at INTEGER NOT NULL,state TEXT NOT NULL,revision INTEGER NOT NULL,request_id TEXT,json TEXT NOT NULL)")
                 db.execSQL("INSERT INTO proposals VALUES(?,?,?,?,?,?,?,?)",arrayOf<Any?>(proposal.proposalId,proposal.agentId,proposal.idempotencyKey,proposal.createdAtMs,proposal.state.name,0,null,AppJson.encodeToString(proposal)))
+                db.execSQL("DROP TABLE request_tombstones");db.execSQL("DROP INDEX requests_parent")
                 db.version=7
             }
             SIConnectDb(context,name).use {helper->

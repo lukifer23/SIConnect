@@ -1,0 +1,66 @@
+name: Owner-signed APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    environment: android-signing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+      - name: Load existing owner signing identity
+        env:
+          KEYSTORE_B64: ${{ secrets.SICONNECT_SIGNING_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.SICONNECT_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SICONNECT_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SICONNECT_KEY_PASSWORD }}
+          EXPECTED_CERT: ${{ vars.SICONNECT_EXPECTED_CERT_SHA256 }}
+        run: |
+          python3 - <<'PY'
+          import os, base64, pathlib, re
+          for key in ('KEYSTORE_B64','STORE_PASSWORD','KEY_ALIAS','KEY_PASSWORD','EXPECTED_CERT'):
+              if not os.environ.get(key): raise SystemExit('Owner signing configuration is incomplete; no key is generated')
+          if not re.fullmatch('[a-fA-F0-9]{64}',os.environ['EXPECTED_CERT']): raise SystemExit('Expected certificate SHA-256 is required')
+          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'siconnect-owner.jks'
+          path.write_bytes(base64.b64decode(os.environ['KEYSTORE_B64'],validate=True));path.chmod(0o600)
+          def escape(value):
+              return ''.join('\\'+c if c in '\\:=#! ' else '\\n' if c=='\n' else '\\r' if c=='\r' else '\\t' if c=='\t' else c if ord(c)<128 else '\\u%04x'%ord(c) for c in value)
+          values={'storeFile':str(path),'storePassword':os.environ['STORE_PASSWORD'],'keyAlias':os.environ['KEY_ALIAS'],'keyPassword':os.environ['KEY_PASSWORD']}
+          props=pathlib.Path('signing.properties');props.write_text(''.join(k+'='+escape(v)+'\n' for k,v in values.items()),encoding='ascii');props.chmod(0o600)
+          PY
+      - run: ./gradlew :core:test :app:testDebugUnitTest :adb-bootstrap:testDebugUnitTest :app:lintDebug :app:assembleRelease
+      - name: Verify signature continuity and record artifact metadata
+        env:
+          EXPECTED_CERT: ${{ vars.SICONNECT_EXPECTED_CERT_SHA256 }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess, hashlib, json
+          apk=pathlib.Path('app/build/outputs/apk/release/app-release.apk')
+          cert=subprocess.check_output([os.environ['ANDROID_HOME']+'/build-tools/37.0.0/apksigner','verify','--print-certs',str(apk)],text=True)
+          digest=next(line.split(': ',1)[1] for line in cert.splitlines() if 'certificate SHA-256 digest:' in line)
+          assert digest.lower()==os.environ['EXPECTED_CERT'].lower(),'Signing identity differs from the owner-approved update certificate'
+          metadata=json.loads(pathlib.Path('app/build/outputs/apk/release/output-metadata.json').read_text())
+          item=metadata['elements'][0];out=pathlib.Path('signed-artifact');out.mkdir()
+          name=f"SIConnect-{item['versionName']}-{item['versionCode']}.apk"
+          (out/name).write_bytes(apk.read_bytes())
+          report={'commit':os.environ['GITHUB_SHA'],'versionName':item['versionName'],'versionCode':item['versionCode'],'applicationId':metadata['applicationId'],'databaseVersion':9,'signerSha256':digest,'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'bytes':apk.stat().st_size,'buildRun':os.environ['GITHUB_RUN_ID']}
+          (out/'build-metadata.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: owner-signed-apk
+          path: signed-artifact/
+      - name: Remove signing material
+        if: always()
+        run: rm -f signing.properties "$RUNNER_TEMP/siconnect-owner.jks"

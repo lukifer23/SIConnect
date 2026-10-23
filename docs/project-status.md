@@ -1,5 +1,9 @@
 # Project status
 
+## Pass 10 checkpoint — October 22, 2026
+
+Current development checkpoint: **0.6.0-dev.1 / code 9**, SQLite **9**, **85** tools. Existing hosted control and fresh Grokbot native/shell calls succeeded after Mac-assisted daemon restoration. Actual phone-local pairing, raw-v2 daemon bootstrap, repeated daemon recovery, ordinary app-process recovery and an owner-approved trusted-Wi-Fi reboot passed, with hosted UID 2000. Fully unassisted fresh installation and additional network/revocation cases remain open. Existing identities/grants, three reminders and one automation were preserved. See [pass 10 evidence](engineering-pass-10.md) and [phone setup](phone-setup.md). Historical checkpoints below retain their original limits.
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Current checkpoint: **0.5.0-dev.3 / code 8**, SQLite **v8**, **85** hosted tools. Inbox expiration/quota recovery, same-ID dispatch maintenance, indexed metadata lists and owner-policy preflight are implemented. All 48 core, 36 Android JVM, 13 Python and 10 gateway tests passed; four targeted physical SQLite/native-execution cases and seven hosted calls passed. Fresh Hermes native/shell IDs matched SQLite. Owner Inbox authentication, semantic restoration, designated Calendar/SAF resources and fresh Dots/Grokbot checks remain open. See [pass 9](engineering-pass-9.md). Earlier checkpoints below are historical.

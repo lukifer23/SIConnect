@@ -1,5 +1,9 @@
 # Next steps
 
+## Pass 10 checkpoint — October 22, 2026
+
+Preserve the now-verified local pairing, raw-v2 Binder bootstrap, repeated daemon recovery, app-process recovery and owner-approved reboot. Next test Wi-Fi/cellular/new-network transitions, revocation and fully unassisted fresh installation; document exact remaining interactions. Finish owner Inbox/biometric acceptance, designated Calendar/SAF CRUD, scheduled automation/weather and semantic lifecycle tests. Configure owner-compatible signing and validate the signed artifact workflow. No complete full-platform acceptance is claimed; see [pass 10](engineering-pass-10.md).
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Pass 9 closed Inbox quota-expiration, transient pre-insert dispatch recovery and full-payload list-query gaps. Next: real owner Inbox acceptance/cancel; accessibility owner restoration and normal-process edge cases; explicitly selected Calendar/SAF CRUD; diagnostics Run now and configured commute delivery; existing Dots/Grokbot checks; complete retained soak. Do not repeat completed personal sends or broaden grants to pass smoke tests. See [pass 9](engineering-pass-9.md) and the owner harness instructions in [device testing](device-testing.md).

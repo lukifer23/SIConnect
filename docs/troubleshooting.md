@@ -22,7 +22,7 @@ A pairing invitation and the browser's consent session each expire. Restart cons
 
 ## Device control unavailable after reboot or update
 
-Native tools can still work. After an authorized ADB connection, run `python3 tools/start_builtin.py --serial <serial>`; add `--restart` after an APK update. This starts the bundled privileged authority; it is not a Mac-side runtime server. The phone-only bootstrap path is not implemented. Never claim an app-sandbox process is privileged shell.
+Native tools can still work. After an authorized ADB connection, run `python3 tools/start_builtin.py --serial <serial>`; add `--restart` after an APK update. This starts the bundled privileged authority; it is not a Mac-side runtime server. Phone-local pairing, raw-v2 Binder bootstrap and the tested trusted-Wi-Fi reboot recovery have passed. See [phone setup and failure handling](phone-setup.md). Mac-assisted restoration is separate historical evidence; normal local recovery does not invoke the Mac script. Never claim an app-sandbox process is privileged shell.
 
 ## Slow execution
 

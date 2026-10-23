@@ -18,7 +18,7 @@ import kotlinx.serialization.json.JsonObject
     measurements:JsonObject?,busy:Boolean,note:String,onReview:(RequestRecord)->Unit,onRequest:(String)->Unit,
     onAgent:(String)->Unit,onAgents:()->Unit,onConnect:()->Unit,onRestore:()->Unit,onAutomations:()->Unit,
     onActivity:()->Unit,onHealth:()->Unit,onStop:()->Unit,onResume:()->Unit,
-    onEnableSemantic:()->Unit,onEnableNotifications:()->Unit,onInbox:()->Unit) {
+    onEnableSemantic:()->Unit,onEnableNotifications:()->Unit,onInbox:()->Unit,onSetup:()->Unit) {
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
     val status=when { !controls.remoteExecutionEnabled->"Remote control paused";connection!=ConnectionState.ONLINE->"Disconnected";!nativeReady || !privilegedReady->"Limited";else->"Ready"}
@@ -50,6 +50,7 @@ import kotlinx.serialization.json.JsonObject
             if(controls.remoteExecutionEnabled) OutlinedButton(onClick=onStop) {Text("Emergency stop",color=MaterialTheme.colorScheme.error)}
             else Button(onClick=onResume) {Text("Resume remote requests")}
         }}
+        TextButton(onClick=onSetup) {Text("Setup and readiness")}
         if(note.isNotBlank()) Text(note,color=MaterialTheme.colorScheme.primary)
         state.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         @Composable fun attention() {

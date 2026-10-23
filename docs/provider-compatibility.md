@@ -50,3 +50,8 @@ Fresh Pass 4 Dots/ChatGPT check through the existing conversation/OAuth integrat
 The installed 0.5.0-dev bridge advertised 81 tools through the existing endpoint. Seven official SDK native/shell calls succeeded, including actual shell UID 2000. Grokbot made two new read-only status/identity requests; both matched successful on-device records. Existing five agent grant/credential hashes matched the pre-upgrade baseline, including OAuth principals. This preserves identity/state; it is not a fresh OAuth refresh/revocation campaign.
 
 The first fresh Hermes LLM smoke discovered its server but received `DEVICE_OFFLINE` during app restarts. A subsequent post-update run completed both actual native status and shell identity calls successfully, including UID 2000. The earlier offline observation remains recorded. A new Dots application invocation has not yet been executed in this pass. Historical provider successes remain historical. Never repeat a personal send or real app installation just to fill this matrix.
+
+
+## Pass 10 restored connection
+
+Fresh Grokbot requests through the existing connection succeeded for device.status, device.battery, shell.identity and shell.execute (`id -u`, stdout 2000, exit 0), independently correlated with device SQLite. Seven official hosted SDK checks also succeeded with 85 advertised tools. Fresh Dots and Hermes application-level regressions were not run in this checkpoint. Existing OAuth/bearer identities were preserved. This was Mac-assisted daemon restoration, not phone-local pairing proof.

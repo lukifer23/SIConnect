@@ -44,7 +44,11 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         }
     }
     internal var permissionRevision by mutableIntStateOf(0)
-    internal val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissionRevision++;graph.gateway.refreshCatalog() }
+    internal var permissionStatus by mutableStateOf("")
+    internal val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        permissionStatus=if(grants.values.all {it}) "Requested Android access is granted." else "Android did not grant all requested access. Open app permissions to review denied or restricted access; other features remain available."
+        permissionRevision++;graph.gateway.refreshCatalog()
+    }
     override fun onResume() { super.onResume(); permissionRevision++;graph.gateway.refreshCatalog();if(::controlModel.isInitialized) controlModel.refresh() }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent);setIntent(intent);permissionRevision++ }
     override fun onCreate(b: Bundle?) {
@@ -99,7 +103,8 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var measurements by remember {mutableStateOf<JsonObject?>(null)}
         var busy by remember { mutableStateOf(false) }
         var setup by remember { mutableStateOf(false) }
-        var controlHelp by remember { mutableStateOf(false) }
+        var controlHelp by rememberSaveable { mutableStateOf(false) }
+        var nativeSetup by rememberSaveable {mutableStateOf(!getSharedPreferences("owner_setup",MODE_PRIVATE).getBoolean("reviewed",false) && g.settings.gateway.value.baseUrl.isBlank())}
         var connectionCode by remember { mutableStateOf("") }
         var pairName by remember { mutableStateOf("Dots") }
         var pairError by remember { mutableStateOf("") }
@@ -123,6 +128,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         fun work(block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: CancellationException) {throw e} catch(e: Exception) { note=e.message ?: "Action failed" } finally { busy=false } } }
         LaunchedEffect(changed,permissionRevision) {
             controlModel.refresh();exactAccess=g.reminders.canScheduleExact()
+            notifications=getSystemService(NotificationManager::class.java).areNotificationsEnabled()
             reminder=withContext(Dispatchers.IO) {reminder?.let {g.reminders.get(it.id)}}
         }
         LaunchedEffect(reviewId,changed) {
@@ -164,7 +170,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     onStop={g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=false))},
                     onResume={ownerAuthentication.authenticate("Resume remote requests",{g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=true))},{note=it})},
                     onEnableSemantic={startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))},
-                    onEnableNotifications={startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))},onInbox={inbox=true})
+                    onEnableNotifications={startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))},onInbox={inbox=true},onSetup={nativeSetup=true})
                 Destination.AGENTS -> AgentsScreen(snapshot,wide,selectedAgentId,
                     onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
                     onFamily={id,family,enabled->
@@ -213,11 +219,9 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             }},{note=it})},enabled=!busy) {Text("Reconnect this bot")}
             TextButton(onClick={manageBotId=null;work {g.revokeAgentFromOwner(bot.grant.agentId)}}) {Text("Revoke this bot",color=MaterialTheme.colorScheme.error)}
         }},confirmButton={TextButton(onClick={manageBotId=null}) {Text("Done")}}) }
-        if(controlHelp) AlertDialog(onDismissRequest={controlHelp=false},title={Text("Enable full device control")},
-            text={Text("SIConnect includes its own control service. No companion app is needed.\n\nOn your connected Mac, double-click Start SIConnect. Then tap Check here.\n\nAndroid requires this authorized setup again after a phone restart. Native tools keep working.")},
-            confirmButton={TextButton(onClick={controlHelp=false;work { g.privileged.refresh(); note=if(g.privileged.available()) "Device control is ready" else "Setup has not connected yet" }}) {Text("Check connection")}},
-            dismissButton={TextButton(onClick={controlHelp=false}) {Text("Later")}})
-        if(setup) AlertDialog(onDismissRequest={setup=false},title={Text("Connect your bot")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        if(nativeSetup) NativeSetup(onClose={nativeSetup=false},onGateway={nativeSetup=false;setup=true},onAgents={nativeSetup=false;destination=Destination.AGENTS},onAdvanced={nativeSetup=false;controlHelp=true})
+        if(controlHelp) AdvancedControlSetup {controlHelp=false}
+        if(setup) AlertDialog(onDismissRequest={setup=false},title={Text("Connect AI agent")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Your gateway is connected. Add the MCP address and your agent key to your bot." else "Paste your SIConnect setup code. It connects this phone to your private gateway.")
             if(config.baseUrl.isNotBlank()) {
                 Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
@@ -234,16 +238,17 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 else TextButton(onClick={work {g.setShellPermissionFromOwner(a.grant.agentId,false)}}) {Text("Ask each time again")}
             }
             if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE) OutlinedTextField(connectionCode,{connectionCode=it},label={Text("Setup code")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),maxLines=3)
-        }},confirmButton={TextButton(onClick={work {
-            val text=if(connectionCode.trim().startsWith("{")) connectionCode.trim() else String(android.util.Base64.decode(connectionCode.trim(),android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP))
-            val code=Json.parseToJsonElement(text).jsonObject
-            val endpoint=code.getValue("url").jsonPrimitive.content
-            require(endpoint.startsWith("https://")) {"A secure gateway address is required"}
-            g.settings.setEnrollToken(code.getValue("enroll").jsonPrimitive.content)
-            g.settings.setGateway(GatewayConfig(endpoint,true)); g.settings.enrolled=false
-            withContext(Dispatchers.Main) { startForegroundService(Intent(this@MainActivity,ConnectionService::class.java)) }
-            setup=false; note="Connecting your phone…"
-        }},enabled=connectionCode.isNotBlank()) {Text("Connect")}},dismissButton={TextButton(onClick={setup=false}) {Text("Close")}})
+        }},confirmButton={TextButton(onClick={
+            val selectedCode=connectionCode
+            ownerAuthentication.authenticate("Enroll with this gateway",{work {
+                val code=dev.siconnect.app.bootstrap.GatewaySetupCode.parse(selectedCode)
+                g.gateway.stop()
+                g.settings.setEnrollToken(code.enrollment)
+                g.settings.setGateway(GatewayConfig(code.endpoint,true));g.settings.enrolled=false
+                withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
+                connectionCode="";setup=false;note="Connecting your phone…"
+            }},{note=it})
+        },enabled=connectionCode.isNotBlank() && !busy) {Text("Connect")}},dismissButton={TextButton(onClick={setup=false;connectionCode=""}) {Text("Close")}})
         if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair a new bot" else "Continue pairing ${pairCode!!.label}")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)

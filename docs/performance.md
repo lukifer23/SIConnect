@@ -74,3 +74,8 @@ One 61.161-second collection was annotated `owner-use`; five actual samples repo
 The existing 24-hour sparse collector remains running. At the current checkpoint seven 15-minute samples contained fifteen successful read-only calls and six `DEVICE_OFFLINE` results during active upgrade/instrumentation work. This approximately 90-minute, development-contaminated span is not a completed 24-hour soak or a daily-driver availability estimate. Outputs were preserved and not restarted.
 
 Overview metadata refresh is event-driven and unsubscribes while the owner screen is not collecting it. Semantic waits use accessibility events rather than persistent tree polling. No before/after resource improvement or agent-token saving is claimed without matched measurements.
+
+
+## Pass 10 observations
+
+A 60.812-second development interval with five samples recorded 0.21 app CPU-seconds over 59.959 valid counter seconds (0.3502% of one core). The privileged daemon was absent during that interval. This is neither a quiet-idle study nor a comparable optimization baseline. The retained collector completed at 25.13 hours, but 50 samples span only 17.83 hours, with a 150.22-minute maximum gap and a 7.31-hour tail gap; continuous 24-hour coverage is not established. Of 147 calls, 128 succeeded, 6 were DEVICE_OFFLINE and 13 shell identity calls failed UNAVAILABLE. Successful median 335 ms, maximum 1961 ms. No daily battery estimate, completed quiet soak or pairing/bootstrap performance improvement is claimed. Evidence remains private.

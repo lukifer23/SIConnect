@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime, Android 0.5.0-dev.3 (versionCode 8), SQLite schema 8.** The installed registry discovers 85 tools through the existing gateway. The Action Inbox now has bounded expiration/dispatch recovery, metadata-only pagination, filtering and current-policy guidance. The in-place upgrade preserved all original grants/credentials and reminders; fresh hosted and Hermes native/shell checks passed. Owner Inbox authentication, Calendar/SAF test resources and fresh Dots/Grokbot checks remain pending. See [pass 9 evidence and limitations](docs/engineering-pass-9.md).
+> **Status: working development runtime, Android 0.6.0-dev.1 (versionCode 9), SQLite schema 9, 85 tools.** Real phone-local Wireless ADB pairing, authenticated local startup of the existing Binder daemon, repeated daemon-loss recovery, ordinary app-process recovery and an owner-approved reboot have passed on the Fold, including hosted shell UID 2000. Existing identities, grants, reminders and automation are preserved. Reboot evidence is specific to the tested trusted Wi-Fi/unlock sequence; new-network/cellular transitions and fully unassisted fresh installation remain open. See [pass 10 evidence](docs/engineering-pass-10.md), [phone setup/recovery](docs/phone-setup.md) and [installation/signing](docs/installation.md).
 
 The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
 
@@ -48,6 +48,7 @@ Remote agents still use the same authenticated MCP endpoint. Existing OAuth conn
 | --- | --- |
 | `core/` | Pure Kotlin/JVM: models, capability registry, JSON-schema subset validator, policy engine, execution engine, skill runtime. Host-testable. |
 | `app/` | Android application (Kotlin, Jetpack Compose): backends, capabilities, persistence, approvals, transport, UI. |
+| `adb-bootstrap/` | Pinned, adapted LibADB TLS/SPAKE2 transport; third-party license notices are in the module and APK. |
 | `gateway/` | MCP gateway for Cloudflare Workers. |
 | `tools/` | ADB audit/profiling tools and opt-in disposable physical-test fixtures. |
 | `docs/` | Architecture, decisions, device audit, security model, status and handoff. |
@@ -72,6 +73,8 @@ Device setup, gateway deployment and agent pairing are covered in [docs/developm
 
 ## Documentation
 
+- [Phone setup and recovery](docs/phone-setup.md) and [installation/signing](docs/installation.md)
+- [Pass 10 evidence and open acceptance work](docs/engineering-pass-10.md)
 - [Architecture](docs/architecture.md)
 - [Architecture decisions](docs/architecture-decisions.md)
 - [Device audit (Galaxy Z Fold 7)](docs/adb-audit.md)
@@ -89,4 +92,4 @@ SIConnect is designed to give software agents powerful control over a device, up
 
 ## License
 
-[MIT](LICENSE)
+SIConnect source: [MIT](LICENSE). Bundled third-party ADB/cryptographic components have separate [licenses and source/relinking information](adb-bootstrap/README.md).

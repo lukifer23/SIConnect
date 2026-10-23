@@ -31,6 +31,16 @@ import kotlinx.serialization.json.*
         val g=graph; val scope=rememberCoroutineScope()
         val health by g.health.collectAsState(); val shizuku by g.shizuku.status.collectAsState(); val direct by g.privileged.directStatus.collectAsState(); val connection by g.gateway.state.collectAsState()
         val controls by g.settings.controls.collectAsState()
+        val semanticConnected by dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState.collectAsState()
+        val listenerConnected by dev.siconnect.app.notifications.NotificationCaptureService.connectionState.collectAsState()
+        val accessRevision=permissionRevision
+        val notificationsEnabled=remember(accessRevision) {getSystemService(NotificationManager::class.java).areNotificationsEnabled()}
+        val calendarGranted=remember(accessRevision) {checkSelfPermission(Manifest.permission.READ_CALENDAR)==android.content.pm.PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.WRITE_CALENDAR)==android.content.pm.PackageManager.PERMISSION_GRANTED}
+        val listenerComponent=remember {ComponentName(this,dev.siconnect.app.notifications.NotificationCaptureService::class.java)}
+        val listenerGranted=remember(accessRevision) {getSystemService(NotificationManager::class.java).isNotificationListenerAccessGranted(listenerComponent)}
+        val semanticGranted=remember(accessRevision) {AndroidSettings.Secure.getString(contentResolver,AndroidSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any {ComponentName.unflattenFromString(it)==ComponentName(this,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)}}
+        var advancedControl by rememberSaveable {mutableStateOf(false)}
+        if(advancedControl) AdvancedControlSetup {advancedControl=false}
         var tab by rememberSaveable { mutableStateOf(initialTab) }
         var refresh by remember { mutableIntStateOf(0) }; var message by remember { mutableStateOf("") }
                 var agents by remember { mutableStateOf(emptyList<AgentRecord>()) }
@@ -126,12 +136,14 @@ import kotlinx.serialization.json.*
                         events.forEach { e -> Text("${e.eventType} · ${e.capabilityId ?: "connection"} · ${e.executionStatus ?: ""}\n${e.errorCode ?: ""} ${e.requestId ?: ""}") }
                     }
                     "Settings" -> {
+                        Button(onClick={advancedControl=true}) {Text("Advanced device control and recovery")}
+                        if(permissionStatus.isNotBlank()) Text(permissionStatus)
                         Row {Text("Privileged execution",Modifier.weight(1f));Switch(controls.privilegedEnabled,{enabled ->
                             if(enabled) ownerAuthentication.authenticate("Enable privileged execution",{g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=true))},{message=it})
                             else g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=false))
                         })}
-                        Button(onClick={startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))}) {Text("Semantic screen access")}
-                        Text("Enable SIConnect in Android Accessibility settings. Samsung may require Allow restricted settings in app info first. Protected owner and lock surfaces remain unavailable.")
+                        Button(onClick={startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))}) {Text(if(semanticConnected) "Screen access connected · manage" else if(semanticGranted) "Restore screen service" else "Enable screen access")}
+                        Text(if(semanticConnected) "Accessibility service is connected." else if(semanticGranted) "Android access is enabled, but the service is disconnected. Open its Android setting and turn SIConnect off and on." else "Enable SIConnect in Android Accessibility settings. If Android restricts sideloaded services, review Allow restricted settings in app info.")
                         if(BuildConfig.DEBUG) TextButton(onClick={ownerAuthentication.authenticate("Rotate development credential",{action {g.createDevelopmentAgent();message="Development credential rotated"}},{message=it})}) {Text("Advanced: rotate development credential")}
                         Text("Appearance",style=MaterialTheme.typography.titleMedium)
                         val appearance by g.settings.appearance.collectAsState()
@@ -141,16 +153,16 @@ import kotlinx.serialization.json.*
                             }
                         }
                         Text("Uses Android’s system font and text-size setting.",style=MaterialTheme.typography.bodySmall)
-                        Button(onClick={ if(android.os.Build.VERSION.SDK_INT >= 33) permission.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName)) }) { Text("Allow approval and reminder notifications") }
-                        Button(onClick={ startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) { Text("Notification listener access") }
-                        Button(onClick={ g.shizuku.requestPermission() }) { Text("Authorize / reconnect Shizuku") }
+                        Button(onClick={ if(!notificationsEnabled && android.os.Build.VERSION.SDK_INT >= 33) permission.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName)) }) { Text(if(notificationsEnabled) "Notifications enabled · manage" else "Allow approval and reminder notifications") }
+                        Button(onClick={ if(listenerGranted && !listenerConnected) android.service.notification.NotificationListenerService.requestRebind(listenerComponent) else startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) { Text(if(listenerConnected) "Notification access connected · manage" else if(listenerGranted) "Reconnect notification listener" else "Enable notification access") }
+                        if(g.settings.privilegeBackend=="shizuku") Button(onClick={ g.shizuku.requestPermission() }) { Text("Authorize / reconnect Shizuku") }
                         Text("Selected authority: ${g.settings.privilegeBackend}")
                         Text(direct)
                         Button(onClick={ ownerAuthentication.authenticate("Select built-in authority",{action { g.settings.privilegeBackend="direct"; g.privileged.refresh() }},{message=it}) }) { Text("Use built-in service / check connection") }
                         Button(onClick={ ownerAuthentication.authenticate("Select Shizuku authority",{action { g.settings.privilegeBackend="shizuku"; g.privileged.refresh() }},{message=it}) }) { Text("Select optional Shizuku backend") }
                         Text("Built-in service needs an authorized setup start after reboot. Native features work immediately. SIConnect never switches backends automatically.")
                         Text(shizuku)
-                        Button(onClick={ permission.launch(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR)) }) { Text("Calendar access") }
+                        Button(onClick={ if(calendarGranted) startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName"))) else permission.launch(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR)) }) { Text(if(calendarGranted) "Calendar access enabled · manage" else "Enable calendar access") }
                         Text("Connected folders",style=MaterialTheme.typography.titleMedium)
                         Text("Android grants access only to the folder you select. Bots also need Selected folders permission.")
                         Button(onClick={ownerAuthentication.authenticate("Connect document folder",{documentPicker.launch(null)},{documentStatus=it})}) {Text("Choose a folder")}

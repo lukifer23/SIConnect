@@ -73,3 +73,8 @@ Pass 4 keeps the same application ID and signing configuration, with version 0.4
 
 
 Current follow-up package: 0.4.2/code 5, same schema v6. The daemon lifetime-observer fix requires one daemon restart after loading this APK; it is not a claim of privileged persistence across phone reboot. Following an in-place upgrade, verify acknowledged gateway readiness and actual shell identity rather than assuming installation success implies backend readiness.
+
+
+## Pass 10 setup
+
+Current build: 0.6.0-dev.1/code 9, SQLite 9. Start with [phone setup](phone-setup.md) and [installation/signing](installation.md). Local pairing/bootstrap/recovery now has real Fold evidence; `tools/start_builtin.py` remains a development diagnostic, not a runtime requirement. Preserve the same package/signing identity and use in-place updates. Do not downgrade schema 9 to an older APK.

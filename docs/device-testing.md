@@ -142,3 +142,8 @@ python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owne
 ```
 
 Accepted proposal/request history is retained for investigation. Expired credentials do not prevent exact local session cleanup; any failed withdrawal is reported separately. A locked/off/unknown-screen setup refuses before creating credentials or changing tasks. Pass 9 encountered that precondition and did **not** execute the human accept/cancel flow. Calendar/SAF tests still require explicit disposable resources; the managed-file folder is not an SAF substitute. Full evidence and initial failures: [engineering pass 9](engineering-pass-9.md).
+
+
+## Pass 10 verification boundary
+
+Targeted physical instrumentation: 11 passed (retention 3, proposal/migration 4, SPAKE2 crypto 3, nonexportable-Keystore TLS/exporter 1). The TLS test uses a disposable local TLS peer and is not adbd pairing. Two initial TLS attempts failed due to Keystore padding incompatibility before the raw-signing fix passed. Native-only hosted calls succeeded; later seven hosted checks and four Grokbot calls proved restored original Binder shell UID 2000. After the initial unsuccessful report, actual owner-confirmed pairing passed. Raw shell v2 fixed the reproduced PTY daemon-start failure. Local bootstrap, repeated daemon recovery, ordinary process death and one explicitly authorized reboot passed with fresh hosted UID 2000. See the detailed report for Mac UI assistance and idle-transport limits. Owner Inbox authentication, designated Calendar/SAF CRUD and the broader lifecycle matrix remain open. See [pass 10](engineering-pass-10.md).

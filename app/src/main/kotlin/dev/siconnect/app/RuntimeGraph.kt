@@ -36,6 +36,7 @@ class RuntimeGraph(val context: Context) {
     val registry = CapabilityRegistry()
     val shizuku = ShizukuBackend(context, scope)
     val privileged = PrivilegedBackend(settings, shizuku)
+    val bootstrap = dev.siconnect.app.bootstrap.LocalAdbBootstrap(context,settings,scope)
     val ui = dev.siconnect.app.coordination.UiLeaseCoordinator(dev.siconnect.app.coordination.SqlUiLeaseStore(db),events,settings.deviceId)
     val approvals = AndroidApprovals(context)
     val engine = ExecutionEngine(settings.deviceId, registry, PolicyEngine(), requests, events, approvals,
@@ -78,6 +79,7 @@ class RuntimeGraph(val context: Context) {
             reminders.restore()
             if (BuildConfig.DEBUG) { local = LocalEndpoint(this@RuntimeGraph).also { it.start() } }
             health.value = "Ready — SQLite schema ${SIConnectDb.VERSION}"
+            bootstrap.recoverIfEnabled()
         }
         scope.launch {
             ready.await()
