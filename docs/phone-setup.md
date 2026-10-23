@@ -1,6 +1,6 @@
 # Phone setup and advanced control
 
-Status: development build **0.6.0-dev.3 / code 11**, SQLite **9**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
+Status: development build **0.6.0-dev.4 / code 12**, SQLite **10**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
 
 ## Start with native features
 
@@ -10,7 +10,7 @@ Calendar access requires the appropriate runtime permissions. SAF access require
 
 ## Connect AI agent
 
-Home → Gateway shows the existing connection and MCP address. If it is offline, Reconnect existing gateway reuses its enrollment and credentials. Manage AI agents opens the existing Agents screen. Use a secure setup code only for an unconfigured or deliberately changed gateway. Gateway setup accepts bounded JSON (or its base64 representation) containing `url` and `enroll`; review the HTTPS origin before owner authentication. This does not provision Cloudflare infrastructure. Obtain enrollment material through the existing authenticated gateway administration path; never post it in an issue. Then connect the external AI client using its existing OAuth or private bearer flow. Do not recreate a working agent to fix an unrelated Android ADB problem.
+Home → Gateway shows the existing connection and MCP address. If it is offline, Connect saved gateway reuses its enrollment and credentials. Manage AI agents opens the existing Agents screen. Use a secure setup code only for an unconfigured or deliberately changed gateway. Gateway setup accepts bounded JSON (or its base64 representation) containing `url` and `enroll`; review the HTTPS origin before owner authentication. This does not provision Cloudflare infrastructure. Obtain enrollment material through the existing authenticated gateway administration path; never post it in an issue. Then connect the external AI client using its existing OAuth or private bearer flow. Do not recreate a working agent to fix an unrelated Android ADB problem.
 
 ## Enable advanced device control
 
@@ -44,4 +44,11 @@ See [installation and signing](installation.md). Never install a differently sig
 
 ## Background work and connection history
 
-Automations identifies workflows that run without opening the screen and retains readable device-health results. Home → Gateway offers local connection history and Pause remote access; reconnect preserves existing enrollment and agents. See [background operations and scheduling limits](background-operations.md).
+Automations identifies workflows that run without opening the screen and retains readable device-health results. Home → Gateway offers local connection history and Disconnect remote gateway; reconnect preserves existing enrollment and agents. See [background operations and scheduling limits](background-operations.md).
+
+
+## Background operation and current verification
+
+Saving a native schedule is separate from remote gateway connectivity. A future native health scan ran with the screen off and locked and advanced its recurrence; the test schedule was disabled afterward. Existing standing access supports background execution without repeating owner authentication on every run. See [background controls and warning cooldowns](background-operations.md).
+
+An in-place development update restored the saved bridge without opening an Activity, followed by hosted UID 2000 verification. Android can still reject foreground-service startup after instrumentation/force-stop or under background restrictions. The app reports this blocked state; it cannot promise uninterrupted service under every Android state or require an external computer to clear a normal owner-action condition. Broader network and new reboot checks remain pending. No new pairing, key reset or external daemon bootstrap was performed for pass 12.

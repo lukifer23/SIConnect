@@ -1,5 +1,13 @@
 # Performance and resource evidence
 
+## Pass 12 development observations
+
+Current debug APK: 45,297,886 bytes; unsigned minified release: 4,814,882; locally signed minified preview: 4,860,033. Build configuration differs from previous checkpoints, so size differences alone are not a performance improvement claim.
+
+Three scheduled native scans completed in 132, 156 and 63 ms. Their start delays relative to saved slots were 26 ms, 38,634 ms and 7 ms. Only the first was verified screen-off/locked. Android deferrable dispatch timing is not guaranteed.
+
+A 60.741-second development interval recorded app PSS 69,835–74,262 KiB and RSS 177,192–180,324 KiB. A process change excluded the whole-interval app CPU estimate; valid subintervals used 0.15 CPU seconds over 43.894 seconds. Privileged-process CPU was 0.01 seconds over 59.923 seconds. Final seven hosted calls took 161–310 ms each. This is not quiet idle, a matched before/after experiment, a battery-drain estimate or a completed soak. Private raw evidence stays outside Git.
+
 ## Pass 11 observations
 
 Code 10 Settings loads only the visible section's data, replacing its earlier all-subsystem refresh on every request. No numeric performance improvement is claimed without matched measurements. `device.runtime` now accepts optional `checkDatabase=true`; ordinary sampling omits SQLite integrity work. One debug snapshot measured 145,852 KiB PSS and no system low-memory condition. This is a development snapshot, not a quiet battery/idle study. See [pass 11](engineering-pass-11.md).

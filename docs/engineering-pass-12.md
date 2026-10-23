@@ -38,7 +38,7 @@ This is a focused source audit of the execution boundary, health/scheduler path,
 
 ## Resource and security scope
 
-Debug APK: 45,297,886 bytes. Unsigned minified release: 4,814,882 bytes; it is not an installable signed production release. The existing development signer was reused for the installed update; no new key or credential was generated or uploaded.
+Debug APK: 45,297,886 bytes. Unsigned minified release: 4,814,882 bytes; it is not an installable signed production release. The existing development signer was reused for the installed update; no new key or credential was generated or uploaded. A separate 4,860,033-byte minified preview was signed locally and its certificate matched the actual installed predecessor. It has not been installed or published; the GitHub owner-signing workflow remains unexercised.
 
 A 60.741-second development-contaminated profile recorded app PSS 69,835–74,262 KiB and RSS 177,192–180,324 KiB. A process change invalidated the whole-interval app CPU estimate; three valid subintervals consumed 0.15 CPU seconds over 43.894 seconds. The privileged process consumed 0.01 CPU seconds over 59.923 seconds (0.0167% of one core). These are development observations, not a matched idle comparison, battery estimate or completed soak.
 
@@ -51,3 +51,5 @@ Broad authorized shell still carries shell-identity authority beyond narrow nati
 Five original agent credential hashes and grant hashes match the private baseline. Three original reminders and the original automation remain unchanged. The disposable test schedule alone is disabled. SQLite quick-check passes. The selected test folder is empty and retained for future owner-approved checks.
 
 After the final background APK update, all seven official-SDK hosted checks passed again: six native diagnostics and Binder shell identity, 161–310 ms each. The catalog remains 85 tools. No desktop Activity launch or external daemon bootstrap was used to restore this connection. Existing Grokbot/Dots/Hermes application sessions were not freshly exercised.
+
+Release packaging inspection found SPAKE2 in all four ABIs: arm64-v8a 28,192 bytes, armeabi-v7a 28,888, x86 42,156 and x86_64 35,128, plus the existing AndroidX graphics-path libraries. Seven license assets are packaged. Presence of notices and ABI files is not proof of complete license compliance or runtime testing on all ABIs.

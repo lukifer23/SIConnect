@@ -1,5 +1,13 @@
 # Device testing
 
+## Pass 12 fresh evidence
+
+See [the pass 12 report](engineering-pass-12.md) for three actual future scheduled health runs (first screen-off/locked), two genuine owner Inbox acceptances, eleven distinct passing physical alert/migration/retention/SAF cases and final seven-call hosted native/Binder smoke. The selected disposable SAF root completed create/write/read/hash/rename/delete/absence. Its fixture identity is root-constrained and removed after the run. Cancellation was not verified because both Inbox prompts were approved. Calendar still requires a dedicated writable test resource.
+
+The test schedule is now disabled and its history retained. A failed initial SAF harness and a cleanup-runner initialization error are recorded alongside their corrected results. Instrumentation-induced foreground-service restrictions remain separate from ordinary process recovery. Final background APK replacement restored the saved gateway without launching an Activity. These results do not establish a fresh reboot, network-transition matrix, full Fold/font QA, provider application regression or quiet battery study.
+
+Earlier sections below are historical evidence, with their original versions and counts.
+
 ## October 21, 2026 checkpoint
 
 Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.

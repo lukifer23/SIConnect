@@ -1,6 +1,6 @@
 # Installation, updates and signing
 
-The current build is **0.6.0-dev.3 / versionCode 11 / SQLite 9**. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
+The current build is **0.6.0-dev.4 / versionCode 12 / SQLite 10**. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
 
 ## Preserve the existing installation
 
@@ -16,4 +16,10 @@ The workflow refuses incomplete signing configuration, builds/tests/lints, verif
 
 ## Database continuity
 
-Schema 9 adds request tombstones and indexes without deleting existing agents, credentials, requests, reminders or automations during migration. Physical upgrade checks confirmed SQLite integrity and preservation of the existing five agents, three reminders and one automation. Never downgrade an installed schema-9 database to a schema-8 APK or wipe data as recovery. Retain a compatible current APK and a private owner-controlled backup/recovery point. APK signature continuity and database integrity are separate checks.
+Schema 9 added request tombstones; schema 10 adds a bounded health-alert ledger. Neither migration recreates the database. Physical upgrade checks confirmed SQLite integrity and preservation of the five original agent credential/grant hashes, three original reminders and original automation. The separately authorized disposable schedule was disabled after its test runs. Never downgrade an installed schema-10 database to a schema-9 APK or wipe data as recovery. Retain a compatible current APK and a private owner-controlled backup/recovery point. APK signature continuity and database integrity are separate checks.
+
+## Pass 12 local signed-preview validation
+
+A minified development preview was signed locally with the existing compatible development keystore. Signature verification matched the certificate from the actual previously installed APK. The signed preview is 4,860,033 bytes, version 0.6.0-dev.4 / code 12 / schema 10. Private build metadata records its APK SHA-256 and source commit. No signing material was uploaded or committed, and no replacement key was generated.
+
+This signed minified preview has not been installed through Android's package installer or published. It is not a verified production release. The physical in-place update used the compatible signed debug APK and preserved credentials, ADB host identity preferences and durable records. Debug fixtures and the loopback endpoint were independently verified absent from the minified release manifest/code. Exercising the owner-signed GitHub workflow and the full phone download/package-installer journey remains separate work; no permission to upload the owner's signing key is inferred.
