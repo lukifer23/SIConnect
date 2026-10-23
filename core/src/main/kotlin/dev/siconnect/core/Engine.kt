@@ -299,6 +299,18 @@ class ExecutionEngine(
         val job: Job
         val executing: RequestRecord
         synchronized(executionLock) {
+        // Eligibility can change after initial evaluation/owner review but before dispatch.
+        // This gate blocks queued work; it does not pretend to stop an already running action.
+        if(capability.descriptor.version!=record.capabilityVersion ||
+            (record.selectedBackend!=null && record.selectedBackend!=capability.descriptor.backend))
+            return fail(record,"CAPABILITY_CHANGED","Capability or selected backend changed before dispatch")
+        val current=policy.evaluate(agents.grant(record.agentId),capability.descriptor,record.arguments,
+            record.assessment ?: capability.assess(record.arguments),runCatching {capability.availability(record.arguments)}.getOrDefault(Availability.UNKNOWN),
+            controls(),Origin.valueOf(record.origin),clock.nowMs())
+        if(current.outcome==PolicyOutcome.DENY || current.outcome==PolicyOutcome.UNAVAILABLE)
+            return fail(record,"POLICY_DENIED",current.reason)
+        if(current.outcome==PolicyOutcome.REQUIRE_APPROVAL && record.state!=RequestState.APPROVED)
+            return fail(record,"POLICY_CHANGED","Current policy now requires owner review; submit a new request")
         executing = transitionBlocking(record, RequestState.EXECUTING, "execution.started", backend = capability.descriptor.backend.name) { it }
             ?: return store.get(record.requestId) ?: record
         val ctx = ExecutionContext(executing.requestId, executing.traceId, executing.agentId, deviceId)

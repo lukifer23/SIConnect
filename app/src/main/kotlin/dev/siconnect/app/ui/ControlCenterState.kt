@@ -17,6 +17,7 @@ data class ControlCenterSnapshot(
     val capabilities:List<CapabilityStatus> = emptyList(),val error:String?=null,
     val semanticEnabledInSettings:Boolean=false,
     val proposals:List<ProposalSummary> = emptyList(),val pendingProposalCount:Int=0,
+    val activeRequests:List<RequestSummary> = emptyList(),
 )
 
 /** One retained metadata projection. No shell output is loaded to render overview screens. */
@@ -39,7 +40,8 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
                     g.reminders.all().filter {it.state in setOf("SCHEDULED","BLOCKED","FIRING","AWAITING_APPROVAL")}.sortedBy {it.fireAtMs},
                     g.scheduler.all(),g.registry.statuses(),semanticEnabledInSettings=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
                         .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)},
-                    proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount())}
+                    proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount(),
+                    activeRequests=g.requests.historyPage(limit=50,states=setOf(RequestState.EXECUTING,RequestState.VERIFYING))) }
                 catch(e:CancellationException) {throw e}
                 catch(e:Exception) {mutable.value=mutable.value.copy(error="Could not refresh: ${e.javaClass.simpleName}")}
             }

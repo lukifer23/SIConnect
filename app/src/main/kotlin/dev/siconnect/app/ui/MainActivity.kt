@@ -84,7 +84,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
     override fun onStart() {
         super.onStart()
         graph.gateway.refreshCatalog()
-        if(graph.settings.gateway.value.enabled) startForegroundService(Intent(this,ConnectionService::class.java))
+        ConnectionService.restoreOwnerEnabled(graph)
     }
 
     @Composable private fun Home() {
@@ -170,7 +170,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 }
             }
         }
-        LaunchedEffect(inspected) { inspectedEvents=withContext(Dispatchers.IO) { inspected?.let { g.events.query(requestId=it.requestId,limit=30) } ?: emptyList() } }
+        LaunchedEffect(inspected?.requestId,snapshot.revision) {
+            val id=inspected?.requestId
+            if(id!=null) withContext(Dispatchers.IO) {
+                inspected=g.requests.get(id)
+                inspectedEvents=g.events.query(requestId=id,limit=30)
+            } else inspectedEvents=emptyList()
+        }
         LaunchedEffect(pairDialog) { if(pairDialog) withContext(Dispatchers.IO) {
             g.ready.await();pairCode=g.settings.pendingPairing();pairCode?.let {pairName=it.label}
         } }
@@ -221,6 +227,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),
             verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected. This phone can receive authorized agent requests." else connectionDetail)
+            Text("Disconnecting closes the remote bridge. Already dispatched actions and local schedules continue; cancel an active request separately in Activity.",style=MaterialTheme.typography.bodySmall)
             if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE && config.enabled)
                 Text("Native schedules continue using available Android access. Interrupted actions are not automatically resubmitted.",style=MaterialTheme.typography.bodySmall)
             TextButton(onClick={showConnectionHistory=!showConnectionHistory}) {Text(if(showConnectionHistory) "Hide connection history" else "Connection history")}
@@ -232,6 +239,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     Text("$time · "+when(event.eventType) {
                         "gateway.connected"->"Connected"
                         "gateway.paused"->"Remote access paused by owner"
+                        "gateway.recovery.blocked"->"Android blocked background reconnection. Open SIConnect and review background access."
                         "gateway.interrupted"->event.detail ?: "Connection interrupted"
                         "gateway.result_delivery_failed"->"Result delivery interrupted. Retrieve the original request outcome before retrying."
                         else->"Gateway message could not be processed"
@@ -248,12 +256,12 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                         withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
                     }}
                     if(config.enabled) reconnect() else ownerAuthentication.authenticate("Enable existing gateway",reconnect,{gatewayError=it})
-                },enabled=!busy) {Text("Reconnect existing gateway")}
+                },enabled=!busy) {Text("Connect saved gateway")}
                 if(config.enabled) OutlinedButton(onClick={work {
                     g.gateway.pauseFromOwner()
                     withContext(Dispatchers.Main) {stopService(Intent(this@MainActivity,ConnectionService::class.java))}
                     gatewayError=""
-                }},enabled=!busy) {Text("Pause remote access")}
+                }},enabled=!busy) {Text("Disconnect remote gateway")}
                 TextButton(onClick={setup=false;destination=Destination.AGENTS}) {Text("Manage AI agents")}
                 TextButton(onClick={replaceGateway=!replaceGateway}) {Text(if(replaceGateway) "Keep existing gateway" else "Use a different gateway")}
             }
@@ -324,6 +332,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Text("Request: ${r.requestId}\nBackend: ${r.result?.backend ?: r.selectedBackend ?: "not executed"}")
                 r.assessment?.shellCommand?.let { Text(it) }
                 r.errorMessage?.let { Text(it) }
+                if(!r.state.isTerminal) {
+                    Text("Cancellation asks the executing backend to stop. A side effect may already have happened; an uncertain outcome remains recorded.",style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick={ownerAuthentication.authenticate("Cancel active request",{work {
+                        inspected=g.engine.cancel(r.requestId,"local-owner")
+                        note="Cancellation requested. Review the recorded outcome before repeating the action."
+                    }},{note=it})},enabled=!busy) {Text("Cancel this request")}
+                }
                 r.result?.let { Text(it.output.toString(),style=MaterialTheme.typography.bodySmall) }
                 HorizontalDivider(); Text("Audit trail",style=MaterialTheme.typography.titleMedium)
                 inspectedEvents.reversed().forEach { Text("${it.eventType} · ${it.policyDecision ?: it.executionStatus ?: it.errorCode ?: ""}",style=MaterialTheme.typography.bodySmall) }

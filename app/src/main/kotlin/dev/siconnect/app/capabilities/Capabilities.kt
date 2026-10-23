@@ -140,7 +140,9 @@ fun registerCapabilities(g: RuntimeGraph) {
     op("alarms.next", "Next owner alarm") { _, _ -> val alarm = c.getSystemService(AlarmManager::class.java).nextAlarmClock
         buildJsonObject { put("triggerAtMs", alarm?.triggerTime?.let(::JsonPrimitive) ?: JsonNull); put("visible", alarm != null) } }
     val notifyAvailable = { if (c.getSystemService(NotificationManager::class.java).areNotificationsEnabled()) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED }
-    op("notifications.post", "Post SIConnect notification", objectSchema { string("title", "Title", true, maxLength=150); string("text", "Body", true, maxLength=1000); string("deduplicationKey","Optional per-agent stable alert key; never repeats a previously claimed post",maxLength=200) }, RiskClass.LOW_IMPACT,
+    op("notifications.post", "Post SIConnect notification", objectSchema { string("title", "Title", true, maxLength=150); string("text", "Body", true, maxLength=1000); string("deduplicationKey","Optional per-agent stable alert key; never repeats a previously claimed post",maxLength=200)
+        prop("healthCheck",false,dev.siconnect.app.automation.HealthAlertPolicy.schema())
+    }, RiskClass.LOW_IMPACT,
         notifyAvailable, { "Allow SIConnect notifications in Android settings" }) { a, ctx ->
         postNotification(g,a,ctx)
     }

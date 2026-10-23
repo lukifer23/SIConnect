@@ -14,7 +14,7 @@ class HealthScanTest {
             reading("memory",buildJsonObject {put("lowMemory",lowMemory)})
             reading("thermal",buildJsonObject {put("status",thermal)})
         })
-        return Conditions.eval(requireNotNull(AutomationTemplates.health().steps.last().`when`),scope)
+        return Conditions.eval(requireNotNull(AutomationTemplates.healthV2().steps.last().`when`),scope)
     }
     @Test fun warningsRequireOptInAndActualThreshold() {
         assertFalse(warns(percent=5,storage=1,lowMemory=true,thermal=5))
@@ -29,7 +29,7 @@ class HealthScanTest {
     }
     @Test fun absentReadingsAndUnknownBatteryNeverTriggerWarnings() {
         assertFalse(warns(notify=true,percent=Int.MIN_VALUE))
-        assertFalse(Conditions.eval(requireNotNull(AutomationTemplates.health().steps.last().`when`),mapOf("input" to buildJsonObject {put("notifyProblems",true)})))
+        assertFalse(Conditions.eval(requireNotNull(AutomationTemplates.healthV2().steps.last().`when`),mapOf("input" to buildJsonObject {put("notifyProblems",true)})))
         assertEquals(listOf("Battery: unavailable"),HealthScanSummary.lines(buildJsonObject {put("battery",buildJsonObject {put("percent",Int.MIN_VALUE)})}))
         assertTrue(HealthScanSummary.lines(JsonNull).isEmpty())
     }

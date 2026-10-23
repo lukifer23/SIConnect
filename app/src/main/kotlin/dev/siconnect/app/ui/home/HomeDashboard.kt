@@ -21,12 +21,12 @@ import kotlinx.serialization.json.JsonObject
     onInbox:()->Unit,onSetup:()->Unit) {
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
-    val status=when { !controls.remoteExecutionEnabled->"Remote control paused";!nativeReady->"Starting…";connection==ConnectionState.ONLINE->"Connected";else->"Native features ready"}
+    val status=when { !controls.remoteExecutionEnabled->"New remote actions blocked";!nativeReady->"Starting…";connection==ConnectionState.ONLINE->"Connected";else->"Native features ready"}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         Text("SIConnect",style=MaterialTheme.typography.headlineLarge)
         Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Text(status,style=MaterialTheme.typography.headlineSmall)
-            Text(if(connection==ConnectionState.ONLINE) "Your phone can receive authorized agent requests." else detail)
+            Text(if(!controls.remoteExecutionEnabled) "New remote actions and pending remote approvals are blocked. Active work continues until cancelled; local schedules stay enabled." else if(connection==ConnectionState.ONLINE) "Your phone can receive authorized agent requests." else detail)
             Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
                 Text("Native features: ${if(nativeReady) "ready" else "starting"}",Modifier.weight(1f))
                 TextButton(onClick=onSetup) {Text("Access")}
@@ -42,8 +42,9 @@ import kotlinx.serialization.json.JsonObject
                 OutlinedButton(onClick=onConnect) {Text("Gateway")}
                 OutlinedButton(onClick=onAgents) {Text("Connect AI agent")}
             }
-            if(controls.remoteExecutionEnabled) OutlinedButton(onClick=onStop) {Text("Emergency stop",color=MaterialTheme.colorScheme.error)}
-            else Button(onClick=onResume) {Text("Resume remote requests")}
+            if(controls.remoteExecutionEnabled) OutlinedButton(onClick=onStop) {Text("Block new remote actions",color=MaterialTheme.colorScheme.error)}
+            else Button(onClick=onResume) {Text("Allow new remote actions")}
+            if(state.activeRequests.isNotEmpty()) TextButton(onClick=onActivity) {Text("Review active requests (${state.activeRequests.size}${if(state.activeRequests.size==50) "+" else ""})")}
         }}
         val missingAccess=state.capabilities.filter {it.descriptor.id in setOf("ui.inspect","notifications.actions") && !it.availability.isExecutable}
         if(missingAccess.isNotEmpty()) OutlinedCard(Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {

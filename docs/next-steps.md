@@ -1,5 +1,11 @@
 # Next steps
 
+## Pass 12 checkpoint
+
+Android **0.6.0-dev.4 / code 12**, SQLite **10**, **85** tools. A future screen-off/locked native scan ran and advanced recurrence. Two subsequent scheduled runs also succeeded, including one after an in-place update. Persisted warning cooldowns, severity escalation and bounded metadata are implemented; six new alert/migration checks passed on the physical Fold. Two real owner-authenticated Inbox acceptances and a selected SAF round trip passed. The initial SAF harness incorrectly expected writes to bypass approval; its corrected disposable identity has root-constrained standing access and is removed after the test. Original owner/agent grants remain unchanged.
+
+Next: actual cancellation and interrupted owner review, designated test-calendar CRUD, complete Fold/large-font UI review, owner upgrade to health v3, controlled network/reboot tests, compatible signed distribution and a genuine quiet resource study. Android can block foreground-service restoration after instrumentation; do not count instrumentation force-stop as ordinary process death. See [pass 12](engineering-pass-12.md) for fresh evidence and remaining gaps. Earlier checkpoints below are historical.
+
 ## Background operations milestone — October 22, 2026
 
 Android **0.6.0-dev.3 / code 11**, SQLite **9**, **85** tools. Background health scans extend the existing snapshot workflow with storage/network/thermal readings, optional threshold notifications and readable stored results. The original workflow upgrades only through owner authentication; no schedule or permission is enabled automatically. Two real owner-flow manual worker runs succeeded on the Fold with six native readings each and warnings disabled. The existing schedule remains disabled. New connection history and pause/resume controls reuse enrollment and retained event storage. See [background operations](background-operations.md) and [pass 11 evidence](engineering-pass-11.md).

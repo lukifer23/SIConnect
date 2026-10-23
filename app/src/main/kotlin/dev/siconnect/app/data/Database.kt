@@ -123,9 +123,13 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE INDEX requests_parent ON requests(parent_request_id) WHERE parent_request_id IS NOT NULL")
         }
 
+        if (old < 10) {
+            db.execSQL("CREATE TABLE health_alert_state (agent_id TEXT NOT NULL, policy_id TEXT NOT NULL, updated_at INTEGER NOT NULL, active INTEGER NOT NULL, json TEXT NOT NULL, PRIMARY KEY(agent_id,policy_id))")
+            db.execSQL("CREATE INDEX health_alert_retention ON health_alert_state(active,updated_at)")
+        }
     }
 
-    companion object { const val VERSION = 9 }
+    companion object { const val VERSION = 10 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->

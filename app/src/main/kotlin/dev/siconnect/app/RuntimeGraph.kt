@@ -32,6 +32,7 @@ class RuntimeGraph(val context: Context) {
     val db = SIConnectDb(context)
     val requests = SqlRequestStore(db)
     val events = SqlEventLog(db)
+    internal val healthAlerts = HealthAlertStore(db)
     val agents = AgentStore(db)
     val registry = CapabilityRegistry()
     val shizuku = ShizukuBackend(context, scope)
@@ -87,6 +88,9 @@ class RuntimeGraph(val context: Context) {
             ready.await()
             proposals.recover()
         }
+        // A Binder/provider or scheduled job can recreate the app without an Activity or a
+        // surviving package-replaced receiver. Reuse the owner's saved service preference once.
+        scope.launch {ready.await();dev.siconnect.app.transport.ConnectionService.restoreOwnerEnabled(this@RuntimeGraph)}
         scope.launch {
             ready.await()
             engine.recordUpdates.collect { record ->

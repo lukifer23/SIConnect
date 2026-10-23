@@ -70,8 +70,9 @@ import kotlinx.coroutines.*
         }
     }
     fun name(id:String)="${labels[id] ?: "Agent"} · …${id.takeLast(8)}"
+    val scroll=key(selected) {rememberScrollState()}
     AlertDialog(onDismissRequest=onClose,title={Text(if(selected==null) "Action Inbox" else "Review proposed action")},
-        text={Column(Modifier.fillMaxWidth().heightIn(max=540.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        text={Column(Modifier.fillMaxWidth().heightIn(max=540.dp).verticalScroll(scroll),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Text("Proposals are suggestions. Acceptance submits the exact action under the original agent's current permissions and does not grant more access.",style=MaterialTheme.typography.bodySmall)
             if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
             if(busy || loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -116,7 +117,17 @@ import kotlinx.coroutines.*
                         PolicyOutcome.REQUIRE_APPROVAL->"A separate execution approval will be required after acceptance."
                         else->"Cannot submit now: ${r.reason}"
                     })}
-                    Button(enabled=!busy && readiness?.outcome in setOf(PolicyOutcome.ALLOW,PolicyOutcome.REQUIRE_APPROVAL),onClick={
+
+                }
+                if(proposal.errorCode=="DISPATCH_NOT_RECORDED") Text("No execution record was created. Recovery will retry the same request identity; no new action is allocated.")
+                if(proposal.state==ProposalState.ACCEPTED && proposal.requestState==null) Text("Accepted; waiting for an execution record. Recovery keeps the same request identity and stops at the execution deadline.")
+                proposal.linkedRequestId?.let {id->Button(enabled=proposal.requestState!=null,onClick={onRequest(id)}) {Text(if(proposal.requestState==RequestState.AWAITING_APPROVAL) "Review execution approval" else "Open linked execution")}}
+                TextButton(onClick={selected=null;p=null;error=""}) {Text("Back to inbox")}
+            }
+        }},confirmButton={Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            // Keep the owner decision visible on the cover display and at large font sizes.
+            p?.takeIf {it.proposalId==selected && it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED)}?.let {proposal->
+                Button(modifier=Modifier.fillMaxWidth(),enabled=!busy && readiness?.outcome in setOf(PolicyOutcome.ALLOW,PolicyOutcome.REQUIRE_APPROVAL),onClick={
                         authenticate("Accept proposed ${proposal.capabilityId}",{
                             if(selected==proposal.proposalId) work {
                                 val accepted=g.proposals.acceptFromOwner(proposal.proposalId,proposal.revision)
@@ -128,14 +139,15 @@ import kotlinx.coroutines.*
                             }
                         },{error=it})
                     }) {Text("Accept proposal")}
-                    OutlinedButton(enabled=!busy,onClick={work {g.proposals.dismissFromOwner(proposal.proposalId)}}) {Text("Dismiss")}
-                }
-                if(proposal.errorCode=="DISPATCH_NOT_RECORDED") Text("No execution record was created. Recovery will retry the same request identity; no new action is allocated.")
-                if(proposal.state==ProposalState.ACCEPTED && proposal.requestState==null) Text("Accepted; waiting for an execution record. Recovery keeps the same request identity and stops at the execution deadline.")
-                proposal.linkedRequestId?.let {id->Button(enabled=proposal.requestState!=null,onClick={onRequest(id)}) {Text(if(proposal.requestState==RequestState.AWAITING_APPROVAL) "Review execution approval" else "Open linked execution")}}
-                TextButton(onClick={selected=null;p=null;error=""}) {Text("Back to inbox")}
+
             }
-        }},confirmButton={TextButton(onClick=onClose) {Text("Close")}})
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+                p?.takeIf {it.proposalId==selected && it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED)}?.let {proposal->
+                    TextButton(enabled=!busy,onClick={work {g.proposals.dismissFromOwner(proposal.proposalId)}}) {Text("Dismiss")}
+                }
+                TextButton(onClick=onClose) {Text("Close")}
+            }
+        }})
 }
 
 internal fun proposalStateLabel(state:ProposalState,request:RequestState?)=if(request==RequestState.AWAITING_APPROVAL) "Waiting for execution approval" else state.name.lowercase().replace('_',' ').replaceFirstChar {it.uppercase()}

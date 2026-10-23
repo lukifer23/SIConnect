@@ -3,6 +3,8 @@ package dev.siconnect.app
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.siconnect.app.data.DocumentRoots
+import dev.siconnect.app.data.AgentRecord
+import dev.siconnect.app.data.Settings
 import dev.siconnect.core.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -36,10 +38,16 @@ class DocumentDeviceTest {
         assumeTrue("Test root must be explicitly named SIConnect test...", root != null && root.label.startsWith("SIConnect test", true))
         val access = DocumentRoots(g.context, g.db).access(root!!)
         assumeTrue("Test root needs actual persisted read/write access", access.read && access.write && access.providerAvailable)
+        val agent="document-fixture:${UUID.randomUUID()}"
+        val writes=listOf("documents.create","documents.write","documents.rename","documents.delete")
+        // Authorization is limited to this explicitly selected disposable root; no owner grant changes.
+        g.agents.put(AgentRecord(AgentGrant(agent,"Disposable document fixture",scopes=listOf("documents.*"),
+            standing=writes.map {StandingGrant(it,mapOf("rootId" to JsonPrimitive(id)),RiskClass.MODERATE_IMPACT)},
+            expiresAtMs=System.currentTimeMillis()+300_000),Settings.sha256Hex(Settings.randomToken("test_")),System.currentTimeMillis(),tokenHint="test only"))
         val original = "fixture-${UUID.randomUUID()}.txt"; val renamed = "renamed-${UUID.randomUUID()}.txt"
         var current: String? = null
-        suspend fun call(cap: String, path: String = "", extra: JsonObjectBuilder.() -> Unit = {}): RequestRecord = g.engine.submit(InvocationRequest(agentId = "local-owner", capabilityId = cap,
-            arguments = buildJsonObject { put("rootId", id); put("path", path); extra() }), Origin.LOCAL_OWNER)
+        suspend fun call(cap: String, path: String = "", extra: JsonObjectBuilder.() -> Unit = {}): RequestRecord = g.engine.submit(InvocationRequest(agentId = agent, capabilityId = cap,
+            arguments = buildJsonObject { put("rootId", id); put("path", path); extra() }), Origin.REMOTE)
         fun success(record: RequestRecord): JsonObject { assertEquals(record.errorMessage, RequestState.SUCCEEDED, record.state); return record.result!!.output.jsonObject }
         try {
             val made = success(call("documents.create") { put("name", original); put("mimeType", "text/plain") })
@@ -55,7 +63,7 @@ class DocumentDeviceTest {
             assertEquals("INVALID_DOCUMENT_PATH", call("documents.read", "../outside").errorCode)
         } finally {
             // Confined to the exact file created by this test; no recursive cleanup or owner files.
-            current?.let { call("documents.delete", it) }
+            try {current?.let { call("documents.delete", it) }} finally {g.agents.delete(agent)}
         }
     }
 }

@@ -106,6 +106,16 @@ class EngineTest {
         assertEquals(0, read.executions.get())
     }
 
+    @Test fun blockBetweenPolicyEvaluationAndDispatchPreventsExecution() = runBlocking {
+        val gated=ExecutionEngine("dev1",registry,PolicyEngine(),store,{event->
+            if(event.eventType=="policy.evaluated") controls=controls.copy(remoteExecutionEnabled=false)
+        },approvals,{grants[it]},{controls},CoroutineScope(SupervisorJob()+Dispatchers.Default),clock)
+        val r=gated.submit(InvocationRequest(agentId="reader",capabilityId="device.status"))
+        assertEquals(RequestState.FAILED,r.state)
+        assertEquals("POLICY_DENIED",r.errorCode)
+        assertEquals(0,read.executions.get())
+    }
+
     @Test fun emergencyStopAfterApprovalBlocksExecution() = runBlocking {
         val r = submit("writer", "apps.uninstall", args("value" to "x"))
         controls = DeviceControls(remoteExecutionEnabled = false)

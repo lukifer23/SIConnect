@@ -33,7 +33,7 @@ import dev.siconnect.core.RequestState
     LaunchedEffect(filter,selectedAgent,newest,cursors,revision) {
         loading=true;error=null
         try {
-            val states=when(filter) {"Needs attention"->attention;"Completed"->setOf(RequestState.SUCCEEDED);else->null}
+            val states=when(filter) {"Needs attention"->attention;"Completed"->setOf(RequestState.SUCCEEDED);"Running"->setOf(RequestState.EXECUTING,RequestState.VERIFYING);else->null}
             val loaded=withContext(Dispatchers.IO) {store.historyPage(101,cursors.last(),selectedAgent,states,newest)}
             more=loaded.size>100;page=loaded.take(100)
         } catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {error="Could not load history: ${e.javaClass.simpleName}"} finally {loading=false}
@@ -41,7 +41,7 @@ import dev.siconnect.core.RequestState
     Column(modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text("Page ${cursors.size} · ${page.size} requests. Tap an action for its result and audit trail.",style=MaterialTheme.typography.bodySmall)
         FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-            listOf("All","Needs attention","Completed").forEach { name -> FilterChip(selected=filter==name,onClick={filter=name},label={Text(name)}) }
+            listOf("All","Running","Needs attention","Completed").forEach { name -> FilterChip(selected=filter==name,onClick={filter=name},label={Text(name)}) }
         }
         Row {
             Box(Modifier.weight(1f)) {

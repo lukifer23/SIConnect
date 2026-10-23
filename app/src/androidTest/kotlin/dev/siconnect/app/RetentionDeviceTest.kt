@@ -59,11 +59,11 @@ class RetentionDeviceTest {
             SIConnectDb(context,name).use {helper->
                 helper.writableDatabase.apply {
                     execSQL("INSERT INTO agents VALUES('fixture','fixture',1,NULL,'preserved')")
-                    execSQL("DROP TABLE request_tombstones");execSQL("DROP INDEX requests_parent");version=8
+                    execSQL("DROP TABLE health_alert_state");execSQL("DROP TABLE request_tombstones");execSQL("DROP INDEX requests_parent");version=8
                 }
             }
             repeat(2) {SIConnectDb(context,name).use {helper->
-                assertEquals(9,helper.readableDatabase.version)
+                assertEquals(SIConnectDb.VERSION,helper.readableDatabase.version)
                 assertEquals("preserved",helper.readableDatabase.rawQuery("SELECT json FROM agents WHERE agent_id='fixture'",null).use {it.moveToFirst();it.getString(0)})
                 assertEquals(0,helper.readableDatabase.rawQuery("SELECT count(*) FROM request_tombstones",null).use {it.moveToFirst();it.getInt(0)})
             }}

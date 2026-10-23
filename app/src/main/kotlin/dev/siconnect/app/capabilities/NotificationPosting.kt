@@ -12,6 +12,18 @@ import kotlinx.serialization.json.*
 
 /** A claimed alert is never blindly reposted after an interrupted result. The engine owns its record. */
 internal suspend fun postNotification(g:RuntimeGraph,a:JsonObject,ctx:ExecutionContext):JsonObject {
+    (a["healthCheck"] as? JsonObject)?.let {health->
+        if(a["deduplicationKey"]!=null) throw CapabilityException("INVALID_ARGUMENT","Choose health cooldown or a one-time deduplication key",noSideEffects=true)
+        if(!g.context.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
+            throw CapabilityException("PERMISSION_REQUIRED","Notification access was revoked",noSideEffects=true)
+        return g.healthAlerts.dispatch(ctx.agentId,ctx.requestId,health,clear={tag->
+            val nm=g.context.getSystemService(NotificationManager::class.java)
+            if(nm.activeNotifications.any {it.tag==tag && it.id==0}) nm.cancel(tag,0)
+            var removed=false
+            repeat(20) {if(!removed) {removed=nm.activeNotifications.none {it.tag==tag && it.id==0};if(!removed) delay(20)}}
+            removed
+        }) {tag->postObservedNotification(g,a,tag,0,false)}
+    }
     val key=a["deduplicationKey"]?.jsonPrimitive?.content
     val hash=key?.let(Settings::sha256Hex)
     if(hash!=null) {
@@ -38,8 +50,15 @@ internal suspend fun postNotification(g:RuntimeGraph,a:JsonObject,ctx:ExecutionC
     if(!nm.areNotificationsEnabled()) throw CapabilityException("PERMISSION_REQUIRED","Notification access was revoked",noSideEffects=true)
     val tag=hash?.let {"siconnect:"+Settings.sha256Hex(ctx.agentId+":"+it)}
     val id=if(tag==null) ctx.requestId.hashCode() else 0
+    return postObservedNotification(g,a,tag,id,key!=null)
+}
+
+/** A stable health tag updates one active notification; suppression is decided before this method. */
+private suspend fun postObservedNotification(g:RuntimeGraph,a:JsonObject,tag:String?,id:Int,onlyOnce:Boolean):JsonObject {
+    val nm=g.context.getSystemService(NotificationManager::class.java)
+    if(!nm.areNotificationsEnabled()) throw CapabilityException("PERMISSION_REQUIRED","Notification access was revoked",noSideEffects=true)
     val notification=Notification.Builder(g.context,"messages").setSmallIcon(R.drawable.ic_stat).setContentTitle(a.str("title"))
-        .setContentText(a.str("text")).setAutoCancel(true).setOnlyAlertOnce(key!=null).build()
+        .setContentText(a.str("text")).setAutoCancel(true).setOnlyAlertOnce(onlyOnce).build()
     if(tag==null) nm.notify(id,notification) else nm.notify(tag,id,notification)
     var observed=false
     repeat(20) {

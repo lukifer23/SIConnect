@@ -13,7 +13,7 @@ object AutomationTemplates {
         SkillStep("status","device.status"),SkillStep("battery","device.battery"),SkillStep("memory","device.memory")),
         output=buildJsonObject {put("device","\${steps.status.output}");put("battery","\${steps.battery.output}");put("memory","\${steps.memory.output}")})
 
-    fun health():SkillDefinition {
+    fun healthV2():SkillDefinition {
         fun compare(op:String,left:String,right:JsonElement)=buildJsonObject {put("op",op);put("left",left);put("right",right)}
         fun group(op:String,vararg conditions:JsonObject)=buildJsonObject {put("op",op);put("args",JsonArray(conditions.toList()))}
         val warning=group("and",compare("eq","\${input.notifyProblems}",JsonPrimitive(true)),group("or",
@@ -34,9 +34,28 @@ object AutomationTemplates {
             }))
     }
 
-    fun requestedCapabilities(definition:SkillDefinition,inputs:JsonObject):List<String> = definition.steps
-        .filterNot {definition.id==HEALTH_SKILL && definition==health() && it.id=="warn" && inputs["notifyProblems"]?.jsonPrimitive?.booleanOrNull!=true}
-        .map {it.capability}.distinct()
+    fun health():SkillDefinition {
+        val old=healthV2()
+        val extra=objectSchema {
+            prop("cooldownMinutes",false,buildJsonObject {put("type","integer");put("description","Warning cooldown (minutes)");put("minimum",15);put("maximum",1440);put("default",60)})
+            prop("repeatPersistent",false,buildJsonObject {put("type","boolean");put("description","Remind about unchanged warnings after cooldown");put("default",false)})
+        }
+        val properties=JsonObject(old.inputs.getValue("properties").jsonObject+extra.getValue("properties").jsonObject)
+        val healthArgs=buildJsonObject {
+            listOf("battery","memory","storage","thermal").forEach {put(it,"\${steps.$it.output}")}
+            put("minimumBatteryPercent","\${input.minimumBatteryPercent}");put("cooldownMinutes","\${input.cooldownMinutes}");put("repeatPersistent","\${input.repeatPersistent}")
+        }
+        return old.copy(version=3,inputs=JsonObject(old.inputs+("properties" to properties)),
+            steps=old.steps.dropLast(1)+old.steps.last().copy(args=JsonObject(old.steps.last().args+("healthCheck" to healthArgs)),
+                `when`=buildJsonObject {put("op","eq");put("left","\${input.notifyProblems}");put("right",true)}),
+            output=JsonObject(old.output+("warning" to JsonPrimitive("\${steps.warn.output}"))))
+    }
+
+    fun upgradeableHealth(definition:SkillDefinition)=definition==legacyHealth() || definition==healthV2()
+    fun requestedCapabilities(definition:SkillDefinition,inputs:JsonObject):List<String> {
+        val skipWarning=definition.id==HEALTH_SKILL && (definition==health() || definition==healthV2()) && inputs["notifyProblems"]?.jsonPrimitive?.booleanOrNull!=true
+        return definition.steps.filterNot {skipWarning && it.id=="warn"}.map {it.capability}.distinct()
+    }
 
     const val NOTICE_SKILL="reminders.recurring_notice"
     fun notice()=SkillDefinition(NOTICE_SKILL,1,"Post a native reminder notification when the generic schedule fires.",

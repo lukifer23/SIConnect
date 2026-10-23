@@ -18,7 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
-enum class ConnectionState { DISABLED, CONNECTING, AUTHENTICATING, ONLINE, BACKOFF, AUTH_FAILED }
+enum class ConnectionState { DISABLED, CONNECTING, AUTHENTICATING, ONLINE, BACKOFF, AUTH_FAILED, BACKGROUND_BLOCKED }
 
 /** Outbound authenticated device socket. Each invocation additionally carries its agent credential. */
 class GatewayConnection(private val g: RuntimeGraph) {
@@ -61,6 +61,13 @@ class GatewayConnection(private val g: RuntimeGraph) {
         stop()
         g.settings.setGateway(g.settings.gateway.value.copy(enabled=false))
         recordEvent(Event(System.currentTimeMillis(),eventType="gateway.paused",deviceId=g.settings.deviceId))
+    }
+    internal fun backgroundStartBlocked(error:String) {
+        if(!g.settings.gateway.value.enabled || state.value !in setOf(ConnectionState.DISABLED,ConnectionState.BACKGROUND_BLOCKED)) return
+        val first=state.value!=ConnectionState.BACKGROUND_BLOCKED
+        detail.value="Android blocked background reconnection. Open SIConnect and review background access. Native schedules remain available."
+        state.value=ConnectionState.BACKGROUND_BLOCKED
+        if(first) g.scope.launch {g.ready.await();recordEvent(Event(System.currentTimeMillis(),eventType="gateway.recovery.blocked",deviceId=g.settings.deviceId,errorCode=error,detail="Android prevented the saved gateway service from starting"))}
     }
     @Synchronized fun start() {
         if(loop?.isActive==true) return
@@ -186,9 +193,18 @@ class GatewayConnection(private val g: RuntimeGraph) {
 class ConnectionService: Service() {
     override fun onBind(i: Intent?)=null
     override fun onStartCommand(i: Intent?,flags: Int,startId: Int): Int {
+        if(!graph.settings.gateway.value.enabled) {stopSelf(startId);return START_NOT_STICKY}
         startForeground(880,Notification.Builder(this,"connection").setSmallIcon(R.drawable.ic_stat).setContentTitle("SIConnect remote bridge")
             .setContentText("Owner-enabled authenticated gateway connection").setOngoing(true).build())
         graph.gateway.start(); return START_STICKY
     }
     override fun onDestroy() { graph.gateway.stop(); super.onDestroy() }
+    companion object {
+        /** Same idempotent Android service from Activity, system receiver or headless initialization. */
+        fun restoreOwnerEnabled(g:RuntimeGraph) {
+            if(!g.settings.gateway.value.enabled) return
+            try {g.context.startForegroundService(Intent(g.context,ConnectionService::class.java))}
+            catch(e:RuntimeException) {g.gateway.backgroundStartBlocked(e.javaClass.simpleName)}
+        }
+    }
 }

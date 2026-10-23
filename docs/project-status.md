@@ -1,5 +1,9 @@
 # Project status
 
+## Pass 12 development checkpoint
+
+Version **0.6.0-dev.4 / 12**, schema **10**, **85** capabilities. Implemented persisted health alert policy, dispatch-time policy recheck, clearer background classifications, visible Inbox decision controls and explicit remote block/disconnect/cancel controls. Future screen-off scan, owner Inbox acceptance, selected SAF CRUD, physical alert/migration/retention checks and hosted native/Binder diagnostics now have fresh evidence. Current CI and final delivery details are recorded in [engineering pass 12](engineering-pass-12.md). Calendar, cancellation, complete network/reboot matrix and signed public distribution remain unfinished.
+
 ## Background operations milestone — October 22, 2026
 
 Android **0.6.0-dev.3 / code 11**, SQLite **9**, **85** tools. Background health scans extend the existing snapshot workflow with storage/network/thermal readings, optional threshold notifications and readable stored results. The original workflow upgrades only through owner authentication; no schedule or permission is enabled automatically. Two real owner-flow manual worker runs succeeded on the Fold with six native readings each and warnings disabled. The existing schedule remains disabled. Connection pause and local history survived an in-place update; owner-authenticated resume restored the original gateway. Seven fresh hosted native/Binder checks and live SQLite integrity passed. All five original identity/grant records, reminder rows and saved automation configuration matched the private baseline. See [background operations](background-operations.md) and [pass 11 evidence](engineering-pass-11.md).

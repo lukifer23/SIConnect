@@ -154,8 +154,14 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     var advancedWeather by rememberSaveable(draft.id) {mutableStateOf(false)}
                     TextButton(onClick={advancedWeather=!advancedWeather}) {Text(if(advancedWeather) "Hide weather thresholds" else "Weather thresholds and notifications")}
                     if(advancedWeather) SchemaInputFields(definition.inputs,draft.inputs,{edit(draft.copy(inputs=it))},keys=(definition.inputs["properties"] as? JsonObject).orEmpty().keys-mainWeather-setOf("timezone"))
-                } else SchemaInputFields(definition.inputs,draft.inputs,{edit(draft.copy(inputs=it))},
-                    keys=if(definition.id==AutomationTemplates.NOTICE_SKILL) setOf("text") else null)
+                } else {
+                    SchemaInputFields(definition.inputs,draft.inputs,{edit(draft.copy(inputs=it))},
+                        keys=when {definition.id==AutomationTemplates.NOTICE_SKILL->setOf("text")
+                            definition.id==AutomationTemplates.HEALTH_SKILL && draft.inputs["notifyProblems"]?.jsonPrimitive?.booleanOrNull!=true->setOf("notifyProblems")
+                            else->null})
+                    if(definition.id==AutomationTemplates.HEALTH_SKILL && definition.version>=3 && draft.inputs["notifyProblems"]?.jsonPrimitive?.booleanOrNull==true)
+                        Text("Unchanged warnings stay quiet unless reminders are enabled. Critical conditions can remind at least hourly. Threshold hysteresis reduces repeated alerts near a boundary.",style=MaterialTheme.typography.bodySmall)
+                }
                 HorizontalDivider()
                 Text("When",style=MaterialTheme.typography.titleMedium)
                 ChoiceField("Repeat",RecurrenceKind.entries.map {it.name},draft.recurrenceKind.name,{value->
@@ -264,9 +270,11 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                             val execution=inspectedRun
                             if(execution!=null) {
                                 Text("${execution.cursor} of ${execution.definition.steps.size} steps recorded",style=MaterialTheme.typography.bodySmall)
+                                Text("Started: ${formatTime(execution.startedAtMs,selected.zoneId,locale)}",style=MaterialTheme.typography.bodySmall)
+                                Text("Dispatch delay: ${((execution.startedAtMs-run.slotAt).coerceAtLeast(0))/1000} seconds",style=MaterialTheme.typography.bodySmall)
                                 if(execution.state==SkillState.AWAITING_APPROVAL) Text("Waiting for owner review. Open pending approvals; this workflow is not complete.")
                                 if(execution.definition.id==AutomationTemplates.HEALTH_SKILL)
-                                    HealthScanSummary.lines(execution.output).forEach {Text(it)}
+                                    HealthScanSummary.lines(execution.output,execution.inputs).forEach {Text(it)}
                                 if(execution.state in setOf(SkillState.READY,SkillState.RUNNING,SkillState.AWAITING_APPROVAL)) TextButton(onClick={val id=run.runId;work {g.scheduler.cancelRun(id);message="Run cancellation requested"}},enabled=!busy) {Text("Cancel this run")}
                                 var showSteps by rememberSaveable(run.runId) {mutableStateOf(false)}
                                 TextButton(onClick={showSteps=!showSteps}) {Text(if(showSteps) "Hide step details" else "Step details")}
@@ -293,12 +301,13 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     Text("Android may delay scheduled work. Workflows that use the screen or need approval require owner interaction.",style=MaterialTheme.typography.bodySmall)
                     if(skills.isEmpty()) Text("Enable an installed workflow before creating an automation.")
                 }
-                if(skills.any {it==AutomationTemplates.legacyHealth()}) item {
+                val healthUpgrade=skills.firstOrNull {AutomationTemplates.upgradeableHealth(it)}
+                if(healthUpgrade!=null) item {
                     OutlinedCard {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                         Text("Upgrade background health scans",style=MaterialTheme.typography.titleMedium)
-                        Text("Add storage, network and thermal readings to Device health snapshot. Optional warning notifications start off. Existing schedules and permissions stay as configured; future runs use the upgraded workflow.")
+                        Text("Add persisted warning cooldowns and clearer health results. Existing schedules, notification choices and permissions stay as configured; future runs use the upgraded workflow.")
                         Button(onClick={authenticate("Upgrade device health workflow",{work {
-                            g.skills.replaceIfUnchanged(AutomationTemplates.legacyHealth(),AutomationTemplates.health())
+                            g.skills.replaceIfUnchanged(healthUpgrade,AutomationTemplates.health())
                             message="Health scans upgraded. Edit an automation to configure warning notifications."
                         }},{message=it})},enabled=!busy) {Text("Upgrade health snapshot")}
                     }}
