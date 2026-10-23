@@ -1,5 +1,11 @@
 # Project status
 
+## Pass 11 checkpoint — October 22, 2026
+
+Android **0.6.0-dev.2 / code 10**, schema **9**, installed in place. CI metadata regression fixed; Linux run `39886068956` passed. UI and recovery hardening removes duplicate editors, distinguishes granted access from service connection, reuses existing gateway enrollment and serializes setup/recovery. Original identities/grants/reminders/automation were preserved. Security updates target OkHttp 5.5.1 and Bouncy Castle 1.86 with strict checksums. See [pass 11 evidence and current limitations](engineering-pass-11.md); later app/security changes require their own physical/CI results. Headless workflow expansion, connection history and owner-interactive acceptance remain active priorities.
+
+Earlier checkpoints below are historical; their versions and pending statements apply to those dates.
+
 ## Pass 10 checkpoint — October 22, 2026
 
 Current development checkpoint: **0.6.0-dev.1 / code 9**, SQLite **9**, **85** tools. Existing hosted control and fresh Grokbot native/shell calls succeeded after Mac-assisted daemon restoration. Actual phone-local pairing, raw-v2 daemon bootstrap, repeated daemon recovery, ordinary app-process recovery and an owner-approved trusted-Wi-Fi reboot passed, with hosted UID 2000. Fully unassisted fresh installation and additional network/revocation cases remain open. Existing identities/grants, three reminders and one automation were preserved. See [pass 10 evidence](engineering-pass-10.md) and [phone setup](phone-setup.md). Historical checkpoints below retain their original limits.

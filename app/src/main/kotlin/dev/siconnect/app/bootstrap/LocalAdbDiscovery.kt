@@ -13,10 +13,12 @@ internal class LocalAdbDiscovery(private val context:Context) {
     companion object {
         const val PAIRING="_adb-tls-pairing._tcp."
         const val CONNECT="_adb-tls-connect._tcp."
-        fun isLocal(host:String):Boolean = runCatching {
+        fun localAddress(host:String):java.net.InetAddress? = runCatching {
             // No DNS and no caller-supplied hostname. Compare actual assigned numeric addresses.
-            NetworkInterface.getNetworkInterfaces().toList().flatMap {it.inetAddresses.toList()}.any {it.hostAddress==host}
-        }.getOrDefault(false)
+            val numeric=android.net.InetAddresses.parseNumericAddress(host)
+            NetworkInterface.getNetworkInterfaces().toList().flatMap {it.inetAddresses.toList()}.firstOrNull {LocalAdbAddress.matches(numeric,it)}
+        }.getOrNull()
+        fun isLocal(host:String)=localAddress(host)!=null
     }
     suspend fun find(type:String,picker:Boolean,localPermission:Boolean):LocalAdbEndpoint=withContext(Dispatchers.Main) {
         require(type==PAIRING || type==CONNECT)
@@ -25,32 +27,34 @@ internal class LocalAdbDiscovery(private val context:Context) {
         val resolutions=mutableListOf<NsdManager.ResolveListener>()
         var discovery:NsdManager.DiscoveryListener?=null
         try {withTimeout(30_000) {suspendCancellableCoroutine {continuation ->
-            fun fail(message:String) {if(continuation.isActive) continuation.resumeWithException(IllegalStateException(message))}
+            fun fail(message:String,permissionDenied:Boolean=false) {
+                if(continuation.isActive) continuation.resumeWithException(if(permissionDenied) SecurityException(message) else IllegalStateException(message))
+            }
             fun resolved(info:NsdServiceInfo) {
                 val addresses=if(Build.VERSION.SDK_INT>=34) info.hostAddresses else listOfNotNull(info.host)
-                val address=addresses.firstOrNull {isLocal(it.hostAddress ?: "")} ?: return
+                val address=addresses.firstNotNullOfOrNull {localAddress(it.hostAddress ?: "")} ?: return
                 if(continuation.isActive) continuation.resume(LocalAdbEndpoint(requireNotNull(address.hostAddress),info.port))
             }
             discovery=object:NsdManager.DiscoveryListener {
                 override fun onDiscoveryStarted(type:String) {}
                 override fun onDiscoveryStopped(type:String) {}
-                override fun onStartDiscoveryFailed(type:String,error:Int) {fail(if(error==NsdManager.FAILURE_PERMISSION_DENIED) "Android denied service discovery. Choose the service in Android’s picker or grant local-network access." else "Wireless debugging discovery could not start ($error)")}
+                override fun onStartDiscoveryFailed(type:String,error:Int) {fail(if(error==NsdManager.FAILURE_PERMISSION_DENIED) "Android denied service discovery. Choose the service in Android’s picker or grant local-network access." else "Wireless debugging discovery could not start ($error)",error==NsdManager.FAILURE_PERMISSION_DENIED)}
                 override fun onStopDiscoveryFailed(type:String,error:Int) {}
                 override fun onServiceLost(info:NsdServiceInfo) {}
                 override fun onServiceFound(info:NsdServiceInfo) {
                     if(!continuation.isActive) return
                     if(Build.VERSION.SDK_INT>=34) {
                         val callback=object:NsdManager.ServiceInfoCallback {
-                            override fun onServiceInfoCallbackRegistrationFailed(error:Int) {fail("Wireless debugging resolution failed ($error)")}
+                            override fun onServiceInfoCallbackRegistrationFailed(error:Int) {fail("Wireless debugging resolution failed ($error)",error==NsdManager.FAILURE_PERMISSION_DENIED)}
                             override fun onServiceInfoCallbackUnregistered() {}
                             override fun onServiceLost() {}
                             override fun onServiceUpdated(info:NsdServiceInfo) {resolved(info)}
                         }
                         callbacks+=callback
-                        try {nsd.registerServiceInfoCallback(info,context.mainExecutor,callback)} catch(_:SecurityException) {fail("Android denied service resolution")}
+                        try {nsd.registerServiceInfoCallback(info,context.mainExecutor,callback)} catch(_:SecurityException) {fail("Android denied service resolution",true)}
                     } else {
                         val listener=object:NsdManager.ResolveListener {
-                            override fun onResolveFailed(info:NsdServiceInfo,error:Int) {fail("Wireless debugging resolution failed ($error)")}
+                            override fun onResolveFailed(info:NsdServiceInfo,error:Int) {fail("Wireless debugging resolution failed ($error)",error==NsdManager.FAILURE_PERMISSION_DENIED)}
                             override fun onServiceResolved(info:NsdServiceInfo) {resolved(info)}
                         }
                         resolutions+=listener

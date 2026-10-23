@@ -46,10 +46,20 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
     internal var permissionRevision by mutableIntStateOf(0)
     internal var permissionStatus by mutableStateOf("")
     internal val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        permissionStatus=if(grants.values.all {it}) "Requested Android access is granted." else "Android did not grant all requested access. Open app permissions to review denied or restricted access; other features remain available."
+        permissionStatus=if(grants.isEmpty()) "Android access request cancelled." else if(grants.values.all {it}) "Requested Android access is granted." else "Android did not grant all requested access. Open app permissions to review denied or restricted access; other features remain available."
+        getSharedPreferences("android_access_requests",MODE_PRIVATE).edit().apply {grants.keys.forEach {putBoolean(it,true)}}.apply()
         permissionRevision++;graph.gateway.refreshCatalog()
     }
-    override fun onResume() { super.onResume(); permissionRevision++;graph.gateway.refreshCatalog();if(::controlModel.isInitialized) controlModel.refresh() }
+    internal fun requestNativeAccess(requested:Array<String>) {
+        val missing=requested.filter {checkSelfPermission(it)!=android.content.pm.PackageManager.PERMISSION_GRANTED}
+        if(missing.isEmpty()) return
+        val history=getSharedPreferences("android_access_requests",MODE_PRIVATE)
+        if(missing.any {history.getBoolean(it,false) && !shouldShowRequestPermissionRationale(it)}) {
+            permissionStatus="Android requires you to change this access in app permissions. Other ready tools remain available."
+            startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))
+        } else permission.launch(missing.toTypedArray())
+    }
+    override fun onResume() { super.onResume(); permissionStatus="";permissionRevision++;graph.gateway.refreshCatalog();if(::controlModel.isInitialized) controlModel.refresh() }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent);setIntent(intent);permissionRevision++ }
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -111,15 +121,15 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var pairDialog by remember { mutableStateOf(false) }
         var pairCode by remember { mutableStateOf<dev.siconnect.app.transport.PairingInvitation?>(null) }
         var hasBotKey by remember { mutableStateOf(false) }
-        var pairedBot by remember { mutableStateOf<AgentRecord?>(null) }
+        var legacyCredential by remember {mutableStateOf(false)}
+        var replaceGateway by remember {mutableStateOf(false)}
+        var gatewayError by remember {mutableStateOf("")}
         var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
         var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
         var review by remember { mutableStateOf<RequestRecord?>(null) }
         var inspected by remember { mutableStateOf<RequestRecord?>(null) }
         var inspectedEvents by remember { mutableStateOf(emptyList<Event>()) }
         val bots=snapshot.agents.filterNot {it.grant.agentId.startsWith("local-")}
-        var manageBotId by rememberSaveable { mutableStateOf<String?>(null) }
-        val manageBot=bots.firstOrNull { it.grant.agentId==manageBotId }
         val labels=snapshot.agents.associate {it.grant.agentId to botDisplayName(it,snapshot.agents)}
         val reminders=snapshot.reminders
         var reminder by remember { mutableStateOf<dev.siconnect.app.capabilities.Reminder?>(null) }
@@ -151,7 +161,8 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         LaunchedEffect(pairDialog) { if(pairDialog) withContext(Dispatchers.IO) {
             g.ready.await();pairCode=g.settings.pendingPairing();pairCode?.let {pairName=it.label}
         } }
-        LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null; pairedBot=key?.let(g::authenticate) } }
+        LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null } }
+        LaunchedEffect(setup) {if(setup) {replaceGateway=false;legacyCredential=false;gatewayError=""}}
         fun copyForBot(value: String, secret: Boolean) {
             val clip=android.content.ClipData.newPlainText(if(secret) "SIConnect bot key" else "SIConnect MCP address",value)
             if(secret && android.os.Build.VERSION.SDK_INT>=33) clip.description.extras=android.os.PersistableBundle().apply {
@@ -162,15 +173,14 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         }
         ControlCenterNavigation(destination,{destination=it}) {wide ->
             when(destination) {
-                Destination.HOME -> HomeDashboard(snapshot,wide,connection,connectionDetail,health.startsWith("Ready"),g.privileged.available(),g.privileged.kind.name,if(g.settings.privilegeBackend=="shizuku") shizuku else direct,controls,
+                Destination.HOME -> HomeDashboard(snapshot,wide,connection,connectionDetail,health.startsWith("Ready"),g.privileged.available(),controls,
                     measurements,busy,note,onReview={reviewId=it.requestId;review=it},onRequest={id->work {inspected=g.requests.get(id)}},
                     onAgent={selectedAgentId=it;destination=Destination.AGENTS},onAgents={destination=Destination.AGENTS},
                     onConnect={setup=true},onRestore={controlHelp=true},onAutomations={destination=Destination.AUTOMATIONS},onActivity={destination=Destination.ACTIVITY},
                     onHealth={work {val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime"),Origin.LOCAL_OWNER);require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Health unavailable"};measurements=r.result!!.output.jsonObject}},
                     onStop={g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=false))},
                     onResume={ownerAuthentication.authenticate("Resume remote requests",{g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=true))},{note=it})},
-                    onEnableSemantic={startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))},
-                    onEnableNotifications={startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))},onInbox={inbox=true},onSetup={nativeSetup=true})
+                    onInbox={inbox=true},onSetup={destination=Destination.SETTINGS})
                 Destination.AGENTS -> AgentsScreen(snapshot,wide,selectedAgentId,
                     onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
                     onFamily={id,family,enabled->
@@ -184,7 +194,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     })
                 Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier.padding(16.dp))
                 Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id}) {id->work {inspected=g.requests.get(id)}}
-                Destination.SETTINGS -> Management("Settings")
+                Destination.SETTINGS -> Management("Settings",onSetup={nativeSetup=true},onGateway={setup=true},onAdvancedControl={controlHelp=true})
             }
         }
         if(activity) ActivityDialog(g.requests,snapshot.revision,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> work {inspected=g.requests.get(id)}})
@@ -192,64 +202,53 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             val r=requireNotNull(g.requests.get(id));inbox=false
             if(r.state==RequestState.AWAITING_APPROVAL) {reviewId=id;review=r} else inspected=r
         }})
-        manageBot?.let { bot -> AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text(botDisplayName(bot,bots))},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.55f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            listOf("apps" to ("Apps" to "Install, inspect and remove apps. Sensitive actions still ask first."),
-                "files" to ("Managed files" to "SIConnect’s own files only. Other apps’ private data stays isolated."),
-                "calendar" to ("Calendar" to "Read and manage selected calendars after Android calendar access is enabled."),
-                "ui" to ("Shared screen" to "Reserve the shared screen for coordinated app actions. Broad shell remains separate."),
-                "documents" to ("Selected folders" to "Use only folders you connect through Android’s document picker."),
-                "weather" to ("Weather" to "Forecasts and deterministic commute calculations; reminders follow their own permission.")).forEach { (family,text) ->
-                Row(verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {Text(text.first);Text(text.second,style=MaterialTheme.typography.bodySmall)}
-                    val allowed=bot.grant.scopes.any {it=="*" || it=="$family.*"} && bot.grant.denied.none {it=="*" || it=="$family.*"}
-                    Switch(allowed,{enabled ->
-                        val apply={work {g.setCapabilityFamilyFromOwner(bot.grant.agentId,family,enabled);note="${text.first} permission saved for ${botDisplayName(bot,bots)}"}}
-                        if(enabled) ownerAuthentication.authenticate("Allow ${text.first}",apply,{note=it}) else apply()
-                    },enabled=!busy)
-                }
-            }
-            if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if(note.isNotBlank()) Text(note)
-            Text("Permissions are saved on this phone. This screen stays open until you tap Done. Ask your bot to retry after changing a permission. Previously denied requests stay denied.")
-            if(bot.grant.shellMode==ShellMode.BROAD) OutlinedButton(onClick={manageBotId=null;work {g.setShellPermissionFromOwner(bot.grant.agentId,false)}}) {Text("Ask before device control")}
-            else OutlinedButton(onClick={manageBotId=null;allowBot=bot}) {Text("Always allow device control…")}
-            if(bot.grant.agentId.startsWith("bot_")) OutlinedButton(onClick={ownerAuthentication.authenticate("Reconnect selected bot",{work {
-                pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label
-                manageBotId=null;pairError="";pairDialog=true
-            }},{note=it})},enabled=!busy) {Text("Reconnect this bot")}
-            TextButton(onClick={manageBotId=null;work {g.revokeAgentFromOwner(bot.grant.agentId)}}) {Text("Revoke this bot",color=MaterialTheme.colorScheme.error)}
-        }},confirmButton={TextButton(onClick={manageBotId=null}) {Text("Done")}}) }
         if(nativeSetup) NativeSetup(onClose={nativeSetup=false},onGateway={nativeSetup=false;setup=true},onAgents={nativeSetup=false;destination=Destination.AGENTS},onAdvanced={nativeSetup=false;controlHelp=true})
         if(controlHelp) AdvancedControlSetup {controlHelp=false}
-        if(setup) AlertDialog(onDismissRequest={setup=false},title={Text("Connect AI agent")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Your gateway is connected. Add the MCP address and your agent key to your bot." else "Paste your SIConnect setup code. It connects this phone to your private gateway.")
+        if(setup) AlertDialog(onDismissRequest={setup=false;connectionCode=""},title={Text("Gateway connection")},text={Column(
+            Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),
+            verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected. This phone can receive authorized agent requests." else connectionDetail)
             if(config.baseUrl.isNotBlank()) {
                 Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
-                OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) { Text("Copy address") }
+                OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) {Text("Copy MCP address")}
+                if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE) Button(onClick={
+                    val reconnect={work {
+                        g.gateway.stop();g.settings.setGateway(g.settings.gateway.value.copy(enabled=true))
+                        withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
+                    }}
+                    if(config.enabled) reconnect() else ownerAuthentication.authenticate("Enable existing gateway",reconnect,{gatewayError=it})
+                },enabled=!busy) {Text("Reconnect existing gateway")}
+                TextButton(onClick={setup=false;destination=Destination.AGENTS}) {Text("Manage AI agents")}
+                TextButton(onClick={replaceGateway=!replaceGateway}) {Text(if(replaceGateway) "Keep existing gateway" else "Use a different gateway")}
             }
-            OutlinedButton(onClick={ownerAuthentication.authenticate("Manage bot pairing",{pairDialog=true;setup=false},{note=it})},enabled=connection==dev.siconnect.app.transport.ConnectionState.ONLINE) { Text("Pair another bot") }
-            if(hasBotKey) Button(onClick={ownerAuthentication.authenticate("Copy bot credential",{work {
-                val token=requireNotNull(g.botKeyForOwner()) { "This bot key was revoked. Pair a new agent in Advanced." }
-                withContext(Dispatchers.Main) { copyForBot(token,true) }
-            }},{note=it})},enabled=!busy) { Text("Copy bot key") }
-            pairedBot?.let { a ->
-                Text(if(a.grant.shellMode==ShellMode.BROAD) "Device control: always allowed" else "Device control: ask each time")
-                if(a.grant.shellMode!=ShellMode.BROAD) OutlinedButton(onClick={allowBot=a}) {Text("Always allow device control…")}
-                else TextButton(onClick={work {g.setShellPermissionFromOwner(a.grant.agentId,false)}}) {Text("Ask each time again")}
+            if(config.baseUrl.isBlank() || replaceGateway) {
+                Text("Paste the secure setup code from your existing gateway. Cloudflare provisioning is separate.")
+                OutlinedTextField(connectionCode,{connectionCode=it;gatewayError=""},label={Text("Gateway setup code")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),maxLines=3,modifier=Modifier.fillMaxWidth())
+                Button(onClick={
+                    val parsed=runCatching {dev.siconnect.app.bootstrap.GatewaySetupCode.parse(connectionCode)}
+                    if(parsed.isFailure) gatewayError=parsed.exceptionOrNull()?.message ?: "Invalid setup code"
+                    else ownerAuthentication.authenticate("Enroll with this gateway",{work {
+                        val code=parsed.getOrThrow()
+                        g.gateway.stop();g.settings.setEnrollToken(code.enrollment)
+                        g.settings.setGateway(GatewayConfig(code.endpoint,true));g.settings.enrolled=false
+                        withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
+                        connectionCode="";setup=false;note="Connecting your phone…"
+                    }},{gatewayError=it})
+                },enabled=connectionCode.isNotBlank() && !busy) {Text("Connect gateway")}
             }
-            if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE) OutlinedTextField(connectionCode,{connectionCode=it},label={Text("Setup code")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),maxLines=3)
-        }},confirmButton={TextButton(onClick={
-            val selectedCode=connectionCode
-            ownerAuthentication.authenticate("Enroll with this gateway",{work {
-                val code=dev.siconnect.app.bootstrap.GatewaySetupCode.parse(selectedCode)
-                g.gateway.stop()
-                g.settings.setEnrollToken(code.enrollment)
-                g.settings.setGateway(GatewayConfig(code.endpoint,true));g.settings.enrolled=false
-                withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
-                connectionCode="";setup=false;note="Connecting your phone…"
-            }},{note=it})
-        },enabled=connectionCode.isNotBlank() && !busy) {Text("Connect")}},dismissButton={TextButton(onClick={setup=false;connectionCode=""}) {Text("Close")}})
-        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair a new bot" else "Continue pairing ${pairCode!!.label}")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            if(gatewayError.isNotBlank()) Text(gatewayError,color=MaterialTheme.colorScheme.error)
+            if(hasBotKey) {
+                TextButton(onClick={legacyCredential=!legacyCredential}) {Text(if(legacyCredential) "Hide legacy credential" else "Advanced: existing bearer credential")}
+                if(legacyCredential) {
+                    Text("This is the existing shared bearer identity. Manage its permissions in Agents. Copying it does not create another agent.",style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick={ownerAuthentication.authenticate("Copy existing bearer credential",{work {
+                        val token=requireNotNull(g.botKeyForOwner()) {"Existing credential is unavailable; inspect Agents"}
+                        withContext(Dispatchers.Main) {copyForBot(token,true)}
+                    }},{gatewayError=it})},enabled=!busy) {Text("Copy existing credential")}
+                }
+            }
+        }},confirmButton={TextButton(onClick={setup=false;connectionCode="";gatewayError=""}) {Text("Done")}})
+        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair a new bot" else "Continue pairing ${pairCode!!.label}")},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
             if(pairCode==null) {
@@ -284,7 +283,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Text("${actionStateLabel(r.state)} · ${labels[r.agentId] ?: r.agentId}")
                 r.policy?.let {Text(it.reason)}
                 if(r.state==RequestState.DENIED && r.policy?.rule in setOf("agent_scope","agent_denylist") && bots.any {it.grant.agentId==r.agentId}) {
-                    Button(onClick={inspected=null;activity=false;note="";manageBotId=r.agentId}) {Text("Review this bot’s permissions")}
+                    Button(onClick={inspected=null;activity=false;note="";selectedAgentId=r.agentId;destination=Destination.AGENTS}) {Text("Review this bot’s permissions")}
                 }
                 Text("Request: ${r.requestId}\nBackend: ${r.result?.backend ?: r.selectedBackend ?: "not executed"}")
                 r.assessment?.shellCommand?.let { Text(it) }

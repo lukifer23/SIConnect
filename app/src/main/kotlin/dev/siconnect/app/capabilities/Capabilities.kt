@@ -11,6 +11,7 @@ import dev.siconnect.app.RuntimeGraph
 import dev.siconnect.app.backend.*
 import dev.siconnect.app.data.AppJson
 import dev.siconnect.app.notifications.NotificationCaptureService
+import dev.siconnect.app.notifications.NotificationListenerAccess
 import dev.siconnect.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -78,7 +79,9 @@ fun registerCapabilities(g: RuntimeGraph) {
             status.detail?.let {put("detail",it)}
         }})
     }
-    op("device.runtime", "SIConnect process and connection resource measurements") { _, _ ->
+    op("device.runtime", "SIConnect process and connection resource measurements",objectSchema {
+        boolean("checkDatabase","Opt in to an on-demand SQLite integrity check; omitted for ordinary resource sampling")
+    }) { args, _ ->
         val memory=Debug.MemoryInfo().also(Debug::getMemoryInfo)
         val dbFile=c.getDatabasePath("siconnect.db")
         buildJsonObject {
@@ -89,6 +92,10 @@ fun registerCapabilities(g: RuntimeGraph) {
             put("appUidRxBytes",android.net.TrafficStats.getUidRxBytes(Process.myUid()))
             put("appUidTxBytes",android.net.TrafficStats.getUidTxBytes(Process.myUid()))
             put("databaseBytes",dbFile.length());put("databaseWalBytes",java.io.File(dbFile.path+"-wal").length())
+            if(args["checkDatabase"]?.jsonPrimitive?.booleanOrNull==true) {
+                val healthy=g.db.readableDatabase.rawQuery("PRAGMA quick_check(1)",null).use {it.moveToFirst() && it.getString(0)=="ok"}
+                put("databaseIntegrity",if(healthy) "OK" else "CHECK_FAILED")
+            }
             try {
                 val storage=c.getSystemService(android.app.usage.StorageStatsManager::class.java)
                     .queryStatsForUid(c.applicationInfo.storageUuid,Process.myUid())
@@ -137,12 +144,12 @@ fun registerCapabilities(g: RuntimeGraph) {
         notifyAvailable, { "Allow SIConnect notifications in Android settings" }) { a, ctx ->
         postNotification(g,a,ctx)
     }
-    val listenerAvailable = { if (NotificationCaptureService.instance != null) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED }
-    op("notifications.list", "Active notification metadata", available = listenerAvailable, detail = { "Enable notification listener access; notification bodies are excluded" }) { _, _ ->
-        JsonArray((NotificationCaptureService.instance ?: throw CapabilityException("PERMISSION_REQUIRED", "Notification listener disconnected")).metadata().take(200).map { n -> buildJsonObject { put("key", n.key); put("package", n.packageName); put("postTime", n.postTime); put("ongoing", n.isOngoing) } })
+    val listenerAvailable = { NotificationListenerAccess.availability(c) }
+    op("notifications.list", "Active notification metadata", available = listenerAvailable, detail = { NotificationListenerAccess.detail(c) }) { _, _ ->
+        JsonArray(NotificationListenerAccess.requireConnected(c).metadata().take(200).map { n -> buildJsonObject { put("key", n.key); put("package", n.packageName); put("postTime", n.postTime); put("ongoing", n.isOngoing) } })
     }
     op("notifications.dismiss", "Dismiss notification", objectSchema { string("key", "Exact notification key", true, maxLength=1000) }, RiskClass.MODERATE_IMPACT, listenerAvailable) { a, _ ->
-        (NotificationCaptureService.instance ?: throw CapabilityException("PERMISSION_REQUIRED", "Listener disconnected")).cancelNotification(a.str("key")); buildJsonObject { put("dispatched", true) }
+        NotificationListenerAccess.requireConnected(c).cancelNotification(a.str("key")); buildJsonObject { put("dispatched", true) }
     }
     // All privileged tools use the same explicitly selected backend.
     fun shell(id: String, title: String, schema: JsonObject, risk: RiskClass = RiskClass.HIGH_IMPACT,

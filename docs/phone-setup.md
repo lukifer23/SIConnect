@@ -1,16 +1,16 @@
 # Phone setup and advanced control
 
-Status: development build **0.6.0-dev.1 / code 9**, SQLite **9**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
+Status: development build **0.6.0-dev.2 / code 10**, SQLite **9**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
 
 ## Start with native features
 
-Install an APK signed with the certificate already trusted by the existing installation. Open Home → Setup and readiness. The setup screen separates welcome, Android access, native readiness, gateway enrollment, AI-agent connection, optional advanced control, background operation and verification. Request only the access needed for the intended workflow. Notification listener, Accessibility, exact alarms and selected document folders use their Android special-access/picker screens; a runtime permission does not grant those services.
+Install an APK signed with the certificate already trusted by the existing installation. Open Home → Access (or Settings). Use Guided setup and verification for the optional walkthrough. The setup screen separates welcome, Android access, native readiness, gateway enrollment, AI-agent connection, optional advanced control, background operation and verification. Request only the access needed for the intended workflow. Notification listener, Accessibility, exact alarms and selected document folders use their Android special-access/picker screens; a runtime permission does not grant those services.
 
 Calendar access requires the appropriate runtime permissions. SAF access requires an owner-selected folder. Weather requires an explicitly configured location. Native diagnostics and permitted native operations remain usable while advanced control is unavailable.
 
 ## Connect AI agent
 
-Use the existing gateway or an owner-provided secure setup code. Gateway setup accepts bounded JSON (or its base64 representation) containing `url` and `enroll`; review the HTTPS origin before owner authentication. This does not provision Cloudflare infrastructure. Obtain enrollment material through the existing authenticated gateway administration path; never post it in an issue. Then connect the external AI client using its existing OAuth or private bearer flow. Do not recreate a working agent to fix an unrelated Android ADB problem.
+Home → Gateway shows the existing connection and MCP address. If it is offline, Reconnect existing gateway reuses its enrollment and credentials. Manage AI agents opens the existing Agents screen. Use a secure setup code only for an unconfigured or deliberately changed gateway. Gateway setup accepts bounded JSON (or its base64 representation) containing `url` and `enroll`; review the HTTPS origin before owner authentication. This does not provision Cloudflare infrastructure. Obtain enrollment material through the existing authenticated gateway administration path; never post it in an issue. Then connect the external AI client using its existing OAuth or private bearer flow. Do not recreate a working agent to fix an unrelated Android ADB problem.
 
 ## Enable advanced device control
 
@@ -26,7 +26,7 @@ Pairing and connection ports are different and dynamic. Never use a remembered p
 
 ## Recovery and durability
 
-The private RSA host key is nonexportable in Android Keystore. A successful pairing timestamp and owner recovery preference persist locally. Reuse the identity rather than repeatedly pairing; **Forget local pairing** is an explicit owner-authenticated reset and does not reset gateway/agent identities.
+The private RSA host key is nonexportable in Android Keystore. A successful pairing timestamp and owner recovery preference persist locally. Reuse the identity rather than repeatedly pairing; **Authorize this phone again** re-pairs the same key if Android has forgotten it. **Forget local pairing** is a separate explicit owner-authenticated reset and does not reset gateway/agent identities.
 
 After successful pairing, **Restore control** finds the current connection endpoint. The opt-in **Reconnect automatically** setting attempts bounded recovery on runtime initialization, Binder loss and Wi-Fi transition, using only the saved identity. It never enables debugging, pairs with a new code, modifies secure settings or switches backend silently. Retries use delays of 0, 15 and 60 seconds; exhausted attempts require owner action. There is no continuously running ADB client/server for ordinary tool execution.
 
@@ -36,7 +36,7 @@ An app-process restart, APK replacement, privileged-daemon death, Android force-
 
 Keep the current Android pairing dialog visible. Confirm that **Find this phone** resolved the pairing service and that the code belongs to that same open dialog. After reopening Android’s dialog, find the phone again: the old pairing endpoint may be stale. Clear/re-enter the current code locally. Check local-network permission only when using manual/broad discovery, and distinguish permission failure, service-discovery timeout, TLS rejection, SPAKE/code rejection and Binder-attachment failure. An error is not evidence that the previous agent connection was deleted.
 
-If bundled control is already available, Check status reports that actual Binder identity. If control is missing, native tools remain available. The existing authorized-workstation recovery script remains available for development diagnostics; see [development setup](development-setup.md). Do not rotate keys, uninstall the app or clear app data as routine troubleshooting.
+If bundled control is already available, Check connection verifies a fresh `id -u` command through Binder; full identity output is in Advanced options. If control is missing, native tools remain available. The existing authorized-workstation recovery script remains available for development diagnostics; see [development setup](development-setup.md). Do not rotate keys, uninstall the app or clear app data as routine troubleshooting.
 
 ## Install and update
 

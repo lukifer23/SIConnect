@@ -56,7 +56,7 @@ class ControlCenterDeviceTest {
             click("Automations");text("Unsaved disposable form")
             scenario.recreate();text("Unsaved disposable form")
             click("Back");text("Discard unsaved changes?");click("Discard changes")
-            click("Settings");text("Capabilities")
+            click("Settings");text("Android access")
             assertEquals(before,g.scheduler.all().map {it.id}.toSet())
         }
     }

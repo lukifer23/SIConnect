@@ -13,8 +13,7 @@ import kotlinx.serialization.json.*
 
 /** Published notification actions only: no private SMS/RCS database access or inferred recipients. */
 fun registerNotificationActionCapabilities(g:RuntimeGraph) {
-    fun listener()=NotificationCaptureService.instance
-        ?: throw CapabilityException("PERMISSION_REQUIRED","Enable notification-listener access on this phone",noSideEffects=true)
+    fun listener()=NotificationListenerAccess.requireConnected(g.context)
     fun referenceSchema(reply:Boolean=false)=objectSchema {
         string("key","Exact active notification key from notifications.list",true,maxLength=2000)
         string("packageName","Exact originating package returned by discovery",true,maxLength=200)
@@ -58,8 +57,8 @@ fun registerNotificationActionCapabilities(g:RuntimeGraph) {
                 sideEffects=if(risk==RiskClass.READ_ONLY) emptyList() else listOf("Executes another app's published PendingIntent; may send external communication or change device/app state"),
                 reversibility=if(risk==RiskClass.READ_ONLY) Reversibility.NOT_APPLICABLE else Reversibility.IRREVERSIBLE,
                 retryable=false,verification="Live action identity revalidated before dispatch; external outcome is unverified")
-            override fun availability()=if(NotificationCaptureService.instance!=null) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED
-            override fun availabilityDetail()="Enable SIConnect notification-listener access in Android settings. Only actions actually published by an accessible current-user notification are supported."
+            override fun availability()=NotificationListenerAccess.availability(g.context)
+            override fun availabilityDetail()=NotificationListenerAccess.detail(g.context)
             override fun assess(args:JsonObject)=RiskAssessment(risk,title,target=args["packageName"]?.jsonPrimitive?.content,
                 sideEffects=descriptor.sideEffects,reversibility=descriptor.reversibility,externalCommunication=risk>RiskClass.READ_ONLY)
             override suspend fun execute(args:JsonObject,ctx:ExecutionContext)=body(args,ctx)

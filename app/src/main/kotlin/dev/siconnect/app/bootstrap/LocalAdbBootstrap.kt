@@ -13,7 +13,7 @@ import io.github.muntashirakon.adb.AdbConnection
 import io.github.muntashirakon.adb.PairingConnectionCtx
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.flow.update
 import java.io.Closeable
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -24,8 +24,7 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
     val status=MutableStateFlow(BootstrapStatus())
     private val identity=AdbHostIdentity(context)
     private val discovery=LocalAdbDiscovery(context)
-    private val mutex=Mutex()
-    private var job:Job?=null
+    private val operations=BootstrapOperations(scope) {busy->status.update {it.copy(busy=busy)}}
     private val connectivity=context.getSystemService(android.net.ConnectivityManager::class.java)
     private var recoveryCallback:android.net.ConnectivityManager.NetworkCallback?=null
     private var recoveryNetwork:android.net.Network?=null
@@ -34,10 +33,12 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
     val pairedAt:Long get()=identity.pairedAt
     val lastBootstrap:Long get()=identity.lastBootstrap
     val recoveryEnabled:Boolean get()=identity.recover
+    val recovery=MutableStateFlow(identity.recover)
     val fingerprint=MutableStateFlow<String?>(null)
     val lastFailure=MutableStateFlow<String?>(null)
     fun setRecoveryFromOwner(enabled:Boolean) {
         identity.recover=enabled
+        recovery.value=identity.recover
         if(enabled) {observeRecoveryNetwork();recoverIfEnabled()} else {stopRecoveryObservers();cancel()}
     }
     @Synchronized private fun stopRecoveryObservers() {
@@ -46,10 +47,13 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
         authorityObserver?.cancel();authorityObserver=null
     }
     @Synchronized private fun observeRecoveryNetwork() {
-        if(identity.recover && authorityObserver==null) authorityObserver=scope.launch {
-            DirectAuthority.status.collect {
-                if(DirectAuthority.service?.asBinder()?.isBinderAlive!=true) recoverIfEnabled()
+        if(identity.recover && authorityObserver==null) {
+            authorityObserver=scope.launch(start=CoroutineStart.LAZY) {
+                DirectAuthority.status.collect {
+                    if(DirectAuthority.service?.asBinder()?.isBinderAlive!=true) recoverIfEnabled()
+                }
             }
+            authorityObserver?.start()
         }
         if(recoveryCallback!=null || !identity.recover) return
         val callback=object:android.net.ConnectivityManager.NetworkCallback() {
@@ -65,28 +69,29 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
         recoveryCallback=callback
     }
     fun resetIdentityFromOwner()=launch {
-        identity.reset();stopRecoveryObservers();fingerprint.value=null
-        status.value=BootstrapStatus(BootstrapPhase.PAIRING_REQUIRED,"Local host identity removed. Forget SIConnect in Android’s paired devices, then pair again. Existing agents and gateway identity are unchanged.")
+        stopRecoveryObservers()
+        try {identity.reset()} finally {recovery.value=identity.recover}
+        fingerprint.value=null
+        publish(BootstrapStatus(BootstrapPhase.PAIRING_REQUIRED,"Local host identity removed. Forget SIConnect in Android’s paired devices, then pair again. Existing agents and gateway identity are unchanged."))
     }
-    fun cancel() {job?.cancel()}
+    fun cancel() {operations.cancel()}
+    private fun publish(value:BootstrapStatus) {status.value=value.copy(busy=operations.busy)}
     fun refresh() {
         if(status.value.busy) return
-        launch {checkStatus()}
+        launch(BootstrapOperations.Kind.REFRESH) {checkStatus()}
     }
     private suspend fun checkStatus() {
         fingerprint.value=identity.existing()?.fingerprint
         val service=DirectAuthority.service
         if(service?.asBinder()?.isBinderAlive==true) {
-            val actual=withContext(Dispatchers.IO) {service.identity()}
-            check(actual.startsWith("uid=2000(")) {"Bundled authority did not report shell UID 2000"}
-            status.value=BootstrapStatus(BootstrapPhase.PRIVILEGED_READY,"Bundled Binder service attached. Check advanced control to verify a fresh shell command.",identity=actual)
+            verifyBinder(SystemClock.elapsedRealtime())
         } else {
             val debugging=android.provider.Settings.Global.getInt(context.contentResolver,"adb_wifi_enabled",0)==1
-            status.value=when {
+            publish(when {
                 !debugging -> BootstrapStatus(BootstrapPhase.DEBUGGING_DISABLED,"Wireless debugging is disabled. Enable it in Developer options on a trusted Wi-Fi network. Native features remain available.")
                 identity.pairedAt==0L -> BootstrapStatus(BootstrapPhase.PAIRING_REQUIRED,"Pair this phone’s SIConnect host identity with Android Wireless debugging.")
                 else -> BootstrapStatus(BootstrapPhase.PAIRED,"A previous pairing is saved; Android trust is verified only by a fresh authenticated connection. Find the current connection port to restore control.")
-            }
+            })
         }
     }
     suspend fun discover(pairing:Boolean,picker:Boolean):LocalAdbEndpoint {
@@ -96,27 +101,27 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
     }
     fun manualEndpoint(host:String,port:String):LocalAdbEndpoint {
         require(hasLocalPermission) {"Local-network access is required for manual connection on Android 17"}
-        require(LocalAdbDiscovery.isLocal(host)) {"Only an address assigned to this phone is accepted"}
-        return LocalAdbEndpoint(host,BootstrapContract.port(port),requiresLocalPermission=true)
+        val local=LocalAdbDiscovery.localAddress(host) ?: error("Only an address assigned to this phone is accepted")
+        return LocalAdbEndpoint(requireNotNull(local.hostAddress),BootstrapContract.port(port),requiresLocalPermission=true)
     }
     fun pairFromOwner(endpoint:LocalAdbEndpoint,code:String)=launch {pair(endpoint,code)}
     /** One fresh owner confirmation covers the fixed pair → connect → Binder verification sequence. */
     fun pairAndEnableFromOwner(endpoint:LocalAdbEndpoint,code:String)=launch {
         pair(endpoint,code)
-        status.value=BootstrapStatus(BootstrapPhase.ADB_CONNECTING,"Paired. Finding the connection service…",true)
+        publish(BootstrapStatus(BootstrapPhase.ADB_CONNECTING,"Paired. Finding the connection service…",true))
         val connection=discovery.find(LocalAdbDiscovery.CONNECT,!hasLocalPermission,hasLocalPermission)
         bootstrap(connection,false,verifyTransport=true)
     }
     private suspend fun pair(endpoint:LocalAdbEndpoint,code:String) {
         requireLocal(endpoint)
         val password=BootstrapContract.code(code)
-        val key=identity.loadOrCreate();fingerprint.value=key.fingerprint
-        status.value=BootstrapStatus(BootstrapPhase.PAIRING_REQUIRED,"Verifying Android’s pairing code…",busy=true)
         try {
+            val key=identity.loadOrCreate();fingerprint.value=key.fingerprint
+            publish(BootstrapStatus(BootstrapPhase.PAIRING_REQUIRED,"Verifying Android’s pairing code…",busy=true))
             val pairing=PairingConnectionCtx(endpoint.host,endpoint.port,password,key.key,key.certificate,"SIConnect")
             try {bounded(pairing,30_000) {pairing.start()}} finally {pairing.close();pairing.destroySecrets()}
             identity.paired()
-            status.value=BootstrapStatus(BootstrapPhase.PAIRED,"Paired with Android. Ready to enable control.")
+            publish(BootstrapStatus(BootstrapPhase.PAIRED,"Paired with Android. Ready to enable control."))
         } finally {password.fill(0)}
     }
     fun restoreFromOwner()=launch {
@@ -131,8 +136,8 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
     /** Saved owner consent permits reuse of the existing identity, never pairing or enabling debugging. */
     fun recoverIfEnabled() {
         if(identity.recover) observeRecoveryNetwork()
-        if(!identity.recover || settings.privilegeBackend!="direct" || !settings.controls.value.privilegedEnabled || status.value.busy) return
-        launch {
+        if(!identity.recover || settings.privilegeBackend!="direct" || !settings.controls.value.privilegedEnabled) return
+        launch(BootstrapOperations.Kind.RECOVERY) {
             for(delayMs in listOf(0L,15_000L,60_000L)) {
                 delay(delayMs)
                 if(!identity.recover || settings.privilegeBackend!="direct" || !settings.controls.value.privilegedEnabled) return@launch
@@ -144,29 +149,29 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
                     currentCoroutineContext().ensureActive()
                     val reason=generateSequence<Throwable>(e) {it.cause}.take(3).joinToString(" → ") {it.message ?: it.javaClass.simpleName}.take(300)
                     lastFailure.value="${status.value.phase}: $reason"
-                    status.value=BootstrapStatus(BootstrapPhase.OWNER_ACTION_REQUIRED,"Saved recovery failed: $reason. Check the current Wireless debugging service; re-pair only if Android revoked this host.")
+                    publish(BootstrapStatus(BootstrapPhase.OWNER_ACTION_REQUIRED,"Saved recovery failed: $reason. Check the current Wireless debugging service; re-pair only if Android revoked this host."))
                 }
             }
         }
     }
-    private fun launch(block:suspend ()->Unit) {
-        if(!mutex.tryLock()) return
-        job=scope.launch {
+    private fun launch(kind:BootstrapOperations.Kind=BootstrapOperations.Kind.OWNER,block:suspend ()->Unit) {
+        val started=operations.launch(kind) {
             try {block()}
-            catch(e:TimeoutCancellationException) {status.value=BootstrapStatus(BootstrapPhase.OWNER_ACTION_REQUIRED,"Wireless debugging timed out. Check the current port and keep the pairing dialog open. A launched daemon may already exist; refresh before retrying.")}
-            catch(e:CancellationException) {status.value=BootstrapStatus(BootstrapPhase.OWNER_ACTION_REQUIRED,"Setup cancelled. Check the current Binder state before retrying; a launched daemon may already be running.");throw e}
-            catch(e:SecurityException) {status.value=BootstrapStatus(BootstrapPhase.LOCAL_NETWORK_PERMISSION_REQUIRED,"Android blocked local access. Choose the service picker or allow Nearby devices in app permissions.")}
+            catch(e:TimeoutCancellationException) {publish(BootstrapStatus(BootstrapPhase.OWNER_ACTION_REQUIRED,"Wireless debugging timed out. Check the current port and keep the pairing dialog open. A launched daemon may already exist; refresh before retrying."))}
+            catch(e:CancellationException) {publish(BootstrapStatus(BootstrapPhase.OWNER_ACTION_REQUIRED,"Setup cancelled. Check the current Binder state before retrying; a launched daemon may already be running."));throw e}
+            catch(e:SecurityException) {publish(BootstrapStatus(BootstrapPhase.LOCAL_NETWORK_PERMISSION_REQUIRED,"Android blocked local access. Choose the service picker or allow Nearby devices in app permissions."))}
             catch(e:Exception) {
                 val causeChain=generateSequence<Throwable>(e) {it.cause}.take(8).toList()
                 val blocked=causeChain.any {it is android.system.ErrnoException && it.errno in setOf(android.system.OsConstants.EPERM,android.system.OsConstants.EACCES)}
                 val phase=if(blocked) BootstrapPhase.LOCAL_NETWORK_PERMISSION_REQUIRED else if(e is javax.net.ssl.SSLException || e is io.github.muntashirakon.adb.AdbPairingRequiredException) BootstrapPhase.PAIRING_REQUIRED else BootstrapPhase.RECOVERY_FAILED
-                status.value=BootstrapStatus(phase,when(e) {
+                publish(BootstrapStatus(phase,when(e) {
                     is TimeoutCancellationException -> "Wireless debugging timed out. Keep Android’s pairing dialog open; verify the current port and Wi-Fi."
                     is javax.net.ssl.SSLException -> "Android rejected the TLS connection. The saved host may need re-pairing; verify the connection port."
                     else -> e.message?.take(300) ?: "Setup failed (${e.javaClass.simpleName}). Check Wireless debugging and retry."
-                })
-            } finally {mutex.unlock()}
+                }))
+            }
         }
+        if(!started && kind==BootstrapOperations.Kind.OWNER) lastFailure.value="Setup is already running. Cancel it before starting another operation."
     }
     private fun requireLocal(endpoint:LocalAdbEndpoint) {
         if(endpoint.requiresLocalPermission && !hasLocalPermission) throw SecurityException("Local-network permission was revoked")
@@ -189,7 +194,7 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
             withContext(Dispatchers.IO) {attached.destroy()}
             withTimeout(5000) {while(DirectAuthority.service?.asBinder()?.isBinderAlive==true) delay(100)}
         }
-        status.value=BootstrapStatus(BootstrapPhase.ADB_CONNECTING,"Finding this phone’s current TLS connection service…",true)
+        publish(BootstrapStatus(BootstrapPhase.ADB_CONNECTING,"Finding this phone’s current TLS connection service…",true))
         val endpoint=selected ?: discover(false,false)
         requireLocal(endpoint)
         val key=identity.existing() ?: error("Pair with Android Wireless debugging first")
@@ -202,19 +207,22 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
             try {
                 caller.ensureActive()
                 check(connection.connect(10,TimeUnit.SECONDS,true)) {"ADB authentication timed out. Check the current port and saved pairing."}
-                status.value=BootstrapStatus(BootstrapPhase.ADB_CONNECTING,"TLS authenticated. Verifying the ADB shell identity…",true)
+                caller.ensureActive()
+                publish(BootstrapStatus(BootstrapPhase.ADB_CONNECTING,"TLS authenticated. Verifying the ADB shell identity…",true))
                 check(BootstrapContract.shellUid(shell(connection,"id -u"))) {"Authenticated ADB did not prove shell UID 2000"}
-                status.value=BootstrapStatus(BootstrapPhase.ADB_AUTHENTICATED,"Authenticated local ADB returned UID 2000. Checking installed package…",true)
+                caller.ensureActive()
+                publish(BootstrapStatus(BootstrapPhase.ADB_AUTHENTICATED,"Authenticated local ADB returned UID 2000. Checking installed package…",true))
                 val info=context.packageManager.getApplicationInfo(BootstrapContract.PACKAGE,0)
                 check(info.uid==Process.myUid()) {"Package identity mismatch"}
                 val apk=BootstrapContract.apk(shell(connection,"pm path --user 0 ${BootstrapContract.PACKAGE}"),info.sourceDir)
                 val uid=BootstrapContract.uid(shell(connection,"cmd package list packages --user 0 -U ${BootstrapContract.PACKAGE}"),info.uid)
                 val running=shell(connection,"pidof siconnect_privileged || true").trim()
+                caller.ensureActive()
                 if(running.isNotEmpty()) {
                     require(running.matches(Regex("[0-9]+(?: [0-9]+)*"))) {"Unexpected daemon process response"}
-                    status.value=BootstrapStatus(BootstrapPhase.BOOTSTRAPPING,"Existing daemon detected; waiting for authenticated Binder attachment without starting a duplicate.",true)
+                    publish(BootstrapStatus(BootstrapPhase.BOOTSTRAPPING,"Existing daemon detected; waiting for authenticated Binder attachment without starting a duplicate.",true))
                 } else {
-                    status.value=BootstrapStatus(BootstrapPhase.BOOTSTRAPPING,"Starting the bundled Binder daemon under verified shell authority…",true)
+                    publish(BootstrapStatus(BootstrapPhase.BOOTSTRAPPING,"Starting the bundled Binder daemon under verified shell authority…",true))
                     caller.ensureActive()
                     shell(connection,BootstrapContract.start(apk,uid))
                 }
@@ -226,14 +234,15 @@ class LocalAdbBootstrap(private val context:Context,private val settings:Setting
     }
     private suspend fun verifyBinder(start:Long) {
         val service=requireNotNull(DirectAuthority.service)
-        status.value=BootstrapStatus(BootstrapPhase.BOOTSTRAPPING,"ADB disconnected. Verifying a fresh command through the bundled Binder service…",true)
+        publish(BootstrapStatus(BootstrapPhase.BOOTSTRAPPING,"ADB disconnected. Verifying a fresh command through the bundled Binder service…",true))
         val actual=withContext(Dispatchers.IO) {service.identity()}
+        check(actual.startsWith("uid=2000(")) {"Bundled authority did not report shell UID 2000"}
         val result=ShellTransport.execute(service,ShellRequest("bootstrap:${UUID.randomUUID()}",argv=listOf("/system/bin/id","-u"),timeoutMs=5000,maxOutputBytes=1024))
         check(result.exitCode==0 && !result.timedOut && !result.cancelled && BootstrapContract.shellUid(result.stdout)) {"Binder shell UID verification failed"}
         check(DirectAuthority.service?.asBinder()===service.asBinder() && service.asBinder().isBinderAlive) {"Binder attachment changed during verification"}
         identity.bootstrapped()
         lastFailure.value=null
-        status.value=BootstrapStatus(BootstrapPhase.PRIVILEGED_READY,"Bundled Binder verified UID 2000 with temporary ADB disconnected.",identity=actual,elapsedMs=SystemClock.elapsedRealtime()-start)
+        publish(BootstrapStatus(BootstrapPhase.PRIVILEGED_READY,"Bundled Binder verified UID 2000 with temporary ADB disconnected.",identity=actual,elapsedMs=SystemClock.elapsedRealtime()-start))
     }
     private fun shell(connection:AdbConnection,command:String):String=connection.open("shell,v2,raw:$command").use {stream ->
         val result=stream.openInputStream().use {AdbShellProtocol.read(it)}

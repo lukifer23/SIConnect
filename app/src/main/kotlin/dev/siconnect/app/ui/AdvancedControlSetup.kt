@@ -35,8 +35,10 @@ import kotlinx.coroutines.*
     var discoveryJob by remember {mutableStateOf<Job?>(null)}
     var active by remember {mutableStateOf(true)}
     var generation by remember {mutableIntStateOf(0)}
-    var recovery by remember {mutableStateOf(bootstrap.recoveryEnabled)}
+    val recovery by bootstrap.recovery.collectAsState()
     var configureRecovery by rememberSaveable {mutableStateOf(false)}
+    var pairAgain by rememberSaveable {mutableStateOf(false)}
+    LaunchedEffect(state.phase) {if(state.phase==BootstrapPhase.PRIVILEGED_READY) {pairAgain=false;configureRecovery=false}}
     DisposableEffect(Unit) {onDispose {active=false;generation++}}
     LaunchedEffect(permissionRevision) {bootstrap.refresh()}
     fun authorize(title:String,action:()->Unit) {
@@ -59,19 +61,20 @@ import kotlinx.coroutines.*
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                     if(bootstrap.pairedAt>0L) {
                         Row {Text("Reconnect automatically",Modifier.weight(1f));Switch(recovery,{enabled->
-                            if(enabled) authorize("Restore control using saved Android authorization") {bootstrap.setRecoveryFromOwner(true);recovery=true}
-                            else {bootstrap.setRecoveryFromOwner(false);recovery=false}
+                            if(enabled) authorize("Restore control using saved Android authorization") {bootstrap.setRecoveryFromOwner(true)}
+                            else {bootstrap.setRecoveryFromOwner(false)}
                         },enabled=!state.busy)}
                         Text("Reuses this phone’s saved pairing after connection or service loss. Android may still require you to enable Wireless debugging after reboot.",style=MaterialTheme.typography.bodySmall)
                     }
-                    if(state.phase==BootstrapPhase.PRIVILEGED_READY && !configureRecovery) {
-                        Text("Control verified",style=MaterialTheme.typography.titleLarge)
-                        Text(state.detail)
-                        state.identity?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
+                    if(state.phase==BootstrapPhase.PRIVILEGED_READY && !configureRecovery && !pairAgain) {
+                        Text("Device control ready",style=MaterialTheme.typography.titleLarge)
+                        Text("The bundled service is connected. Authorized tools can use it over Wi-Fi or mobile data.")
+                        Text("Shell UID 2000",style=MaterialTheme.typography.bodyMedium)
                         if(bootstrap.pairedAt==0L) Button(onClick={configureRecovery=true}) {Text("Set up phone-only recovery")}
                     } else {
-                        Text("Native features are ready. Enable shell control with Android’s Wireless debugging authorization.")
-                        if(bootstrap.pairedAt==0L) {
+                        Text("Android authorizes device control on this phone. Once enabled, remote tools use the bundled service over your internet connection.")
+                        if(bootstrap.pairedAt==0L || pairAgain) {
+                            if(pairAgain) TextButton(onClick={pairAgain=false;code="";endpoint=null}) {Text("Use saved authorization instead")}
                             Text("1. Open Wireless debugging",style=MaterialTheme.typography.titleMedium)
                             Text("Developer options → Wireless debugging → Pair device with pairing code. Keep Settings beside SIConnect in split-screen or a pop-up.")
                             OutlinedButton(onClick={runCatching {startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT))}.onFailure {message="Open Android Settings → Developer options → Wireless debugging"}}) {Text("Open Settings beside SIConnect")}
@@ -86,26 +89,29 @@ import kotlinx.coroutines.*
                             },enabled=endpoint!=null && code.length==6 && !state.busy && !finding,modifier=Modifier.fillMaxWidth()) {Text("Pair and enable")}
                             Text("Confirm once with Android. SIConnect connects, starts its bundled service, verifies UID 2000, then disconnects ADB.",style=MaterialTheme.typography.bodySmall)
                         } else {
-                            Text("Paired with Android",style=MaterialTheme.typography.titleMedium)
+                            Text("Saved Android authorization",style=MaterialTheme.typography.titleMedium)
                             Text("Enable Wireless debugging on trusted Wi-Fi if needed, then restore. Android may ask you to select this phone’s connection service.")
-                            Button(onClick={if(bootstrap.recoveryEnabled) bootstrap.recoverIfEnabled() else authorize("Restore advanced control") {bootstrap.restoreFromOwner()}},enabled=!state.busy,modifier=Modifier.fillMaxWidth()) {Text(if(bootstrap.recoveryEnabled) "Retry connection" else "Restore control")}
-                            OutlinedButton(onClick={runCatching {startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT))}.onFailure {message="Open Android Settings → Developer options"}}) {Text("Open Settings beside SIConnect")}
+                            Button(onClick={if(bootstrap.recoveryEnabled) bootstrap.restoreFromOwner() else authorize("Restore advanced control") {bootstrap.restoreFromOwner()}},enabled=!state.busy,modifier=Modifier.fillMaxWidth()) {Text(if(bootstrap.recoveryEnabled) "Retry connection" else "Restore control")}
+                            OutlinedButton(onClick={runCatching {startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))}.onFailure {message="Open Android Settings → Developer options"}}) {Text("Open Android debugging settings")}
+                            TextButton(onClick={pairAgain=true;endpoint=null;code=""},enabled=!state.busy) {Text("Authorize this phone again")}
+                            Text("Reauthorization reuses the existing host key. Use it if Android has forgotten this phone’s authorization.",style=MaterialTheme.typography.bodySmall)
                         }
                         Text(state.detail)
                     }
                     if(state.busy || finding) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if(message.isNotBlank()) Text(message,color=MaterialTheme.colorScheme.error)
-                    lastFailure?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+                    if(state.phase!=BootstrapPhase.PRIVILEGED_READY) lastFailure?.let {Text(it,color=MaterialTheme.colorScheme.error)}
                     TextButton(onClick={advanced=!advanced}) {Text(if(advanced) "Hide advanced options" else "Advanced options")}
                     if(advanced) {
                         Text("Android 17’s service picker avoids broad local-network permission. If discovery is unavailable, you can explicitly allow local discovery and enter the pairing port.")
                         if(android.os.Build.VERSION.SDK_INT>=37) {
                             if(bootstrap.hasLocalPermission) Text("Local-network access granted")
-                            else OutlinedButton(onClick={permission.launch(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK))}) {Text("Allow local discovery")}
+                            else OutlinedButton(onClick={requestNativeAccess(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK))}) {Text("Allow local discovery")}
                         }
                         OutlinedTextField(port,{port=it.filter {c->c in '0'..'9'}.take(5)},label={Text("Manual pairing port")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
                         TextButton(onClick={try {endpoint=bootstrap.manualEndpoint("127.0.0.1",port);message="Manual pairing port selected"} catch(e:Exception) {message=e.message ?: "Port unavailable"}}) {Text("Use pairing port")}
                         Text("Recovery never turns debugging on. Android may require an owner toggle after reboot. Broad authorized shell can reach beyond narrower UI permissions. AI-agent pairing is separate.")
+                        state.identity?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
                         Text("${state.phase}\nHost key: ${fingerprint ?: "not created"}\nLast verified: ${if(bootstrap.lastBootstrap==0L) "never" else java.util.Date(bootstrap.lastBootstrap)}\nVerification time: ${state.elapsedMs?.let {"$it ms"} ?: "not measured"}",style=MaterialTheme.typography.bodySmall)
                         TextButton(onClick={authorize("Restart bundled service after update") {bootstrap.bootstrapFromOwner(null,restart=true)}},enabled=!state.busy) {Text("Restart after app update")}
                         TextButton(onClick={authorize("Remove local host identity; require new pairing") {bootstrap.resetIdentityFromOwner()}},enabled=!state.busy) {Text("Forget local pairing")}
@@ -114,7 +120,7 @@ import kotlinx.coroutines.*
                 }
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     if(state.busy || finding) TextButton(onClick={generation++;discoveryJob?.cancel();bootstrap.cancel();code=""}) {Text("Cancel")}
-                    TextButton(onClick={bootstrap.refresh()},enabled=!state.busy) {Text("Check status")}
+                    TextButton(onClick={bootstrap.refresh()},enabled=!state.busy) {Text("Check connection")}
                     TextButton(onClick={active=false;generation++;code="";onClose()}) {Text("Done")}
                 }
             }

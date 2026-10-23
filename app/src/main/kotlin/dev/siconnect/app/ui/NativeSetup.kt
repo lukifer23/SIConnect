@@ -56,18 +56,16 @@ import kotlinx.coroutines.*
                             Text("SIConnect executes under your grants, with exact action review where required. It does not need a local AI model. No setup step creates Cloudflare infrastructure or changes another agent’s permissions.")
                         }
                         1 -> {
-                            Text("Choose full supported access for all native workflows, or enable individual access below. Android still requires its own special-access approvals. This does not change remote-agent grants.")
-                            Button(onClick={
-                                val requested=mutableListOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR)
-                                if(Build.VERSION.SDK_INT>=33) requested+=Manifest.permission.POST_NOTIFICATIONS
-                                if(Build.VERSION.SDK_INT>=37) requested+=Manifest.permission.ACCESS_LOCAL_NETWORK
-                                permission.launch(requested.filterNot {granted(it)}.toTypedArray())
-                            },modifier=Modifier.fillMaxWidth()) {Text("Enable all supported native permissions")}
+                            Text("Enable calendar and notification workflows together, or choose individual access below. Android still requires its own special-access approvals. This does not change remote-agent grants.")
+                            val requested=mutableListOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR)
+                            if(Build.VERSION.SDK_INT>=33) requested+=Manifest.permission.POST_NOTIFICATIONS
+                            val missing=requested.filterNot {granted(it)}
+                            if(missing.isNotEmpty()) Button(onClick={requestNativeAccess(missing.toTypedArray())},modifier=Modifier.fillMaxWidth()) {Text("Enable calendar and notifications")}
                             Text("For all-app shell control, enable advanced device control. Android’s selected-folder picker cannot grant protected folders or other apps’ private storage. Existing authorized broad shell remains available independently.")
                             Text("Notifications: ${if(notificationsGranted) "granted" else "denied / owner action required"}. Used for approvals and reminders.")
-                            Button(onClick={if(Build.VERSION.SDK_INT>=33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) permission.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName))}) {Text(if(notificationsGranted) "Manage notifications" else "Enable notifications")}
+                            Button(onClick={if(Build.VERSION.SDK_INT>=33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) requestNativeAccess(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName))}) {Text(if(notificationsGranted) "Manage notifications" else "Enable notifications")}
                             Text("Calendar: ${if(granted(Manifest.permission.READ_CALENDAR) && granted(Manifest.permission.WRITE_CALENDAR)) "granted" else "not granted"}. Used only for authorized Calendar Provider operations.")
-                            if(!granted(Manifest.permission.READ_CALENDAR) || !granted(Manifest.permission.WRITE_CALENDAR)) OutlinedButton(onClick={permission.launch(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR))}) {Text("Enable calendar workflows")}
+                            if(!granted(Manifest.permission.READ_CALENDAR) || !granted(Manifest.permission.WRITE_CALENDAR)) OutlinedButton(onClick={requestNativeAccess(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR))}) {Text("Enable calendar workflows")}
                             Text("Notification listener: ${if(listener) "connected" else "backend unavailable / owner action required"}. Separate from ordinary notification permission.")
                             OutlinedButton(onClick={if(listenerGranted && !listener) android.service.notification.NotificationListenerService.requestRebind(listenerComponent) else settings(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)}) {Text(if(listener) "Manage notification access" else if(listenerGranted) "Reconnect notification listener" else "Enable notification access")}
                             Text("Accessibility: ${if(semantic) "connected" else "backend unavailable / owner action required"}. Needed for semantic screen tools, not background native diagnostics.")

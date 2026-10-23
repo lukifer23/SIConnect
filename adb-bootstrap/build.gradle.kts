@@ -7,7 +7,7 @@ android {
 }
 dependencies {
     implementation("androidx.annotation:annotation:1.9.1")
-    implementation("org.bouncycastle:bcprov-jdk15to18:1.81")
+    implementation("org.bouncycastle:bcprov-jdk15to18:1.86")
     implementation("com.github.MuntashirAkon.spake2-java:spake2-android:2.2.1")
     testImplementation("junit:junit:4.13.2")
 }

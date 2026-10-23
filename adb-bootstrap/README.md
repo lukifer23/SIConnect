@@ -28,7 +28,7 @@ coordinate in this module, then rebuild SIConnect with your own signing identity
 installation. Changing signing identity cannot update an existing differently signed install.
 Do not erase owner data to test relinking; use a disposable device/profile.
 
-Bouncy Castle 1.81 provides upstream's AES-GCM/HKDF implementation. JitPack is restricted to the
+Bouncy Castle 1.86 provides upstream's AES-GCM/HKDF implementation. JitPack is restricted to the
 one SPAKE2 group; other artifacts resolve through Google/Maven Central. Gradle verification
 metadata pins downloaded artifacts. Neither upstream library claims an independent security audit;
 SIConnect's focused review/tests do not constitute a complete cryptographic audit.

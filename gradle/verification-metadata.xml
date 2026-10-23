@@ -2926,5 +2926,32 @@
             <sha256 value="563e4aa29fa8fe09a6e1746d0a5b51308f7c7dedc468dc5a0ca810a485877030" origin="Maven Central HTTPS; published SHA-1 cross-checked"/>
          </artifact>
       </component>
+      <component group="org.bouncycastle" name="bcprov-jdk15to18" version="1.86">
+         <artifact name="bcprov-jdk15to18-1.86.pom">
+            <sha256 value="af3f44f2c8bd90d10d0ebbc3c2f26b5d9b54588543a57cd879465f3dc4f1eef0" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+         <artifact name="bcprov-jdk15to18-1.86.jar">
+            <sha256 value="fc50334d4d87b4272e72fa95ca748ead05bdef02ef760a5b13f64ffee317cd81" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+      </component>
+      <component group="com.squareup.okhttp3" name="okhttp" version="5.5.1">
+         <artifact name="okhttp-5.5.1.pom">
+            <sha256 value="a834a8f02cbcaaf6a3968b439596e14d528a32160d4b235d95f2ab51163bbf2f" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+         <artifact name="okhttp-5.5.1.module">
+            <sha256 value="1c5b0837a46d13aec4493b97066c896f0f8f26e5c6b3535bec4355bce2a8e1bb" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+      </component>
+      <component group="com.squareup.okhttp3" name="okhttp-android" version="5.5.1">
+         <artifact name="okhttp-android-5.5.1.module">
+            <sha256 value="67a1f222960668845bb00002aa63424ff804584000bde84f1269ae188184e496" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+         <artifact name="okhttp-android-5.5.1.pom">
+            <sha256 value="d9aa6a615a54146f08ce0e298b382e79ebe310161992040b07ed52ed29de8c3b" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+         <artifact name="okhttp.aar">
+            <sha256 value="ce00fd7751cf7e4f28ba73a0287b3cc0c62b8b83f038e428592eeef189513ee1" origin="Publisher OpenPGP signature verified; canonical Maven Central artifact"/>
+         </artifact>
+      </component>
    </components>
 </verification-metadata>

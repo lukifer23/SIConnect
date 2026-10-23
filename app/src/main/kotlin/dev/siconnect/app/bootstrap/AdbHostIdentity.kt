@@ -26,6 +26,7 @@ internal class AdbHostIdentity(context:Context,private val alias:String=ALIAS) {
         val fingerprint:String get()=MessageDigest.getInstance("SHA-256").digest(certificate.publicKey.encoded).joinToString("") {"%02x".format(it)}
     }
     fun existing():Material?=synchronized(LOCK) {
+        check(!prefs.getBoolean("reset_pending",false)) {"Host identity reset was interrupted. Retry Forget local pairing before creating another key."}
         val store=KeyStore.getInstance("AndroidKeyStore").apply {load(null)}
         if(!store.containsAlias(alias)) {
             check(pairedAt==0L) {"Paired host key is missing; owner reset and re-pairing are required"}
@@ -51,8 +52,11 @@ internal class AdbHostIdentity(context:Context,private val alias:String=ALIAS) {
     }
     /** Called only after a separate, fresh local-owner authentication and explicit reset choice. */
     fun reset()=synchronized(LOCK) {
-        check(prefs.edit().putLong("paired_at",0).putBoolean("owner_recovery",false).commit())
+        // Keystore and preferences cannot share a transaction. Persist a fail-closed intent first.
+        // A deletion/storage failure preserves the marker and never generates a replacement key.
+        check(prefs.edit().putBoolean("reset_pending",true).putBoolean("owner_recovery",false).commit())
         KeyStore.getInstance("AndroidKeyStore").apply {load(null);deleteEntry(alias)}
+        check(prefs.edit().putLong("paired_at",0).putLong("last_bootstrap",0).putBoolean("reset_pending",false).commit())
     }
     companion object {private val LOCK=Any();private const val ALIAS="siconnect_local_adb_rsa_v1"}
 }

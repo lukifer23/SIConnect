@@ -1,5 +1,9 @@
 # Performance and resource evidence
 
+## Pass 11 observations
+
+Code 10 Settings loads only the visible section's data, replacing its earlier all-subsystem refresh on every request. No numeric performance improvement is claimed without matched measurements. `device.runtime` now accepts optional `checkDatabase=true`; ordinary sampling omits SQLite integrity work. One debug snapshot measured 145,852 KiB PSS and no system low-memory condition. This is a development snapshot, not a quiet battery/idle study. See [pass 11](engineering-pass-11.md).
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Pass-9 agent-use observation: 61.011 seconds/five samples, app CPU 0.42 seconds over 59.983 valid seconds (0.7002% of one core), daemon 0.01/59.965 seconds (0.0167%), PSS 82,630–88,557 KiB. This was not a quiet-idle or before/after comparison. Metadata-only Inbox queries avoid decoding private argument payloads; no quantified speedup/token saving is claimed. The retained 24-hour soak is still incomplete; see [pass 9](engineering-pass-9.md) for interim counts and limitations.

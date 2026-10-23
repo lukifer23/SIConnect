@@ -15,6 +15,26 @@ import javax.net.ssl.*
 
 /** A real TLS 1.3 socket handshake with disposable Keystore keys. Not Android adbd pairing. */
 class KeystoreTlsDeviceTest {
+    @Test fun interruptedResetPreservesKeyAndRequiresExplicitResetCompletion() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val alias="siconnect-reset-fixture-${UUID.randomUUID()}"
+        val identity=AdbHostIdentity(context,alias)
+        try {
+            val original=identity.loadOrCreate().fingerprint
+            identity.paired();identity.recover=true
+            val preferences=context.getSharedPreferences(alias,android.content.Context.MODE_PRIVATE)
+            // Disposable crash boundary: reset intent persisted, key deletion not yet completed.
+            assertTrue(preferences.edit().putBoolean("reset_pending",true).putBoolean("owner_recovery",false).commit())
+            try {identity.loadOrCreate();fail("Interrupted reset generated or reused a key")}
+            catch(e:IllegalStateException) {assertTrue(e.message.orEmpty().contains("reset was interrupted"))}
+            val store=java.security.KeyStore.getInstance("AndroidKeyStore").apply {load(null)}
+            val preserved=java.security.MessageDigest.getInstance("SHA-256").digest(store.getCertificate(alias).publicKey.encoded).joinToString("") {"%02x".format(it)}
+            assertEquals(original,preserved)
+            identity.reset()
+            assertNull(identity.existing());assertFalse(identity.recover);assertEquals(0L,identity.pairedAt)
+        } finally {identity.reset();context.deleteSharedPreferences(alias)}
+    }
+
     @Test fun nonexportableHostIdentitySurvivesReloadAndSignsTls13() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val alias="siconnect-tls-fixture-${UUID.randomUUID()}"

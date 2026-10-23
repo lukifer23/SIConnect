@@ -1,5 +1,11 @@
 # Permissions and owner control
 
+## Pass 11 access controls
+
+Settings shows Android authorization separately from service connection. A granted but disconnected notification listener offers Reconnect; it does not ask for the same permission again. Returning from Android Settings refreshes access and clears stale request messages. Permanently denied runtime access opens Android app permissions. The optional native permission action covers calendar/notifications; broad local-network access is requested only in advanced local discovery.
+
+Agent permissions have one management screen in Agents. The result-detail permission link opens that same screen. Automations has one form-based editor in its primary navigation section. Raw backend and gateway credential configuration stays in collapsed advanced settings; saved enrollment is reused for normal reconnection.
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Accepting an Inbox suggestion submits the exact action under its original agent; it never adds a scope or standing grant. Review shows current denial/backend unavailability before authentication and explains when an additional execution approval is required. Current policy is rechecked after authentication and by the engine. Existing Dots/Grok/Hermes grants were not expanded. See [pass 9](engineering-pass-9.md).
@@ -29,7 +35,7 @@ A denied request stays denied. After changing permission, ask the bot to submit 
 | Selected folders | Android document-tree picker and persisted URI grant | Owner chooses each root; bots need documents scope; disconnect revokes the stored grant |
 | Battery/background settings | Android/Samsung settings | Owner guidance exists; uninterrupted idle execution and battery cost are not yet established |
 
-The app is sideloaded. Do not claim special access is an ordinary runtime dialog. Strong-biometric/device-credential confirmation is implemented for approval and permission expansion; owner-interactive validation is pending. Phone-only privileged pairing remains unfinished.
+The app is sideloaded. Do not claim special access is an ordinary runtime dialog. Strong-biometric/device-credential confirmation is implemented for approval and permission expansion; owner confirmation passed for local ADB pairing; Inbox authentication lifecycle verification remains open. Phone-local privileged pairing/startup and saved-authorization recovery passed in pass 10. Fully owner-operated fresh setup and further revocation tests remain open.
 
 ## New bot, resume and reconnect
 

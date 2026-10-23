@@ -15,6 +15,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          check-latest: true
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
@@ -64,7 +65,7 @@ jobs:
       - run: npm run build
         env:
           WRANGLER_SEND_METRICS: 'false'
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --audit-level=high
   hygiene:
     runs-on: ubuntu-latest
     steps:

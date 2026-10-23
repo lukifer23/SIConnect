@@ -27,10 +27,26 @@ import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
-@Composable internal fun MainActivity.Management(initialTab:String="Settings") {
+@Composable private fun SettingsAccessItem(title:String,status:String,action:String,onAction:()->Unit,explanation:String?=null) {
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title,style=MaterialTheme.typography.titleMedium)
+                    Text(status,style=MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick=onAction) {Text(action)}
+            }
+            explanation?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
+        }
+    }
+}
+
+@Composable internal fun MainActivity.Management(initialTab:String="Settings",onSetup:()->Unit,onGateway:()->Unit,onAdvancedControl:()->Unit) {
         val g=graph; val scope=rememberCoroutineScope()
         val health by g.health.collectAsState(); val shizuku by g.shizuku.status.collectAsState(); val direct by g.privileged.directStatus.collectAsState(); val connection by g.gateway.state.collectAsState()
         val controls by g.settings.controls.collectAsState()
+        val connectionDetail by g.gateway.detail.collectAsState()
         val semanticConnected by dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState.collectAsState()
         val listenerConnected by dev.siconnect.app.notifications.NotificationCaptureService.connectionState.collectAsState()
         val accessRevision=permissionRevision
@@ -39,22 +55,15 @@ import kotlinx.serialization.json.*
         val listenerComponent=remember {ComponentName(this,dev.siconnect.app.notifications.NotificationCaptureService::class.java)}
         val listenerGranted=remember(accessRevision) {getSystemService(NotificationManager::class.java).isNotificationListenerAccessGranted(listenerComponent)}
         val semanticGranted=remember(accessRevision) {AndroidSettings.Secure.getString(contentResolver,AndroidSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any {ComponentName.unflattenFromString(it)==ComponentName(this,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)}}
-        var advancedControl by rememberSaveable {mutableStateOf(false)}
-        if(advancedControl) AdvancedControlSetup {advancedControl=false}
+        var showTools by rememberSaveable {mutableStateOf(false)}
+        var showConnectionDetails by rememberSaveable {mutableStateOf(false)}
         var tab by rememberSaveable { mutableStateOf(initialTab) }
         var refresh by remember { mutableIntStateOf(0) }; var message by remember { mutableStateOf("") }
-                var agents by remember { mutableStateOf(emptyList<AgentRecord>()) }
         var events by remember { mutableStateOf(emptyList<Event>()) }
         var skills by remember { mutableStateOf(emptyList<SkillDefinition>()) }
-        var automations by remember { mutableStateOf(emptyList<Automation>()) }
         var roots by remember { mutableStateOf(emptyList<DocumentRoot>()) }
-        var wakeTime by rememberSaveable {mutableStateOf("")}
-        var departureTime by rememberSaveable {mutableStateOf("")}
-        var eveningTime by rememberSaveable {mutableStateOf("20:00")}
-        var weatherZone by rememberSaveable {mutableStateOf(java.time.ZoneId.systemDefault().id)}
         var capabilities by remember { mutableStateOf(emptyList<CapabilityStatus>()) }
         var skillJson by remember { mutableStateOf("") }
-        var automationJson by rememberSaveable { mutableStateOf("") }
         var url by remember { mutableStateOf(g.settings.gateway.value.baseUrl) }
         var gatewaySecret by remember { mutableStateOf("") }
         var latitude by remember { mutableStateOf(g.settings.weather.latitude?.toString() ?: "") }
@@ -63,15 +72,22 @@ import kotlinx.serialization.json.*
         fun action(block: suspend ()->Unit) { scope.launch { try { withContext(Dispatchers.IO) { g.ready.await(); block() }; refresh++ } catch(e: CancellationException) {throw e} catch(e: Exception) { message=e.message ?: e.javaClass.simpleName } } }
         LaunchedEffect(refresh,tab,health,shizuku,permissionRevision) {
             withContext(Dispatchers.IO) {
-                runCatching { g.ready.await(); agents=g.agents.all(); events=g.events.query(limit=50)
-                    skills=g.skills.all(includeDisabled=true); automations=g.scheduler.all(); capabilities=g.registry.statuses();roots=DocumentRoots(this@Management,g.db).all() }
+                try {
+                    g.ready.await()
+                    when(tab) {
+                        "Settings"->roots=DocumentRoots(this@Management,g.db).all()
+                        "Capabilities"->capabilities=g.registry.statuses()
+                        "Skills"->skills=g.skills.all(includeDisabled=true)
+                        "Diagnostics"->events=g.events.query(limit=50)
+                    }
+                } catch(e:CancellationException) {throw e} catch(e:Exception) {message="Could not refresh settings: ${e.javaClass.simpleName}"}
             }
         }
-        LaunchedEffect(Unit) { g.engine.recordUpdates.collect { record -> refresh++;if(approve?.requestId==record.requestId) approve=record } }
+        LaunchedEffect(tab) { if(tab=="Diagnostics") g.engine.recordUpdates.collect { refresh++ } }
         Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Text("SIConnect",style=MaterialTheme.typography.headlineMedium)
-            Row(Modifier.horizontalScroll(rememberScrollState())) {
-                listOf("Settings","Capabilities","Skills","Diagnostics","Automations").forEach { t -> TextButton(onClick={tab=t}) { Text(t) } }
+            Text(if(tab=="Settings") "Settings" else tab,style=MaterialTheme.typography.headlineMedium)
+            if(showTools) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                listOf("Settings","Capabilities","Skills","Diagnostics").forEach {t->FilterChip(selected=tab==t,onClick={tab=t},label={Text(t)})}
             }
             if(message.isNotBlank()) Text(message,Modifier.padding(vertical=8.dp))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -82,38 +98,6 @@ import kotlinx.serialization.json.*
                         Text(cap.detail ?: cap.descriptor.description)
                         if(cap.descriptor.permissions.isNotEmpty()) Text(cap.descriptor.permissions.joinToString())
                         HorizontalDivider()
-                    }
-                    "Automations" -> {
-                        Text("Schedules wait for their durable skill to finish. Approval waits stay visible. Wall-clock recurrence uses the task’s explicit timezone; deferrable delivery may be delayed by Android.")
-                        OutlinedTextField(automationJson,{automationJson=it},label={Text("Automation JSON")},modifier=Modifier.fillMaxWidth(),maxLines=8)
-                        Button(onClick={val definition=automationJson;ownerAuthentication.authenticate("Save automation",{action {val saved=g.scheduler.put(AppJson.decodeFromString(Automation.serializer(),definition));message="${saved.id}: ${saved.scheduleState}"}},{message=it})},enabled=automationJson.isNotBlank()) {Text("Validate and save schedule")}
-                        Text("Evening commute weather",style=MaterialTheme.typography.titleMedium)
-                        Text("Uses your configured weather location. Checks tomorrow’s forecast, warns about winter/cold weather and schedules rain reminders. Your Clock alarms are never changed.")
-                        OutlinedTextField(wakeTime,{wakeTime=it},label={Text("Fallback wake time HH:mm")})
-                        OutlinedTextField(departureTime,{departureTime=it},label={Text("Departure HH:mm")})
-                        OutlinedTextField(eveningTime,{eveningTime=it},label={Text("Evening check HH:mm")})
-                        OutlinedTextField(weatherZone,{weatherZone=it},label={Text("Timezone")})
-                        Button(onClick={
-                            val wake=wakeTime;val depart=departureTime;val evening=eveningTime;val zone=weatherZone
-                            ownerAuthentication.authenticate("Enable commute weather",{action {
-                                require(g.settings.weather.latitude!=null && g.settings.weather.longitude!=null) {"Configure your weather location in Settings first"}
-                                val input=buildJsonObject {put("timezone",zone);put("wakeTime",wake);put("departureTime",depart)}
-                                dev.siconnect.app.capabilities.WeatherCommute.plan(input,System.currentTimeMillis(),null,g.settings.weather.latitude,g.settings.weather.longitude)
-                                val rule=dev.siconnect.app.automation.Recurrence(dev.siconnect.app.automation.RecurrenceKind.DAILY,evening)
-                                val now=System.currentTimeMillis();val next=requireNotNull(rule.nextAfter(now,now,zone))
-                                g.enableWeatherAutomationFromOwner()
-                                val old=g.scheduler.get("weather-commute")
-                                g.scheduler.put(Automation("weather-commute","weather.commute_check",next,zoneId=zone,recurrence=rule,inputs=input,revision=old?.revision ?: 0))
-                                message="Evening commute check saved. Morning rain reminders are deferrable; Android may delay them."
-                            }},{message=it})
-                        },enabled=wakeTime.isNotBlank() && departureTime.isNotBlank()) {Text("Enable daily weather checks")}
-                        HorizontalDivider()
-                        Button(onClick={ action { val now=System.currentTimeMillis(); g.scheduler.put(Automation("diagnostics-$now","diagnostics.snapshot",now+60_000)); message="Native diagnostics scheduled in one minute (deferrable)" } }) { Text("Schedule diagnostics in one minute") }
-                        automations.forEach { a -> Text("${a.id}\nNext: ${java.time.Instant.ofEpochMilli(a.nextAtMs)} · ${a.zoneId}\nStatus: ${a.scheduleState} · Last: ${a.lastState ?: "never"} ${a.error ?: ""}")
-                            Row { Text("Enabled",Modifier.weight(1f)); Switch(a.enabled,{ enabled -> if(enabled) ownerAuthentication.authenticate("Enable automation",{action {g.scheduler.setEnabled(a.id,true)}},{message=it}) else action {g.scheduler.setEnabled(a.id,false)} }) }
-                            TextButton(onClick={automationJson=AppJson.encodeToString(Automation.serializer(),a)}) {Text("Edit schedule")}
-                            if(a.lastRunId!=null && a.lastState in listOf("READY","RUNNING","AWAITING_APPROVAL")) TextButton(onClick={action {g.scheduler.cancelRun(a.lastRunId)}}) {Text("Cancel active run")}
-                        }
                     }
                     "Skills" -> {
                         OutlinedTextField(skillJson,{skillJson=it},label={Text("Install JSON skill")},modifier=Modifier.fillMaxWidth(),maxLines=8)
@@ -127,6 +111,11 @@ import kotlinx.serialization.json.*
                         }
                     }
                     "Diagnostics" -> {
+                        OutlinedButton(onClick={action {
+                            val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime",arguments=buildJsonObject {put("checkDatabase",true)}),Origin.LOCAL_OWNER)
+                            require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Database check could not complete"}
+                            message="Live database integrity: "+r.result!!.output.jsonObject.getValue("databaseIntegrity").jsonPrimitive.content
+                        }}) {Text("Check database health")}
                         Button(onClick={ action {
                             val file=java.io.File(noBackupFilesDir,"diagnostics.jsonl")
                             file.writeText(g.events.query(limit=5000).joinToString("\n") { e -> AppJson.encodeToString(Event.serializer(),e.copy(agentId=null,deviceId=null,detail=null)) })
@@ -136,66 +125,87 @@ import kotlinx.serialization.json.*
                         events.forEach { e -> Text("${e.eventType} · ${e.capabilityId ?: "connection"} · ${e.executionStatus ?: ""}\n${e.errorCode ?: ""} ${e.requestId ?: ""}") }
                     }
                     "Settings" -> {
-                        Button(onClick={advancedControl=true}) {Text("Advanced device control and recovery")}
+                        SettingsAccessItem("Gateway",if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected" else connectionDetail,"Manage",onGateway)
+                        SettingsAccessItem("Advanced device control",if(g.privileged.available()) "Available · ${if(g.settings.privilegeBackend=="direct") "bundled service" else "Shizuku"}" else "Optional · setup or recovery needed","Open",onAdvancedControl)
+                        TextButton(onClick=onSetup) {Text("Guided setup and verification")}
+                        Text("Android access",style=MaterialTheme.typography.titleLarge)
+                        Text("Access belongs to this phone. Agent permissions are managed separately in Agents.",style=MaterialTheme.typography.bodySmall)
                         if(permissionStatus.isNotBlank()) Text(permissionStatus)
-                        Row {Text("Privileged execution",Modifier.weight(1f));Switch(controls.privilegedEnabled,{enabled ->
-                            if(enabled) ownerAuthentication.authenticate("Enable privileged execution",{g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=true))},{message=it})
-                            else g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=false))
-                        })}
-                        Button(onClick={startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))}) {Text(if(semanticConnected) "Screen access connected · manage" else if(semanticGranted) "Restore screen service" else "Enable screen access")}
-                        Text(if(semanticConnected) "Accessibility service is connected." else if(semanticGranted) "Android access is enabled, but the service is disconnected. Open its Android setting and turn SIConnect off and on." else "Enable SIConnect in Android Accessibility settings. If Android restricts sideloaded services, review Allow restricted settings in app info.")
-                        if(BuildConfig.DEBUG) TextButton(onClick={ownerAuthentication.authenticate("Rotate development credential",{action {g.createDevelopmentAgent();message="Development credential rotated"}},{message=it})}) {Text("Advanced: rotate development credential")}
+                        SettingsAccessItem("Approval and reminder alerts",if(notificationsEnabled) "Allowed" else "Off",if(notificationsEnabled) "Manage" else "Enable",{
+                            if(!notificationsEnabled && android.os.Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+                                requestNativeAccess(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                            else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName))
+                        })
+                        SettingsAccessItem("Screen control",if(semanticConnected) "Connected" else if(semanticGranted) "Enabled · service disconnected" else "Not enabled",if(semanticGranted) "Manage" else "Enable",{
+                            startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
+                        },if(semanticGranted && !semanticConnected) "Android has enabled access but disconnected the service. Turn SIConnect off and on in Accessibility settings." else null)
+                        SettingsAccessItem("Notification actions",if(listenerConnected) "Connected" else if(listenerGranted) "Allowed · service disconnected" else "Not enabled",if(listenerGranted && !listenerConnected) "Reconnect" else if(listenerGranted) "Manage" else "Enable",{
+                            if(listenerGranted && !listenerConnected) {
+                                android.service.notification.NotificationListenerService.requestRebind(listenerComponent)
+                                message="Reconnection requested. Status changes only when Android connects the notification listener."
+                            } else startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        })
+                        if(listenerGranted && !listenerConnected) TextButton(onClick={startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS))}) {Text("Review notification access in Android")}
+                        SettingsAccessItem("Calendar",if(calendarGranted) "Read and write allowed" else "Access needed",if(calendarGranted) "Manage" else "Enable",{
+                            if(calendarGranted) startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))
+                            else requestNativeAccess(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR))
+                        })
+                        Text("Connected folders",style=MaterialTheme.typography.titleMedium)
+                        Text(if(roots.isEmpty()) "No folders selected. Android lets you choose shared folders; protected app storage is excluded." else "${roots.size} selected. Android access and each agent’s document grant are required.",style=MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick={ownerAuthentication.authenticate("Connect document folder",{documentPicker.launch(null)},{documentStatus=it})}) {Text("Choose folder")}
+                        if(documentStatus.isNotBlank()) Text(documentStatus)
+                        roots.forEach {root->SettingsAccessItem(root.label,"Selected folder","Disconnect",{action {DocumentRoots(this@Management,g.db).remove(root.id);documentStatus="";message="Folder access removed"}})}
+                        val exact=g.reminders.canScheduleExact()
+                        SettingsAccessItem("Precise reminders",if(exact) "Allowed" else "Flexible timing available","Manage",{startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))})
+                        val batteryExempt=getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+                        SettingsAccessItem("Background operation",if(batteryExempt) "Battery exemption allowed" else "Android battery optimization applies","Manage",{startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))})
                         Text("Appearance",style=MaterialTheme.typography.titleMedium)
                         val appearance by g.settings.appearance.collectAsState()
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                            listOf("SYSTEM" to "System","LIGHT" to "Light","DARK" to "Dark").forEach {(value,label) ->
-                                FilterChip(selected=appearance==value,onClick={g.settings.setAppearance(value)},label={Text(label)})
-                            }
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            listOf("SYSTEM" to "System","LIGHT" to "Light","DARK" to "Dark").forEach {(value,label)->FilterChip(selected=appearance==value,onClick={g.settings.setAppearance(value)},label={Text(label)})}
                         }
-                        Text("Uses Android’s system font and text-size setting.",style=MaterialTheme.typography.bodySmall)
-                        Button(onClick={ if(!notificationsEnabled && android.os.Build.VERSION.SDK_INT >= 33) permission.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName)) }) { Text(if(notificationsEnabled) "Notifications enabled · manage" else "Allow approval and reminder notifications") }
-                        Button(onClick={ if(listenerGranted && !listenerConnected) android.service.notification.NotificationListenerService.requestRebind(listenerComponent) else startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) { Text(if(listenerConnected) "Notification access connected · manage" else if(listenerGranted) "Reconnect notification listener" else "Enable notification access") }
-                        if(g.settings.privilegeBackend=="shizuku") Button(onClick={ g.shizuku.requestPermission() }) { Text("Authorize / reconnect Shizuku") }
-                        Text("Selected authority: ${g.settings.privilegeBackend}")
-                        Text(direct)
-                        Button(onClick={ ownerAuthentication.authenticate("Select built-in authority",{action { g.settings.privilegeBackend="direct"; g.privileged.refresh() }},{message=it}) }) { Text("Use built-in service / check connection") }
-                        Button(onClick={ ownerAuthentication.authenticate("Select Shizuku authority",{action { g.settings.privilegeBackend="shizuku"; g.privileged.refresh() }},{message=it}) }) { Text("Select optional Shizuku backend") }
-                        Text("Built-in service needs an authorized setup start after reboot. Native features work immediately. SIConnect never switches backends automatically.")
-                        Text(shizuku)
-                        Button(onClick={ if(calendarGranted) startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName"))) else permission.launch(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR)) }) { Text(if(calendarGranted) "Calendar access enabled · manage" else "Enable calendar access") }
-                        Text("Connected folders",style=MaterialTheme.typography.titleMedium)
-                        Text("Android grants access only to the folder you select. Bots also need Selected folders permission.")
-                        Button(onClick={ownerAuthentication.authenticate("Connect document folder",{documentPicker.launch(null)},{documentStatus=it})}) {Text("Choose a folder")}
-                        if(documentStatus.isNotBlank()) Text(documentStatus)
-                        roots.forEach {root ->
-                            Text(root.label)
-                            TextButton(onClick={action {DocumentRoots(this@Management,g.db).remove(root.id);message="Folder access removed"}}) {Text("Disconnect folder")}
+                        Text("Weather location",style=MaterialTheme.typography.titleMedium)
+                        OutlinedTextField(latitude,{latitude=it},label={Text("Latitude")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                        OutlinedTextField(longitude,{longitude=it},label={Text("Longitude")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                        OutlinedButton(onClick={action {
+                            val lat=latitude.toDouble();val lon=longitude.toDouble();require(lat in -90.0..90.0 && lon in -180.0..180.0)
+                            g.settings.weather=g.settings.weather.copy(latitude=lat,longitude=lon);message="Weather location saved"
+                        }},enabled=latitude.isNotBlank() && longitude.isNotBlank()) {Text("Save weather location")}
+                        Text("Forecasts: Open-Meteo, CC BY 4.0. Free endpoint for personal/non-commercial use.",style=MaterialTheme.typography.bodySmall)
+                        TextButton(onClick={showConnectionDetails=!showConnectionDetails}) {Text(if(showConnectionDetails) "Hide advanced connection settings" else "Advanced connection settings")}
+                        if(showConnectionDetails) {
+                            Row(verticalAlignment=Alignment.CenterVertically) {Text("Route privileged requests",Modifier.weight(1f));Switch(controls.privilegedEnabled,{enabled->
+                                if(enabled) ownerAuthentication.authenticate("Enable privileged execution",{g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=true))},{message=it})
+                                else g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=false))
+                            })}
+                            Text("Selected backend: ${if(g.settings.privilegeBackend=="direct") "Bundled service" else "Shizuku"}. Selection never changes automatically.")
+                            if(g.settings.privilegeBackend!="direct") OutlinedButton(onClick={ownerAuthentication.authenticate("Select bundled authority",{action {g.settings.privilegeBackend="direct";g.privileged.refresh()}},{message=it})}) {Text("Use bundled service")}
+                            if(g.settings.privilegeBackend!="shizuku") OutlinedButton(onClick={ownerAuthentication.authenticate("Select Shizuku authority",{action {g.settings.privilegeBackend="shizuku";g.privileged.refresh()}},{message=it})}) {Text("Use optional Shizuku")}
+                            if(g.settings.privilegeBackend=="shizuku") OutlinedButton(onClick={g.shizuku.requestPermission()}) {Text("Authorize Shizuku")}
+                            Text(if(g.settings.privilegeBackend=="direct") direct else shizuku,style=MaterialTheme.typography.bodySmall)
+                            OutlinedTextField(url,{url=it},label={Text("Gateway HTTPS URL")},modifier=Modifier.fillMaxWidth())
+                            OutlinedTextField(gatewaySecret,{gatewaySecret=it},label={Text("Existing device credential · optional")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())
+                            OutlinedButton(onClick={
+                                val selectedUrl=url;val selectedSecret=gatewaySecret
+                                ownerAuthentication.authenticate("Change gateway connection",{action {
+                                    require(selectedUrl.startsWith("https://") || (BuildConfig.DEBUG && selectedUrl.startsWith("http://127.0.0.1:"))) {"HTTPS required"}
+                                    g.gateway.stop()
+                                    if(selectedSecret.isNotBlank()) g.settings.setDeviceSecret(selectedSecret)
+                                    g.settings.setGateway(GatewayConfig(selectedUrl,true));gatewaySecret=""
+                                    withContext(Dispatchers.Main) {startForegroundService(Intent(this@Management,ConnectionService::class.java))}
+                                    message="Connecting with saved configuration"
+                                }},{message=it})
+                            },enabled=url.isNotBlank()) {Text("Save connection settings")}
+                            TextButton(onClick={g.settings.setGateway(g.settings.gateway.value.copy(enabled=false));stopService(Intent(this@Management,ConnectionService::class.java))}) {Text("Disconnect gateway")}
+                            if(BuildConfig.DEBUG) TextButton(onClick={ownerAuthentication.authenticate("Rotate development credential",{action {g.createDevelopmentAgent();message="Development credential rotated"}},{message=it})}) {Text("Rotate development credential")}
                         }
-                        Button(onClick={ startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName"))) }) { Text("Exact alarm special access") }
-                        Button(onClick={ startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }) { Text("Background battery settings") }
-                        Text("For Samsung restricted settings, open SIConnect's app-info menu and allow restricted settings if Android blocks listener access.")
-                        OutlinedTextField(url,{url=it},label={Text("Gateway HTTPS URL")},modifier=Modifier.fillMaxWidth())
-                        OutlinedTextField(gatewaySecret,{gatewaySecret=it},label={Text("Device credential (stored with Keystore encryption)")},visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation())
-                        Button(onClick={
-                            val selectedUrl=url;val selectedSecret=gatewaySecret
-                            ownerAuthentication.authenticate("Change gateway connection",{action {
-                                require(selectedUrl.startsWith("https://") || (BuildConfig.DEBUG && selectedUrl.startsWith("http://127.0.0.1:"))) {"HTTPS required"}
-                                if(selectedSecret.isNotBlank()) g.settings.setDeviceSecret(selectedSecret)
-                                g.settings.setGateway(GatewayConfig(selectedUrl,true))
-                                gatewaySecret=""
-                                withContext(Dispatchers.Main) {startForegroundService(Intent(this@Management,ConnectionService::class.java))}
-                                message="Connection enabled"
-                            }},{message=it})
-                        },enabled=url.isNotBlank()) {Text("Save and connect") }
-                        Button(onClick={ g.settings.setGateway(g.settings.gateway.value.copy(enabled=false)); stopService(Intent(this@Management,ConnectionService::class.java)) }) { Text("Disconnect gateway") }
-                        OutlinedTextField(latitude,{latitude=it},label={Text("Weather latitude")})
-                        OutlinedTextField(longitude,{longitude=it},label={Text("Weather longitude")})
-                        Button(onClick={ action { val lat=latitude.toDouble(); val lon=longitude.toDouble(); require(lat in -90.0..90.0 && lon in -180.0..180.0); g.settings.weather=g.settings.weather.copy(latitude=lat,longitude=lon); message="Location configured" } }) { Text("Save weather location") }
-                        Text("Weather data: Open-Meteo, CC BY 4.0. Free endpoint is for personal/non-commercial use.")
+                        TextButton(onClick={showTools=!showTools}) {Text(if(showTools) "Hide advanced tools" else "Advanced tools")}
+                        Text("Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",style=MaterialTheme.typography.bodySmall)
+
                     }
                 }
             }
-            TextButton(onClick={refresh++}) { Text("Refresh runtime state") }
+            if(tab!="Settings") TextButton(onClick={refresh++}) { Text("Refresh") }
         }
         approve?.let { r -> OwnerApprovalDialog(r,error=message,onClose={approve=null},onDeny={action {approve=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
             ownerAuthentication.authenticate("Approve ${r.capabilityId}",{

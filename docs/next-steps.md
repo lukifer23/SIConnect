@@ -1,5 +1,11 @@
 # Next steps
 
+## Pass 11 checkpoint — October 22, 2026
+
+Android **0.6.0-dev.2 / code 10**, schema **9**, installed in place. CI metadata regression fixed; Linux run `39886068956` passed. UI and recovery hardening removes duplicate editors, distinguishes granted access from service connection, reuses existing gateway enrollment and serializes setup/recovery. Original identities/grants/reminders/automation were preserved. Security updates target OkHttp 5.5.1 and Bouncy Castle 1.86 with strict checksums. See [pass 11 evidence and current limitations](engineering-pass-11.md); later app/security changes require their own physical/CI results. Headless workflow expansion, connection history and owner-interactive acceptance remain active priorities.
+
+Earlier checkpoints below are historical; their versions and pending statements apply to those dates.
+
 ## Pass 10 checkpoint — October 22, 2026
 
 Preserve the now-verified local pairing, raw-v2 Binder bootstrap, repeated daemon recovery, app-process recovery and owner-approved reboot. Next test Wi-Fi/cellular/new-network transitions, revocation and fully unassisted fresh installation; document exact remaining interactions. Finish owner Inbox/biometric acceptance, designated Calendar/SAF CRUD, scheduled automation/weather and semantic lifecycle tests. Configure owner-compatible signing and validate the signed artifact workflow. No complete full-platform acceptance is claimed; see [pass 10](engineering-pass-10.md).

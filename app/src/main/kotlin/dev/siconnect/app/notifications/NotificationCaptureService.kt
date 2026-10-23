@@ -32,7 +32,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     /** Fetch exactly the live key. References intentionally become invalid after process/listener restart. */
     fun actionSnapshot(key:String,expectedPackage:String):NotificationActionSnapshot = synchronized(versionLock) {
-        if(instance!==this) reject("PERMISSION_REQUIRED","Notification listener is disconnected")
+        if(instance!==this) reject("UNAVAILABLE","Notification listener is disconnected; reconnect the service in SIConnect Settings")
         val sbn=try {getActiveNotifications(arrayOf(key))?.singleOrNull {it.key==key}}
             catch(_:SecurityException) {reject("PERMISSION_REQUIRED","Notification listener access was revoked")}
             ?: reject("NOTIFICATION_GONE","Notification is no longer active; inspect current notifications")
