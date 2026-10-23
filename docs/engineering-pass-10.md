@@ -85,3 +85,8 @@ A manual owner-signed artifact workflow now refuses absent signing material and 
 - [Android ADB/Wireless debugging](https://developer.android.com/tools/adb) and [Android 17 Wi-Fi 2.0 trusted-network handling](https://developer.android.com/blog/posts/introducing-fast-and-reliable-wireless-debugging-with-android-debug-bridge-adb-wi-fi-2-0).
 - [AOSP Wireless ADB protocol](https://android.googlesource.com/platform/packages/modules/adb/+/HEAD/docs/dev/adb_wifi.md), [service dispatch](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/daemon/services.cpp) and [shell subprocess/PTY behavior](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/daemon/shell_service.cpp).
 - [Android local-network permission](https://developer.android.com/privacy-and-security/local-network-permission) and [public TLS exporter](https://developer.android.com/reference/android/net/ssl/SSLSockets).
+
+
+## Cold-cache CI metadata correction
+
+The first pass-10 GitHub run passed gateway and public-tree/secret hygiene jobs but failed Android configuration because four parent/BOM metadata artifacts were missing from the new checksum catalog. A strict `--no-configuration-cache --refresh-dependencies` host run reproduced the same failure. The missing Maven Central artifacts were fetched from their exact pinned coordinates, checked against published checksums and given SHA-256 entries; verification remains strict. CI now retains dependency-verification and embedded-ADB test reports for diagnosis. The subsequent CI outcome must be checked against its actual run, not inferred from host success.

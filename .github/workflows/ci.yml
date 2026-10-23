@@ -44,6 +44,8 @@ jobs:
             core/build/reports/tests/
             app/build/reports/lint-results-debug.*
             app/build/reports/tests/
+            adb-bootstrap/build/reports/tests/
+            build/reports/dependency-verification/
   gateway:
     runs-on: ubuntu-latest
     defaults:
