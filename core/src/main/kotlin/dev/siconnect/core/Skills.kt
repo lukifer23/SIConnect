@@ -80,13 +80,26 @@ object SkillValidator {
             if (s.capability == "skills.run") errors += "step '${s.id}': nested skill execution is not allowed"
             if (registry.get(s.capability) == null) errors += "step '${s.id}': unknown capability '${s.capability}'"
             if (s.onError !in setOf("fail", "continue")) errors += "step '${s.id}': onError must be fail|continue"
-            refs(s.args).plus(s.`when`?.let(::refs) ?: emptyList()).forEach { ref ->
+            if (s.approvalWaitMs !in 0..def.timeoutMs) errors += "step '${s.id}': invalid approval wait"
+            if(runCatching {Schema.checkPayload(s.args)}.isFailure) {errors+="step '${s.id}': argument payload exceeds limits";continue}
+            val conditionErrors=s.`when`?.let(Conditions::validate).orEmpty()
+            conditionErrors.forEach {errors+="step '${s.id}': $it"}
+            val conditionRefs=if(conditionErrors.isEmpty()) s.`when`?.let(::refs).orEmpty() else emptyList()
+            refs(s.args).plus(conditionRefs).forEach { ref ->
                 val root = ref.substringBefore('.')
                 if (root == "steps") {
                     val target = ref.removePrefix("steps.").substringBefore('.')
                     if (target !in seen || target == s.id) errors += "step '${s.id}': reference to later/unknown step '$target'"
                 } else if (root !in setOf("input", "now")) errors += "step '${s.id}': unknown reference root '$root'"
             }
+        }
+        val boundedOutput=runCatching {Schema.checkPayload(def.output)}.isSuccess
+        if(!boundedOutput) errors+="output: payload exceeds limits"
+        (if(boundedOutput) refs(def.output) else emptyList()).forEach {ref->
+            val root=ref.substringBefore('.')
+            if(root=="steps" && ref!="steps" && ref.removePrefix("steps.").substringBefore('.') !in seen)
+                errors+="output: reference to unknown step in '$ref'"
+            else if(root !in setOf("input","now","steps")) errors+="output: unknown reference root '$root'"
         }
         return errors
     }
@@ -178,8 +191,9 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                 // the deadline. The deadline still prevents starting any remaining step.
                 val completedChild=r.pendingRequestId?.let {engine.request(it)?.state?.isTerminal}==true
                 if (clock.nowMs() >= r.deadlineMs && !completedChild) {
-                    r.pendingRequestId?.let { engine.cancel(it, "skill timeout") }
-                    val unknown = r.pendingRequestId?.let { engine.request(it)?.state } == RequestState.UNKNOWN_OUTCOME
+                    val child = r.pendingRequestId?.let { engine.cancel(it, "skill timeout") }
+                    // A cancellation request does not establish that in-flight effects stopped.
+                    val unknown = child != null && (!child.state.isTerminal || child.state == RequestState.UNKNOWN_OUTCOME)
                     return save(r, r.copy(state = if (unknown) SkillState.UNKNOWN_OUTCOME else SkillState.FAILED, error = "SKILL_TIMEOUT"))
                 }
                 val step = r.definition.steps[r.cursor]
@@ -188,12 +202,14 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                     "steps" to JsonObject(r.steps.associate { it.id to buildJsonObject {
                         put("state", it.state); put("skipped", it.skipped); put("output", it.output)
                     } }))
+                if(r.pendingRequestId==null && step.`when`?.let {Conditions.validate(it).isNotEmpty()}==true)
+                    return save(r,r.copy(state=SkillState.FAILED,error="INVALID_WORKFLOW_CONDITION"))
                 if (r.pendingRequestId == null && step.`when`?.let { !Conditions.eval(it, values) } == true) {
                     r = save(r, r.copy(cursor = r.cursor + 1, steps = r.steps + StepOutcome(step.id, "SKIPPED", true)))
                     continue
                 }
-                val childId = "${r.runId}:${step.id}"
-                if (r.pendingRequestId == null) r = save(r, r.copy(pendingRequestId = childId))
+                val childId = childRequestId(r.runId, step.id)
+                if (r.pendingRequestId != childId) r = save(r, r.copy(pendingRequestId = childId))
                 stopped(runId)?.let {return it}
                 var record = engine.request(childId) ?: engine.submit(InvocationRequest(requestId = childId,
                     traceId = r.traceId, agentId = r.agentId, capabilityId = step.capability,
@@ -217,7 +233,8 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                 if (record.state != RequestState.SUCCEEDED && step.onError == "fail")
                     return save(r, r.copy(state = SkillState.FAILED, error = "Step ${step.id}: ${record.state}"))
             }
-            val values = mapOf("input" to withDefaults(r.definition.inputs, r.inputs), "steps" to JsonObject(r.steps.associate {
+            val values = mapOf("input" to withDefaults(r.definition.inputs, r.inputs),
+                "now" to buildJsonObject {put("epoch_ms",r.startedAtMs)}, "steps" to JsonObject(r.steps.associate {
                 it.id to buildJsonObject { put("state", it.state); put("output", it.output); put("skipped", it.skipped) }
             }))
             val partial = r.steps.any { !it.skipped && it.state != RequestState.SUCCEEDED.name }
@@ -263,7 +280,7 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                 }
                 val known=child?.state?.isTerminal==true && child.state!=RequestState.UNKNOWN_OUTCOME
                 val outcome=child?.takeIf {it.state.isTerminal}?.let {record->
-                    barrier.definition.steps.firstOrNull {"${barrier.runId}:${it.id}"==childId}
+                    barrier.definition.steps.firstOrNull {childRequestId(barrier.runId,it.id)==childId}
                         ?.takeIf {barrier.steps.none {outcome->outcome.requestId==childId}}?.let {step->
                         StepOutcome(step.id,record.state.name,false,childId,record.result?.output ?: JsonNull,record.errorCode)
                     }
@@ -282,19 +299,30 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
         }
     }
 
-    /** Call only during startup, after engine.recover(), before accepting new work. */
-    suspend fun recover() {
+    /** Startup storage reconciliation only; no workflow steps execute before runtime readiness. */
+    suspend fun prepareRecovery() {
         for(r in store.cancellations()) cancelInternal(r.runId,false)
         for (r in store.active()) {
             if (r.state == SkillState.RUNNING) save(r, r.copy(state = SkillState.READY))
-            resume(r.runId)
         }
+    }
+
+    /** Compatibility entry point for callers that own continuation dispatch. */
+    suspend fun recover() {
+        prepareRecovery()
+        for (r in store.active()) resume(r.runId)
     }
 
     private fun withDefaults(schema: JsonObject, inputs: JsonObject): JsonObject {
         val merged = inputs.toMutableMap()
         (schema["properties"] as? JsonObject)?.forEach { (k, v) -> (v as? JsonObject)?.get("default")?.let { merged.putIfAbsent(k, it) } }
         return JsonObject(merged)
+    }
+
+    private fun childRequestId(runId: String, stepId: String): String {
+        val readable = "$runId:$stepId"
+        // Preserve existing durable identities; long valid run IDs still need addressable children.
+        return if (readable.length <= 200) readable else "skill-child:${Canonical.sha256Hex(readable)}"
     }
 }
 
@@ -353,6 +381,30 @@ object Templates {
 
 /** Condition language: {"op": "gte", "left": ..., "right": ...}, and/or/not with "args", exists with "value". */
 object Conditions {
+    fun validate(cond:JsonObject):List<String> {
+        runCatching {Schema.checkPayload(cond)}.onFailure {return listOf(it.message ?: "Condition payload exceeds limits")}
+        val errors=mutableListOf<String>()
+        fun check(value:JsonObject,path:String) {
+            val op=(value["op"] as? JsonPrimitive)?.takeIf {it.isString}?.content
+            val fields=when(op) {
+                "and","or","not"->setOf("args")
+                "exists","truthy"->setOf("value")
+                "eq","ne","gt","gte","lt","lte","in"->setOf("left","right")
+                else->{errors+="$path: unknown or missing condition op";return}
+            }
+            if(value.keys-setOf("op")!=fields) errors+="$path: $op requires exactly ${fields.joinToString()}"
+            if("args" in fields) {
+                val args=value["args"] as? JsonArray
+                if(args==null || args.isEmpty() || op=="not" && args.size!=1) errors+="$path: invalid $op condition arguments"
+                else args.forEachIndexed {index,child->
+                    if(child !is JsonObject) errors+="$path.args[$index]: expected condition object" else check(child,"$path.args[$index]")
+                }
+            }
+        }
+        check(cond,"condition")
+        return errors
+    }
+
     fun eval(cond: JsonObject, scope: Map<String, JsonElement>): Boolean {
         val op = (cond["op"] as? JsonPrimitive)?.content ?: throw IllegalArgumentException("condition missing op")
         fun v(key: String) = Templates.resolve(cond[key] ?: JsonNull, scope)

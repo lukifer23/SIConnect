@@ -15,10 +15,10 @@ import kotlinx.serialization.json.JsonObject
 
 @Composable fun HomeDashboard(state:ControlCenterSnapshot,wide:Boolean,connection:ConnectionState,detail:String,
     nativeReady:Boolean,privilegedReady:Boolean,controls:DeviceControls,
-    measurements:JsonObject?,busy:Boolean,note:String,onReview:(RequestRecord)->Unit,onRequest:(String)->Unit,
+    measurements:JsonObject?,busy:Boolean,onReview:(RequestRecord)->Unit,onRequest:(String)->Unit,
     onAgent:(String)->Unit,onAgents:()->Unit,onConnect:()->Unit,onRestore:()->Unit,onAutomations:()->Unit,
     onActivity:()->Unit,onHealth:()->Unit,onStop:()->Unit,onResume:()->Unit,
-    onInbox:()->Unit,onSetup:()->Unit) {
+    onInbox:()->Unit,onSetup:()->Unit,onReminder:(String)->Unit) {
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
     val status=when { !controls.remoteExecutionEnabled->"New remote actions blocked";!nativeReady->"Starting…";connection==ConnectionState.ONLINE->"Connected";else->"Native features ready"}
@@ -52,7 +52,6 @@ import kotlinx.serialization.json.JsonObject
             Text("Screen or notification actions need attention. Other ready tools remain available.",style=MaterialTheme.typography.bodySmall)
             TextButton(onClick=onSetup) {Text("Review Android access")}
         }}
-        if(note.isNotBlank()) Text(note,color=MaterialTheme.colorScheme.primary)
         state.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
         @Composable fun attention() {
             Text("Action Inbox",style=MaterialTheme.typography.titleLarge)
@@ -79,7 +78,7 @@ import kotlinx.serialization.json.JsonObject
         @Composable fun upcoming() {
             Text("Upcoming",style=MaterialTheme.typography.titleLarge)
             if(state.reminders.isEmpty() && state.automations.none {it.enabled}) Text("No upcoming reminders or automations.")
-            state.reminders.take(4).forEach {r->OutlinedCard(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(r.title);Text("${time(r.fireAtMs)} · ${r.state}",style=MaterialTheme.typography.bodySmall)}}}
+            state.reminders.take(4).forEach {r->OutlinedCard(onClick={onReminder(r.id)},modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(r.title);Text("${time(r.fireAtMs)} · ${r.state}",style=MaterialTheme.typography.bodySmall)}}}
             state.automations.filter {it.enabled}.sortedBy {it.nextAtMs}.take(4).forEach {a->TextButton(onClick=onAutomations) {Text("${a.id} · ${time(a.nextAtMs)} · ${a.scheduleState}")}}
             Button(onClick=onAutomations) {Text("Create or manage automation")}
             Text("Recent activity",style=MaterialTheme.typography.titleLarge)

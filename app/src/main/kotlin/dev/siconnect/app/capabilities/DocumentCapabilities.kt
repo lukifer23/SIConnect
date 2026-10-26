@@ -16,9 +16,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import java.io.Closeable
-import java.nio.ByteBuffer
-import java.nio.CharBuffer
-import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
@@ -236,12 +233,5 @@ internal object DocumentRules {
         if (path.length > 1000 || path.startsWith('/') || path.endsWith('/') || path.split('/').size > 16) throw CapabilityException("INVALID_DOCUMENT_PATH", "Relative document paths are limited to 16 segments and 1000 characters")
         return path.split('/').onEach(::name)
     }
-    fun utf8(bytes: ByteArray, truncated: Boolean): Pair<String, Int> {
-        val decoder = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-        val input = ByteBuffer.wrap(bytes); val output = CharBuffer.allocate(bytes.size)
-        val result = decoder.decode(input, output, !truncated)
-        if (result.isError || result.isOverflow) throw CapabilityException("INVALID_UTF8", "Document contains invalid UTF-8; read it as base64")
-        output.flip()
-        return output.toString() to input.remaining()
-    }
+    fun utf8(bytes: ByteArray, truncated: Boolean): Pair<String, Int> = BoundedUtf8.decode(bytes,truncated)
 }

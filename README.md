@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Status: working development runtime, Android 0.6.0-dev.4 (versionCode 12), SQLite schema 10, 85 tools.** Real phone-local Wireless ADB pairing, authenticated local startup of the existing Binder daemon, repeated daemon-loss recovery, ordinary app-process recovery and an owner-approved reboot have passed on the Fold, including hosted shell UID 2000. Existing identities, grants, reminders and automation are preserved. Reboot evidence is specific to the tested trusted Wi-Fi/unlock sequence; new-network/cellular transitions and fully unassisted fresh installation remain open. See [pass 10 evidence](docs/engineering-pass-10.md), [phone setup/recovery](docs/phone-setup.md) and [installation/signing](docs/installation.md).
+> **Source checkpoint: Android 0.6.0-dev.5 (versionCode 13), SQLite schema 10, 85 tools.** Host-tested recovery, reminder lifecycle and validation changes are detailed in the [source audit](docs/source-audit-2026-10-26.md); the latest physical evidence remains the versionCode 12 checkpoint.  Real phone-local Wireless ADB pairing, authenticated local startup of the existing Binder daemon, repeated daemon-loss recovery, ordinary app-process recovery and an owner-approved reboot have passed on the Fold, including hosted shell UID 2000. Existing identities, grants, reminders and automation are preserved. Reboot evidence is specific to the tested trusted Wi-Fi/unlock sequence; new-network/cellular transitions and fully unassisted fresh installation remain open. See [pass 10 evidence](docs/engineering-pass-10.md), [phone setup/recovery](docs/phone-setup.md) and [installation/signing](docs/installation.md).
 
 The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
 
@@ -74,6 +74,7 @@ Device setup, gateway deployment and agent pairing are covered in [docs/developm
 
 ## Documentation
 
+- [October 26 source audit, implemented fixes and prioritized build plan](docs/source-audit-2026-10-26.md)
 - [Phone setup and recovery](docs/phone-setup.md) and [installation/signing](docs/installation.md)
 - [Pass 12 background scans, alert policy and owner verification](docs/engineering-pass-12.md)
 - [Pass 11 UI/recovery hardening and CI verification](docs/engineering-pass-11.md)

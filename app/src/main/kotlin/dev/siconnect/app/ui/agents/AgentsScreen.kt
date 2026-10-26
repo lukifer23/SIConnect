@@ -92,7 +92,10 @@ import dev.siconnect.core.*
     Text(if(a.grant.shellMode==ShellMode.BROAD) "Broad automatic shell permission is enabled. This can change apps, settings and data." else "Arbitrary shell commands require the current approval policy.")
     if(usable) OutlinedButton(onClick={onShell(a)}) {Text(if(a.grant.shellMode==ShellMode.BROAD) "Review broad shell permission" else "Configure shell permission")}
     Text("Exact standing actions: ${a.grant.standing.count {it.actionHash!=null}}. Shell standing commands: ${a.grant.shellStandingCommands.size}.")
-    if(a.grant.standing.isNotEmpty()) a.grant.standing.take(20).forEach {Text("${it.capabilityId} · exact arguments · ${it.backend}",style=MaterialTheme.typography.bodySmall)}
+    if(a.grant.standing.isNotEmpty()) a.grant.standing.take(20).forEach {
+        val binding=if(it.actionHash!=null) "exact reviewed action" else if(it.constraints.isNotEmpty()) "selected argument constraints" else "capability allowance"
+        Text("${it.capabilityId} · $binding · ${it.backend ?: "any eligible backend"}",style=MaterialTheme.typography.bodySmall)
+    }
     Text("Explicit deny rules: ${a.grant.denied.joinToString().ifBlank {"None"}}",style=MaterialTheme.typography.bodySmall)
     if(usable && a.grant.agentId.startsWith("bot_")) OutlinedButton(onClick={onReconnect(a)}) {Text("Reconnect this identity")}
     if(!a.grant.revoked) TextButton(onClick={onRevoke(a)}) {Text("Revoke this agent",color=MaterialTheme.colorScheme.error)}

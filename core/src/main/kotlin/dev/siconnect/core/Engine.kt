@@ -125,8 +125,10 @@ class ExecutionEngine(
     /**
      * Submits a request and runs it to the point where it either finishes or waits for approval.
      * Duplicate submissions (same request id or idempotency key) return the existing record and never re-execute.
+     * With [awaitCompletion] false, execution remains owned by the engine scope and this returns
+     * after durable admission. Callers can release their own locks before waiting via [await].
      */
-    suspend fun submit(req: InvocationRequest, origin: Origin = Origin.REMOTE): RequestRecord {
+    suspend fun submit(req: InvocationRequest, origin: Origin = Origin.REMOTE, awaitCompletion: Boolean = true): RequestRecord {
         val now = clock.nowMs()
         val capability = registry.get(req.capabilityId)
         val version = capability?.descriptor?.version ?: 0
@@ -183,8 +185,10 @@ class ExecutionEngine(
         record = transition(record, RequestState.VALIDATED, "policy.evaluated", decision = decision) {
             it.copy(policy = decision, assessment = assessment)
         }
+        // Cancellation can win while assessment or availability is being checked.
+        if (record.state != RequestState.VALIDATED) return record
         return when (decision.outcome) {
-            PolicyOutcome.ALLOW -> execute(record, capability)
+            PolicyOutcome.ALLOW -> execute(record, capability, awaitCompletion)
             PolicyOutcome.DENY -> transition(record, RequestState.DENIED, "request.denied") {
                 it.copy(errorCode = "POLICY_DENIED", errorMessage = decision.reason)
             }
@@ -197,7 +201,7 @@ class ExecutionEngine(
                 val waiting = transition(record, RequestState.AWAITING_APPROVAL, "approval.requested") {
                     it.copy(approvalExpiresAtMs = approvalExpiry)
                 }
-                approvals.approvalRequested(waiting)
+                if (waiting.state == RequestState.AWAITING_APPROVAL) approvals.approvalRequested(waiting)
                 waiting
             }
         }
@@ -294,7 +298,7 @@ class ExecutionEngine(
             .forEach { r -> transitionBlocking(r, RequestState.EXPIRED, "approval.expired") { it }?.let(approvals::approvalClosed) }
     }
 
-    private suspend fun execute(record: RequestRecord, capability: Capability): RequestRecord {
+    private suspend fun execute(record: RequestRecord, capability: Capability, awaitCompletion: Boolean = true): RequestRecord {
         if (clock.nowMs() >= record.expiresAtMs) return transition(record, RequestState.EXPIRED, "request.expired") { it }
         val job: Job
         val executing: RequestRecord
@@ -311,20 +315,24 @@ class ExecutionEngine(
             return fail(record,"POLICY_DENIED",current.reason)
         if(current.outcome==PolicyOutcome.REQUIRE_APPROVAL && record.state!=RequestState.APPROVED)
             return fail(record,"POLICY_CHANGED","Current policy now requires owner review; submit a new request")
+        if(clock.nowMs()>=record.expiresAtMs)
+            return transition(record,RequestState.EXPIRED,"request.expired") {it}
         executing = transitionBlocking(record, RequestState.EXECUTING, "execution.started", backend = capability.descriptor.backend.name) { it }
             ?: return store.get(record.requestId) ?: record
         val ctx = ExecutionContext(executing.requestId, executing.traceId, executing.agentId, deviceId)
         val started = clock.nowMs()
         job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val budget=minOf(capability.descriptor.timeoutMs,(executing.expiresAtMs-clock.nowMs()).coerceAtLeast(1))
+                val remaining=executing.expiresAtMs-clock.nowMs()
+                if(remaining<=0) throw CapabilityException("EXPIRED","Request deadline reached before backend dispatch",noSideEffects=true)
+                val budget=minOf(capability.descriptor.timeoutMs,remaining)
                 val result = withTimeout(budget) { capability.execute(executing.arguments, ctx) }
                 capability.descriptor.outputSchema?.let { schema ->
                     if (Schema.validate(schema, result.output).isNotEmpty())
                         throw CapabilityException("INVALID_OUTPUT", "Backend result violates output schema")
                 }
                 val state = if (result.verification == VerificationStatus.FAILED) {
-                    if (capability.descriptor.risk > RiskClass.READ_ONLY || capability.descriptor.sideEffects.isNotEmpty() || executing.assessment?.shellCommand != null)
+                    if (mayHaveSideEffects(executing, capability))
                         RequestState.UNKNOWN_OUTCOME else RequestState.FAILED
                 } else RequestState.SUCCEEDED
                 transition(executing, state, "execution.finished", backend = result.backend.name,
@@ -348,7 +356,7 @@ class ExecutionEngine(
         job.invokeOnCompletion { running.remove(executing.requestId, job) }
         job.start()
         }
-        job.join()
+        if (awaitCompletion) job.join()
         return store.get(executing.requestId) ?: executing
     }
 
@@ -356,10 +364,8 @@ class ExecutionEngine(
     private fun unknownOrFailed(
         r: RequestRecord, c: Capability, code: String, msg: String, started: Long, cancelled: Boolean = false, noSideEffects: Boolean = false,
     ): RequestRecord {
-        val sideEffects = maxOf(c.descriptor.risk, r.assessment?.risk ?: c.descriptor.risk) > RiskClass.READ_ONLY || c.descriptor.sideEffects.isNotEmpty() || (r.assessment?.sideEffects?.isNotEmpty() == true) ||
-            r.assessment?.shellCommand != null
         val state = when {
-            sideEffects && !noSideEffects -> RequestState.UNKNOWN_OUTCOME
+            mayHaveSideEffects(r, c) && !noSideEffects -> RequestState.UNKNOWN_OUTCOME
             cancelled -> RequestState.CANCELLED
             else -> RequestState.FAILED
         }
@@ -367,6 +373,11 @@ class ExecutionEngine(
             it.copy(errorCode = code, errorMessage = msg)
         }
     }
+
+    private fun mayHaveSideEffects(r: RequestRecord, c: Capability): Boolean =
+        maxOf(c.descriptor.risk, r.assessment?.risk ?: c.descriptor.risk) > RiskClass.READ_ONLY ||
+            c.descriptor.sideEffects.isNotEmpty() || r.assessment?.sideEffects?.isNotEmpty() == true ||
+            r.assessment?.shellCommand != null
 
     private fun fail(r: RequestRecord, code: String, msg: String, durationMs: Long? = null): RequestRecord =
         transition(r, RequestState.FAILED, "request.failed", durationMs = durationMs, error = code) {

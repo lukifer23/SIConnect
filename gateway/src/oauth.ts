@@ -41,7 +41,7 @@ export async function oauthFetch(request: Request, env: Env, ctx: ExecutionConte
 <style>body{color:#edf9f6;background:#0d1218;font:17px system-ui;max-width:480px;margin:8vh auto;padding:24px}input,button{font:inherit;border-radius:12px;padding:14px;box-sizing:border-box}input{width:100%;background:#202d39;color:white;border:1px solid #6a807a}button{margin:14px 8px 0 0;background:#8adcc3;border:0}small{color:#bccdc8}label{display:block;margin:20px 0 8px}</style>
 <h1>Connect your phone</h1><h2>${escape(details.clientName)}</h2><p>${publisher} Access returns to <strong>${escape(details.redirectHost)}</strong>.</p>
 ${details.redirectIsLoopback ? '<p>This connects an app on your computer. Continue only if you started this connection.</p>' : ''}
-<p>In SIConnect on your phone, tap <strong>Connection details → Pair another bot</strong>. Enter its temporary pairing code below.</p>
+<p>In SIConnect on your phone, open <strong>Agents → Pair new agent</strong>. To keep an existing agent’s permissions, open its card and choose <strong>Reconnect this identity</strong>. Enter the temporary pairing code below.</p>
 <p>This grants phone control through your phone’s current permissions and approvals. Revoke this bot in SIConnect at any time.</p>
 <form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label for="code">Phone pairing code</label><input id="code" name="code" type="password" autocomplete="off" required maxlength="160"><p><small>Requested scopes: ${details.scope.map(escape).join(', ')}</small></p><button name="decision" value="approve">Connect</button><button name="decision" value="deny" formnovalidate>Cancel</button></form></html>`, { headers: consent.headers });
           }

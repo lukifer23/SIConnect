@@ -54,6 +54,14 @@ class RuntimeGraph(val context: Context) {
     val health = MutableStateFlow("Starting")
     val ready: Deferred<Unit>
     private var local: LocalEndpoint? = null
+    private val recovery = RuntimeRecovery { stage, error ->
+        android.util.Log.e("SIConnect", "$stage deferred: ${error.javaClass.simpleName}")
+    }
+    private val workflowDispatch by lazy {RuntimeDispatch(scope,onFailure={_,e->android.util.Log.e("SIConnect","Workflow continuation deferred: ${e.javaClass.simpleName}")}) {runner.resume(it)}}
+    private val scheduleDispatch by lazy {RuntimeDispatch(scope,workers=2,onFailure={_,e->android.util.Log.e("SIConnect","Automation reconciliation deferred: ${e.javaClass.simpleName}")}) {scheduler.reconcileRun(it)}}
+    private val proposalDispatch by lazy {RuntimeDispatch(scope,workers=1,capacity=2,onFailure={_,e->android.util.Log.e("SIConnect","Proposal maintenance deferred: ${e.javaClass.simpleName}")}) {
+        if(it=="recover") proposals.recover() else proposals.maintain()
+    }}
     init {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannels(listOf(
@@ -70,7 +78,7 @@ class RuntimeGraph(val context: Context) {
             if (agents.get("local-automation") == null) agents.put(AgentRecord(AgentGrant("local-automation", "Local automations", scopes=listOf("device.*", "alarms.next", "weather.forecast", "notifications.post"), autoApproveUpTo=RiskClass.LOW_IMPACT), "", System.currentTimeMillis(), tokenHint="scheduler only"))
             ui.recover()
             privileged.refresh()
-            engine.recover(); runner.recover()
+            engine.recover(); runner.prepareRecovery()
             if (!skills.exists(dev.siconnect.app.automation.AutomationTemplates.HEALTH_SKILL)) skills.install(dev.siconnect.app.automation.AutomationTemplates.health())
             if(!skills.exists("weather.commute_check")) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
             events.trim(System.currentTimeMillis() - settings.eventRetentionDays * 86_400_000L)
@@ -82,11 +90,12 @@ class RuntimeGraph(val context: Context) {
         }
         scope.launch {
             ready.await()
-            runner.runUpdates.collect {runCatching {scheduler.reconcileRun(it.runId)}.onFailure {android.util.Log.e("SIConnect","Automation reconciliation failed: ${it.javaClass.simpleName}")} }
+            runner.runUpdates.collect {run -> scheduleDispatch.submit(run.runId)}
         }
         scope.launch {
             ready.await()
-            proposals.recover()
+            proposalDispatch.submit("recover")
+            recovery.run("Workflow recovery lookup") {skillRuns.active().forEach {workflowDispatch.submit(it.runId)}}
         }
         // A Binder/provider or scheduled job can recreate the app without an Activity or a
         // surviving package-replaced receiver. Reuse the owner's saved service preference once.
@@ -94,16 +103,31 @@ class RuntimeGraph(val context: Context) {
         scope.launch {
             ready.await()
             engine.recordUpdates.collect { record ->
-                runCatching {proposals.onRequest(record)}.onFailure {android.util.Log.e("SIConnect","Proposal reconciliation failed: ${it.javaClass.simpleName}")}
+                recovery.run("Proposal reconciliation") {proposals.onRequest(record)}
                 if (record.state.isTerminal) {
-                    reminders.onRequestUpdated(record)
-                    skillRuns.active().filter { it.pendingRequestId == record.requestId }.forEach {runCatching {runner.resume(it.runId)}}
+                    recovery.run("Reminder reconciliation") {reminders.onRequestUpdated(record)}
+                    recovery.run("Workflow lookup") {
+                        skillRuns.active().filter {it.pendingRequestId==record.requestId}.forEach {run ->
+                            workflowDispatch.submit(run.runId)
+                        }
+                    }
                 }
             }
         }
         scope.launch {
             ready.await()
-            while (isActive) { delay(60_000); try {proposals.maintain()} catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {android.util.Log.e("SIConnect","Proposal maintenance deferred: ${e.javaClass.simpleName}")}; scheduler.reconcileActive(); engine.expireStale(); skillRuns.active().filter { it.deadlineMs <= System.currentTimeMillis() || it.pendingRequestId?.let {id->requests.get(id)?.state?.isTerminal}==true }.forEach {runCatching {runner.resume(it.runId)}} }
+            while (isActive) {
+                delay(60_000)
+                proposalDispatch.submit("maintain")
+                recovery.run("Automation maintenance") {scheduler.reconciliationCandidates().forEach {scheduleDispatch.submit(it)}}
+                recovery.run("Approval expiration") {engine.expireStale()}
+                recovery.run("Workflow maintenance") {
+                    skillRuns.active().filter {it.state==SkillState.READY || it.deadlineMs<=System.currentTimeMillis() ||
+                        it.pendingRequestId?.let {id->requests.get(id)?.state?.isTerminal}==true}.forEach {run ->
+                        workflowDispatch.submit(run.runId)
+                    }
+                }
+            }
         }
         scope.launch {ready.await();privileged.directStatus.collect {gateway.refreshCatalog()}}
         scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}
@@ -177,10 +201,9 @@ class RuntimeGraph(val context: Context) {
         try {
             val a=requireNotNull(agents.get(agentId))
             require(!agentId.startsWith("local-") && !a.grant.revoked && (a.grant.expiresAtMs?.let { it>System.currentTimeMillis() } ?: true)) { "Agent is revoked or expired" }
-            val grant=if(always) a.grant.copy(shellMode=ShellMode.BROAD,scopes=(a.grant.scopes+"requests.*").distinct())
-                else a.grant.copy(shellMode=ShellMode.APPROVAL_REQUIRED,standing=emptyList(),shellStandingCommands=emptyList())
+            val grant=a.grant.withShellPermission(always)
             agents.put(a.copy(grant=grant))
-            events.emit(Event(System.currentTimeMillis(),eventType=if(always) "grant.shell_broad.allowed" else "grant.standing.cleared",agentId=agentId,deviceId=settings.deviceId,detail="Local owner changed persistent shell permission"))
+            events.emit(Event(System.currentTimeMillis(),eventType=if(always) "grant.shell_broad.allowed" else "grant.shell_standing.cleared",agentId=agentId,deviceId=settings.deviceId,detail="Local owner changed persistent shell permission"))
             w.setTransactionSuccessful()
         } finally { w.endTransaction() }
     }

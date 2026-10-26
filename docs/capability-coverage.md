@@ -1,5 +1,9 @@
 # Capability coverage
 
+## Current source and physical checkpoints
+
+The October 26 [source audit](source-audit-2026-10-26.md) covers schema 10 and the existing 85-tool catalog, with no added tool names. The latest physical results, including owner Inbox acceptance and a selected SAF round trip, are in [engineering pass 12](engineering-pass-12.md). Entries below retain their version-specific historical evidence; they are not a fresh acceptance result for the audited source.
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Current installed build: **0.5.0-dev.3 / code 8**, SQLite **v8**, **85** tools. No new tool names were added in pass 9. Inbox recovery, list-query efficiency and owner-policy guidance improved; physical proposal persistence/execution and migration passed. Human Inbox authentication, Calendar/SAF writes and full semantic interruption coverage remain open. See [pass 9](engineering-pass-9.md); earlier versioned entries below retain historical coverage only.

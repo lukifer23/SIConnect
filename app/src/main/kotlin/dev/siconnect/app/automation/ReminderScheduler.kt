@@ -24,100 +24,41 @@ class ReminderScheduler(private val g: RuntimeGraph) {
     fun canScheduleExact()=am.canScheduleExactAlarms()
     private fun values(r: Reminder)=ContentValues().apply {
         put("reminder_id",r.id);put("fire_at",r.fireAtMs);put("state",r.state);put("created_by",r.agentId)
-        put("json",AppJson.encodeToString(Reminder.serializer(),r))
-        put("revision",r.revision)
-    }
-    private fun transition(previous: Reminder,next: Reminder): Reminder? {
-        val saved=next.copy(revision=previous.revision+1)
-        return saved.takeIf {table.update(values(saved),"reminder_id=? AND state=? AND revision=?",arrayOf(previous.id,previous.state,previous.revision.toString()))==1}
+        put("json",AppJson.encodeToString(Reminder.serializer(),r));put("revision",r.revision)
     }
     private fun pending(r: Reminder)=PendingIntent.getBroadcast(g.context,r.id.hashCode(),
         Intent(g.context,ReminderAlarmReceiver::class.java).setData(Uri.parse("siconnect:reminder/${r.id}")).putExtra("id",r.id),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    @Synchronized fun createDeduplicated(r:Reminder):Reminder {
-        val old=get(r.id)
-        if(old!=null) {
-            if(old.agentId!=r.agentId || old.fireAtMs!=r.fireAtMs || old.title!=r.title || old.text!=r.text || old.exact!=r.exact)
-                throw dev.siconnect.core.CapabilityException("IDEMPOTENCY_CONFLICT","Reminder key belongs to different arguments; inspect the existing reminder and update explicitly",noSideEffects=true)
-            return old // Includes delivered/unknown/cancelled: creation never re-arms them.
+    private val lifecycle=ReminderLifecycle(object:ReminderStore {
+        override fun get(id:String)=this@ReminderScheduler.get(id)
+        override fun all()=this@ReminderScheduler.all()
+        override fun insert(reminder:Reminder)=table.insertUnique(values(reminder))
+        override fun update(previous:Reminder,next:Reminder)=table.update(values(next),"reminder_id=? AND state=? AND revision=?",
+            arrayOf(previous.id,previous.state,previous.revision.toString()))==1
+    },g.engine,object:ReminderDispatch {
+        override fun canScheduleExact()=this@ReminderScheduler.canScheduleExact()
+        override suspend fun stop(reminder:Reminder) {
+            WorkManager.getInstance(g.context).cancelUniqueWork("reminder:${reminder.id}").result.get(10,TimeUnit.SECONDS)
+            am.cancel(pending(reminder))
         }
-        return put(r)
-    }
-    fun put(r: Reminder): Reminder {
-        require(r.fireAtMs>System.currentTimeMillis()) { "Reminder must be in the future" }
-        require(!r.exact || canScheduleExact()) { "Enable precise reminders in Android settings" }
-        val previous=get(r.id)
-        require(previous==null || previous.state in setOf("SCHEDULED","BLOCKED")) { "Reminder has already fired or is being delivered" }
-        require(previous==null || previous.revision==r.revision) { "Reminder changed. Open it again." }
-        val desired=r.copy(state="SCHEDULED",error=null)
-        val saved=if(previous==null) {check(table.insertUnique(values(desired))) { "Reminder already exists" };desired}
-            else requireNotNull(transition(previous,desired)) { "Reminder changed or is being delivered" }
-        stop(r)
-        return try { schedule(saved);saved } catch(e: Exception) {
-            transition(saved,saved.copy(state="BLOCKED",error=e.javaClass.simpleName))
-            throw e
-        }
-    }
-    fun cancel(id: String): Reminder {
-        val r=requireNotNull(get(id))
-        require(r.state!="FIRING") { "Reminder is being delivered; its outcome must be checked" }
-        val cancelled=requireNotNull(transition(r,r.copy(state="CANCELLED"))) { "Reminder changed or is being delivered" }
-        stop(r)
-        return cancelled
-    }
-    private fun stop(r: Reminder) {
-        WorkManager.getInstance(g.context).cancelUniqueWork("reminder:${r.id}").result.get(10,TimeUnit.SECONDS)
-        am.cancel(pending(r))
-    }
-    private fun schedule(r: Reminder) {
-        if(r.exact) {
-            check(canScheduleExact()) { "Exact timing permission unavailable" }
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,r.fireAtMs,pending(r))
-        } else {
-            val job=OneTimeWorkRequestBuilder<ReminderWorker>().setInputData(workDataOf("id" to r.id))
-                .setInitialDelay((r.fireAtMs-System.currentTimeMillis()).coerceAtLeast(0),TimeUnit.MILLISECONDS).build()
-            // SQLite is authoritative; replace persisted jobs when restoring across worker-class upgrades.
-            WorkManager.getInstance(g.context).enqueueUniqueWork("reminder:${r.id}",ExistingWorkPolicy.REPLACE,job).result.get(10,TimeUnit.SECONDS)
-        }
-    }
-    fun restore() {
-        all().forEach { r ->
-            when(r.state) {
-                "SCHEDULED","BLOCKED" -> {
-                    if(r.exact && !canScheduleExact()) transition(r,r.copy(state="BLOCKED",error="EXACT_PERMISSION_REQUIRED"))
-                    else if(r.fireAtMs<System.currentTimeMillis()-6*60*60*1000L) transition(r,r.copy(state="MISSED",error="REMINDER_TOO_OLD"))
-                    else runCatching { schedule(r);if(r.state=="BLOCKED") transition(r,r.copy(state="SCHEDULED",error=null)) }
-                        .onFailure { transition(r,r.copy(state="BLOCKED",error=it.javaClass.simpleName)) }
-                }
-                "FIRING","AWAITING_APPROVAL" -> {
-                    val record=g.requests.get("reminder:${r.id}")
-                    if(record?.state?.isTerminal==true) transition(r,r.copy(state=record.state.name,error=record.errorCode))
-                    else enqueueDelivery(g.context,r.id)
-                }
+        override suspend fun schedule(reminder:Reminder) {
+            if(reminder.exact) {
+                check(canScheduleExact()) {"Exact timing permission unavailable"}
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,reminder.fireAtMs,pending(reminder))
+            } else {
+                val job=OneTimeWorkRequestBuilder<ReminderWorker>().setInputData(workDataOf("id" to reminder.id))
+                    .setInitialDelay((reminder.fireAtMs-System.currentTimeMillis()).coerceAtLeast(0),TimeUnit.MILLISECONDS).build()
+                WorkManager.getInstance(g.context).enqueueUniqueWork("reminder:${reminder.id}",ExistingWorkPolicy.REPLACE,job).result.get(10,TimeUnit.SECONDS)
             }
         }
-    }
-    fun onRequestUpdated(record:RequestRecord) {
-        if(!record.state.isTerminal || !record.requestId.startsWith("reminder:")) return
-        val r=get(record.requestId.removePrefix("reminder:")) ?: return
-        if(r.state in setOf("FIRING","AWAITING_APPROVAL")) transition(r,r.copy(state=record.state.name,error=record.errorCode))
-    }
-    suspend fun deliver(id: String): RequestState? {
-        g.ready.await()
-        val r=get(id) ?: return null
-        if(r.state !in setOf("SCHEDULED","FIRING")) return when(r.state) {
-            "BLOCKED" -> RequestState.FAILED
-            else -> RequestState.entries.firstOrNull { it.name==r.state }
-        }
-        if(r.fireAtMs>System.currentTimeMillis()+1000) return null
-        val claimed=if(r.state=="FIRING") r else transition(r,r.copy(state="FIRING")) ?: return null
-        // Reuse the same durable request. A lost delivery result must never create another post.
-        val result=g.requests.get("reminder:$id") ?: g.engine.submit(InvocationRequest(requestId="reminder:$id",agentId="local-automation",capabilityId="notifications.post",
-            arguments=buildJsonObject { put("title",r.title);put("text",r.text) }),Origin.LOCAL_AUTOMATION)
-        if(result.state.isTerminal || result.state==RequestState.AWAITING_APPROVAL)
-            transition(claimed,claimed.copy(state=result.state.name,error=result.errorCode))
-        return result.state
-    }
+        override fun reconcileDelivery(id:String) {enqueueDelivery(g.context,id)}
+    })
+    suspend fun createDeduplicated(r:Reminder)=lifecycle.put(r,deduplicate=true)
+    suspend fun put(r:Reminder)=lifecycle.put(r)
+    suspend fun cancel(id:String)=lifecycle.cancel(id)
+    suspend fun restore()=lifecycle.restore()
+    suspend fun onRequestUpdated(record:RequestRecord)=lifecycle.onRequestUpdated(record)
+    suspend fun deliver(id:String):RequestState? {g.ready.await();return lifecycle.deliver(id)}
 }
 class ReminderWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
     override suspend fun doWork(): Result {

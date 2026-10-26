@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 12
-        versionName = "0.6.0-dev.4"
+        versionCode = 13
+        versionName = "0.6.0-dev.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -65,6 +65,7 @@ dependencies {
     implementation(libs.biometric)
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
 }
 
 dependencies {

@@ -65,8 +65,10 @@ import kotlinx.serialization.json.*
     }
 }
 
-@Composable internal fun ShellPermissionDialog(label: String,busy:Boolean=false,allowed:Boolean=false,onClose:()->Unit,onReduce:()->Unit,onAllow:()->Unit) {
+@Composable internal fun ShellPermissionDialog(label: String,busy:Boolean=false,allowed:Boolean=false,error:String="",onClose:()->Unit,onReduce:()->Unit,onAllow:()->Unit) {
     AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text("Always allow device control?")},
-        text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.5f).verticalScroll(rememberScrollState())) {Text("$label will be allowed to run arbitrary shell commands and read its request results without asking each time. This can change apps, settings and data. Critical operations still require approval.\n\nThis choice is saved on your phone across app restarts. Emergency stop and agent revocation still apply. You can switch back to asking each time under Your bots.")}},
+        text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.5f).verticalScroll(rememberScrollState())) {Text("$label will be allowed to run arbitrary shell commands and read its request results without asking each time. This can change apps, settings and data. Critical operations still require approval.\n\nThis choice is saved on your phone across app restarts. Emergency stop and agent revocation still apply. You can switch back to asking each time under Agents.")
+            if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
+        }},
         confirmButton={if(allowed) Button(onClick=onReduce,enabled=!busy) {Text("Ask before arbitrary shell")} else Button(onClick=onAllow,enabled=!busy) {Text(if(busy) "Saving…" else "Always allow")}},dismissButton={TextButton(onClick=onClose,enabled=!busy) {Text("Close")}})
 }

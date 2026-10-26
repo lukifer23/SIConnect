@@ -1,5 +1,9 @@
 # Next steps
 
+## Source audit October 26 2026
+
+The [current source audit](source-audit-2026-10-26.md) contains the prioritized code findings, implemented fixes and host verification. Startup/event continuation and reminder cancellation/revision ordering now have host-tested implementations in source 0.6.0-dev.5 / code 13. Next: bounded retention, shared readiness queries, MCP retry identity and network transitions, plus physical acceptance of the new recovery and reminder paths. Its device acceptance order supersedes the older next-step lists below. Physical evidence remains tied to the installed builds recorded in the engineering passes.
+
 ## Pass 12 checkpoint
 
 Android **0.6.0-dev.4 / code 12**, SQLite **10**, **85** tools. A future screen-off/locked native scan ran and advanced recurrence. Two subsequent scheduled runs also succeeded, including one after an in-place update. Persisted warning cooldowns, severity escalation and bounded metadata are implemented; six new alert/migration checks passed on the physical Fold. Two real owner-authenticated Inbox acceptances and a selected SAF round trip passed. The initial SAF harness incorrectly expected writes to bypass approval; its corrected disposable identity has root-constrained standing access and is removed after the test. Original owner/agent grants remain unchanged.

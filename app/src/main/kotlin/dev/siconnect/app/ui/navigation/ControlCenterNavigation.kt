@@ -7,6 +7,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
 import dev.siconnect.app.R
 import androidx.compose.ui.unit.dp
@@ -20,7 +21,7 @@ enum class Destination(val label:String,val icon:Int) {
 }
 
 /** Material's window/posture-aware bar/rail; a saved destination suffices for five local sections. */
-@Composable fun ControlCenterNavigation(selected:Destination,onSelect:(Destination)->Unit,content:@Composable (Boolean)->Unit) {
+@Composable fun ControlCenterNavigation(selected:Destination,onSelect:(Destination)->Unit,snackbarHostState:SnackbarHostState,content:@Composable (Boolean)->Unit) {
     val saved=rememberSaveableStateHolder()
     val largeText=LocalDensity.current.fontScale>=1.3f
     BackHandler(selected!=Destination.HOME) {onSelect(Destination.HOME)}
@@ -32,6 +33,7 @@ enum class Destination(val label:String,val icon:Int) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide=maxWidth>=720.dp
             saved.SaveableStateProvider(selected.name) {content(wide)}
+            SnackbarHost(snackbarHostState,Modifier.align(Alignment.BottomCenter).padding(16.dp))
         }
     }
 }

@@ -111,6 +111,15 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var activity by rememberSaveable { mutableStateOf(false) }
         var inbox by rememberSaveable {mutableStateOf(false)}
         var note by remember { mutableStateOf("") }
+        val snackbarHostState=remember {SnackbarHostState()}
+        LaunchedEffect(note) {
+            if(note.isNotBlank()) {
+                val message=note
+                snackbarHostState.showSnackbar(message,withDismissAction=true,duration=SnackbarDuration.Long)
+                if(note==message) note=""
+            }
+        }
+        LaunchedEffect(snapshot.error) {snapshot.error?.let {note=it}}
         var measurements by remember {mutableStateOf<JsonObject?>(null)}
         var busy by remember { mutableStateOf(false) }
         var setup by remember { mutableStateOf(false) }
@@ -190,16 +199,16 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(clip)
             note=if(secret) "Bot key copied. Paste it into your bot's secure token field." else "MCP address copied."
         }
-        ControlCenterNavigation(destination,{destination=it}) {wide ->
+        ControlCenterNavigation(destination,{destination=it},snackbarHostState) {wide ->
             when(destination) {
                 Destination.HOME -> HomeDashboard(snapshot,wide,connection,connectionDetail,health.startsWith("Ready"),g.privileged.available(),controls,
-                    measurements,busy,note,onReview={reviewId=it.requestId;review=it},onRequest={id->work {inspected=g.requests.get(id)}},
+                    measurements,busy,onReview={reviewId=it.requestId;review=it},onRequest={id->work {inspected=g.requests.get(id)}},
                     onAgent={selectedAgentId=it;destination=Destination.AGENTS},onAgents={destination=Destination.AGENTS},
                     onConnect={setup=true},onRestore={controlHelp=true},onAutomations={destination=Destination.AUTOMATIONS},onActivity={destination=Destination.ACTIVITY},
                     onHealth={work {val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime"),Origin.LOCAL_OWNER);require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Health unavailable"};measurements=r.result!!.output.jsonObject}},
                     onStop={g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=false))},
                     onResume={ownerAuthentication.authenticate("Resume remote requests",{g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=true))},{note=it})},
-                    onInbox={inbox=true},onSetup={destination=Destination.SETTINGS})
+                    onInbox={inbox=true},onSetup={destination=Destination.SETTINGS},onReminder={id->work {reminder=g.reminders.get(id)}})
                 Destination.AGENTS -> AgentsScreen(snapshot,wide,selectedAgentId,
                     onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
                     onFamily={id,family,enabled->
@@ -343,7 +352,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 HorizontalDivider(); Text("Audit trail",style=MaterialTheme.typography.titleMedium)
                 inspectedEvents.reversed().forEach { Text("${it.eventType} · ${it.policyDecision ?: it.executionStatus ?: it.errorCode ?: ""}",style=MaterialTheme.typography.bodySmall) }
             }},confirmButton={TextButton(onClick={inspected=null}) { Text("Close") }}) }
-        allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,onClose={allowBot=null},onReduce={work {g.setShellPermissionFromOwner(a.grant.agentId,false);allowBot=g.agents.get(a.grant.agentId)}},onAllow={
+        allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,error=note,onClose={allowBot=null},onReduce={work {g.setShellPermissionFromOwner(a.grant.agentId,false);allowBot=g.agents.get(a.grant.agentId)}},onAllow={
             ownerAuthentication.authenticate("Always allow device control",{
                 if(allowBot?.grant?.agentId==a.grant.agentId) work {g.setShellPermissionFromOwner(a.grant.agentId,true);allowBot=g.agents.get(a.grant.agentId);note="Always allowed. Saved on this phone until you revoke it."}
             },{note=it})
@@ -355,7 +364,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Text(if(r.exact) "Precise timing through Android AlarmManager" else "Flexible timing through Android WorkManager")
                 r.error?.let {Text(it)}
             }},confirmButton={Column {
-                if(!r.exact || r.state=="BLOCKED") Button(onClick={
+                if(r.state in setOf("SCHEDULED","BLOCKED") && (!r.exact || r.state=="BLOCKED")) Button(onClick={
                     if(!exactAccess) startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))
                     else work {
                         val result=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="reminders.update",arguments=buildJsonObject {put("id",r.id);put("exact",true)}),Origin.LOCAL_OWNER)

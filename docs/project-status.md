@@ -1,5 +1,9 @@
 # Project status
 
+## Source audit October 26 2026
+
+The [source audit and implementation priorities](source-audit-2026-10-26.md) trace the actual runtime and record the new execution/workflow, maintenance, permission, UI and build fixes. All 178 host tests pass; debug/release and instrumentation APKs build, lint has no errors, and the updated gateway dependencies pass npm audit. This is source verification; the latest physical checkpoint remains pass 12 below. Source is now 0.6.0-dev.5 / code 13, schema 10. Bounded continuation dispatch and reminder cancellation/dispatch ordering have host coverage; physical acceptance and bounded retention remain open.
+
 ## Pass 12 development checkpoint
 
 Version **0.6.0-dev.4 / 12**, schema **10**, **85** capabilities. Implemented persisted health alert policy, dispatch-time policy recheck, clearer background classifications, visible Inbox decision controls and explicit remote block/disconnect/cancel controls. Future screen-off scan, owner Inbox acceptance, selected SAF CRUD, physical alert/migration/retention checks and hosted native/Binder diagnostics now have fresh evidence. Current CI and final delivery details are recorded in [engineering pass 12](engineering-pass-12.md). Calendar, cancellation, complete network/reboot matrix and signed public distribution remain unfinished.

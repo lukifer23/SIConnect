@@ -62,13 +62,7 @@ fun registerFileCapabilities(g:RuntimeGraph) {
     }
     register("files.metadata","Managed file metadata",schema()) {metadata(file(it.str("path")))}
     register("files.read","Read bounded managed file",schema {integer("maxBytes","Maximum returned bytes",min=1,max=131072);string("encoding","Result encoding",enum=listOf("utf8","base64"))}) {a ->
-        val f=file(a.str("path"));if(!f.isFile) throw CapabilityException("NOT_A_FILE","File does not exist")
-        val limit=a.long("maxBytes",65536).toInt();val before=f.length() to f.lastModified()
-        val bytes=f.inputStream().use {input->val buffer=ByteArray(limit);var n=0;while(n<limit) {val count=input.read(buffer,n,limit-n);if(count<0) break;n+=count};buffer.copyOf(n)}
-        if(before!=(f.length() to f.lastModified())) throw CapabilityException("FILE_CHANGED","File changed while reading")
-        val encoding=a["encoding"]?.jsonPrimitive?.content ?: "base64"
-        buildJsonObject {put("path",a.str("path"));put("encoding",encoding);put("bytesReturned",bytes.size);put("totalBytes",before.first);put("truncated",before.first>bytes.size)
-            put("content",if(encoding=="utf8") bytes.toString(Charsets.UTF_8) else Base64.encodeToString(bytes,Base64.NO_WRAP))}
+        BoundedFileRead.read(file(a.str("path")),a.str("path"),a.long("maxBytes",65536).toInt(),a["encoding"]?.jsonPrimitive?.content ?: "base64")
     }
     register("files.hash","SHA-256 of managed file",schema()) {a ->buildJsonObject {put("sha256",hash(file(a.str("path"))));put("algorithm","SHA-256")}}
     register("files.mkdir","Create managed directory",schema(),RiskClass.LOW_IMPACT) {a ->

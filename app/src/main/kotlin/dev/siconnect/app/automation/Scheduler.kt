@@ -254,11 +254,12 @@ class Scheduler(private val g: RuntimeGraph) {
             }
         }
     }
-    suspend fun reconcileActive() {
+    fun reconciliationCandidates():List<String> {
         val rows=g.db.readableDatabase.query("automation_runs",arrayOf("run_id","state"),"state IN ('READY','RUNNING','AWAITING_APPROVAL')",null,null,null,null)
             .mapAll {it.getString(0) to it.getString(1)}
-        rows.forEach {(id,state)->if(g.skillRuns.get(id)?.state?.name?.let {it!=state}==true) reconcileRun(id)}
+        return rows.mapNotNull {(id,state)->id.takeIf {g.skillRuns.get(id)?.state?.name?.let {it!=state}==true}}
     }
+    suspend fun reconcileActive() {reconciliationCandidates().forEach {reconcileRun(it)}}
     /** Called by persisted skill-state notifications and startup recovery. */
     suspend fun reconcileRun(runId:String) {
         val info=g.db.readableDatabase.query("automation_runs",arrayOf("automation_id","automation_json"),"run_id=?",arrayOf(runId),null,null,null,"1").mapAll {it.getString(0) to if(it.isNull(1)) null else decode(it.getString(1))}.firstOrNull() ?: return

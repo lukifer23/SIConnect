@@ -37,7 +37,7 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
             .onStart {emit(Unit)}.debounce(100).collect {
                 try {mutable.value=ControlCenterSnapshot(mutable.value.revision+1,g.agents.all(),g.requests.recentSummaries(50),
                     g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)),
-                    g.reminders.all().filter {it.state in setOf("SCHEDULED","BLOCKED","FIRING","AWAITING_APPROVAL")}.sortedBy {it.fireAtMs},
+                    g.reminders.all().filter {it.state in setOf("SCHEDULED","BLOCKED","FIRING","AWAITING_APPROVAL","CANCELLING")}.sortedBy {it.fireAtMs},
                     g.scheduler.all(),g.registry.statuses(),semanticEnabledInSettings=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
                         .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)},
                     proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount(),
