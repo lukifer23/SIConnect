@@ -1,6 +1,6 @@
 # Installation, updates and signing
 
-The current source and installed debug build are **0.6.0-dev.5 / versionCode 13 / SQLite 10**. See [pass 13](engineering-pass-13.md) for preservation checks and partial physical acceptance. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
+The current source and installed debug build are **0.6.0-dev.6 / versionCode 14 / SQLite 10**. See [pass 14](engineering-pass-14.md) for preservation checks and fresh live acceptance. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
 
 ## Preserve the existing installation
 
@@ -23,3 +23,9 @@ Schema 9 added request tombstones; schema 10 adds a bounded health-alert ledger.
 A minified development preview was signed locally with the existing compatible development keystore. Signature verification matched the certificate from the actual previously installed APK. The signed preview is 4,860,033 bytes, version 0.6.0-dev.4 / code 12 / schema 10. Private build metadata records its APK SHA-256 and source commit. No signing material was uploaded or committed, and no replacement key was generated.
 
 This signed minified preview has not been installed through Android's package installer or published. It is not a verified production release. The physical in-place update used the compatible signed debug APK and preserved credentials, ADB host identity preferences and durable records. Debug fixtures and the loopback endpoint were independently verified absent from the minified release manifest/code. Exercising the owner-signed GitHub workflow and the full phone download/package-installer journey remains separate work; no permission to upload the owner's signing key is inferred.
+
+## Code-14 self-contained development installation
+
+The optimized development APK (4,896,897 bytes) was signed with the existing development certificate and installed in place. SQLite integrity and original owner records passed actual readback after installation. Fresh Grok native/shell/runtime reads and official SDK keyed read/write acceptance passed on that installed artifact. This is still a development signer; no new key or production release channel was created.
+
+Only `dev.siconnect.app` remains installed among SIConnect and its fixtures. The generic `dev.siconnect.notificationfixture` and temporary `dev.siconnect.app.test` packages were removed. The main APK excludes the debug semantic fixture and loopback endpoint. Its own foreground connection service and bundled shell daemon are normal runtime components from the same APK, not separate companion applications. Advanced control still requires authorized bootstrap; removing test packages does not eliminate Android's authorization/reboot requirements.

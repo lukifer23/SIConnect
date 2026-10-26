@@ -9,6 +9,7 @@ import android.os.Process
 import android.provider.DocumentsContract
 import dev.siconnect.app.RuntimeGraph
 import dev.siconnect.app.data.DocumentRoot
+import dev.siconnect.app.data.DocumentRootAccess
 import dev.siconnect.app.data.DocumentRoots
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
@@ -25,8 +26,20 @@ fun registerDocumentCapabilities(g: RuntimeGraph) {
 }
 
 /** Tree grants + a verified relative descendant chain, never caller-supplied raw URIs/document IDs. */
-internal class DocumentOperations(private val resolver: ContentResolver, private val roots: DocumentRoots) {
+internal class DocumentOperations(private val resolver: ContentResolver, private val roots: DocumentRoots,
+    private val rootAccess: (DocumentRoot) -> DocumentRootAccess = roots::access) {
     private val lock = Mutex()
+    private data class Readiness(val read: Boolean, val write: Boolean)
+    private fun readiness(): Readiness {
+        var read = false; var write = false
+        for (root in roots.all()) {
+            val access = rootAccess(root)
+            read = read || access.read && access.providerAvailable
+            write = write || access.read && access.write && access.providerAvailable
+            if (read && write) break
+        }
+        return Readiness(read, write)
+    }
     private val projection = arrayOf("document_id", "_display_name", "mime_type", "_size", "last_modified", "flags")
     private data class Node(val root: DocumentRoot, val path: String, val id: String, val name: String, val mime: String, val size: Long?, val modified: Long?, val flags: Long) {
         val tree: Uri get() = Uri.parse(root.treeUri)
@@ -139,7 +152,13 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
                 inputSchema = input, outputSchema = outSchema, backend = BackendKind.NATIVE, risk = if (mutation) RiskClass.MODERATE_IMPACT else RiskClass.READ_ONLY,
                 interaction = InteractionMode.BACKGROUND, sideEffects = if (mutation) listOf("Changes a document in an explicitly owner-selected folder; provider may synchronize it externally") else emptyList())
             override fun availability() = if (id == "documents.roots" || roots.all().any { roots.access(it).let { access -> access.read && (!mutation || access.write) && access.providerAvailable } }) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED
-            override fun availabilityDetail() = if (availability() == Availability.IMPLEMENTED) null else "Select a document folder in SIConnect; saved grants may be revoked or their provider unavailable"
+            override fun discoveryAvailability(snapshot: DiscoverySnapshot): Availability {
+                if (id == "documents.roots") return Availability.IMPLEMENTED
+                val ready = snapshot.once(this@DocumentOperations) { readiness() }
+                return if (if (mutation) ready.write else ready.read) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED
+            }
+            override fun availabilityDetail() = availabilityDetail(availability())
+            override fun availabilityDetail(availability: Availability) = if (availability == Availability.IMPLEMENTED) null else "Select a document folder in SIConnect; saved grants may be revoked or their provider unavailable"
             override fun assess(args: JsonObject) = RiskAssessment(descriptor.risk, title, "root=${args["rootId"] ?: "saved roots"}; path=${args["path"] ?: ""}", descriptor.sideEffects, externalCommunication = mutation)
             override suspend fun execute(args: JsonObject, ctx: ExecutionContext): CapabilityResult = coroutineScope {
                 val resource = AtomicReference<Closeable?>(); val signal = CancellationSignal(); val job = currentCoroutineContext().job

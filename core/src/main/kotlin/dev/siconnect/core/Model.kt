@@ -125,8 +125,11 @@ interface Capability {
     fun availability(): Availability
     /** Argument-dependent preconditions (e.g. exact timing access) use the same policy path. */
     fun availability(arguments: JsonObject): Availability = availability()
+    /** Discovery only: related tools may share a probe during one catalog measurement. */
+    fun discoveryAvailability(snapshot: DiscoverySnapshot): Availability = availability()
     /** Human-readable reason when not executable (missing permission, backend down...). */
     fun availabilityDetail(): String? = null
+    fun availabilityDetail(availability: Availability): String? = availabilityDetail()
     fun assess(args: JsonObject): RiskAssessment = RiskAssessment(
         risk = descriptor.risk,
         summary = descriptor.title,

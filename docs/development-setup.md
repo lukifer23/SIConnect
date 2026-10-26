@@ -1,6 +1,6 @@
 # Development setup
 
-Current checkpoint: Android **0.6.0-dev.5 / code 13**, SQLite **10**, **85** tools. See [project status](project-status.md) and [pass 13](engineering-pass-13.md) for measured results and remaining gaps.
+Current checkpoint: Android **0.6.0-dev.6 / code 14**, SQLite **10**, **85** tools. See [project status](project-status.md) and [pass 14](engineering-pass-14.md) for measured results and remaining gaps.
 
 ## Host toolchain (macOS, Apple silicon)
 
@@ -80,7 +80,7 @@ npm run build
 npm audit --audit-level=high
 ```
 
-`npm test` starts and tears down a local test-only Worker/device peer. It does not prove physical phone behavior. `npm run build` is a dry run; it does not deploy. The new optional MCP retry field requires the updated hosted gateway before a client can use it; see [gateway deployment](gateway-deployment.md).
+`npm test` starts and tears down a local test-only Worker/device peer. It does not prove physical phone behavior. `npm run build` is a dry run; it does not deploy. The optional MCP retry field is deployed and physically verified; refresh the existing client catalog before using it; see [gateway deployment](gateway-deployment.md).
 
 ## In-place update and recovery
 
@@ -91,3 +91,15 @@ The application ID remains `dev.siconnect.app`. Verify certificate compatibility
 Use `./gradlew --stop` after all checks finish. Stop local Worker/test/profiler processes by their verified PID. `adb kill-server` ends workstation debugging transports without deleting the phone's pairing/enrollment or stopping its outbound gateway. Restart it when needed. Do not force-stop the phone or terminate the Binder daemon to clean host processes while agents should remain connected.
 
 Build outputs and `gateway/node_modules` are regenerable. Keep `local.properties`, `gateway/.dev.vars`, signing/Keystore material, enrolled credentials and owner data. Do not remove shared Gradle caches while a daemon is active. See [repository hygiene](repository-hygiene.md) for the exact checkpoint cleanup and rebuild costs.
+
+## Optimized installation checkpoint
+
+The current device uses a minified development-signed APK with its existing compatible signer. Debug fixtures and LocalEndpoint are absent. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
+
+```sh
+./gradlew :app:assembleDebugAndroidTest -PinstallationCheckpoint=true
+```
+
+Install that temporary test APK, invoke `dev.siconnect.app.test/dev.siconnect.app.InstallationCheckpointInstrumentation` with a private `installationExpectedRecords` object containing SHA-256 checkpoints for agents/reminders/automations/document_roots, then uninstall `dev.siconnect.app.test`. The optional `requestIds` array reads at most twenty records and exports request/state/backend/timing/execution-count metadata only. This runner requires the same installed signer and never exports arguments or result bodies. Without a checkpoint it fails. The normal runner remains the default when the property is omitted. See [pass 14](engineering-pass-14.md) for the actual failed harness attempts and successful corrected check.
+
+The notification/semantic fixture is a disposable external test target, not a runtime companion. Remove `dev.siconnect.notificationfixture` after its opt-in tests. The main app, native APIs, saved gateway and bundled Binder daemon work without either test package. Preserve build caches for rapid iteration; run focused checks against the changed behavior rather than repeatedly running the whole acceptance matrix.

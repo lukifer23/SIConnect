@@ -1,8 +1,8 @@
 # SIConnect source audit and implementation priorities
 
-October 26, 2026. Source baseline: `30d0715`. Android source is **0.6.0-dev.5 / 13**, database schema **10**, with **85** registered tools. The audit adds source fixes and host verification. [Pass 13](engineering-pass-13.md) adds the code-13 physical batch (20 passes and one USB-charging precondition failure), retry-key implementation and cleanup handoff; earlier owner Inbox/SAF evidence remains in [pass 12](engineering-pass-12.md).
+October 26, 2026. Source baseline: `30d0715`. Android source is **0.6.0-dev.6 / 14**, database schema **10**, with **85** registered tools. The audit adds source fixes and host verification. [Pass 13](engineering-pass-13.md) adds the code-13 physical batch (20 passes and one USB-charging precondition failure), retry-key implementation and cleanup handoff; earlier owner Inbox/SAF evidence remains in [pass 12](engineering-pass-12.md).
 
-SIConnect has a working execution platform: authorization, durable requests, approval binding, native resource operations, privileged execution, declarative workflows and an authenticated gateway. The continued host implementation separates workflow recovery from readiness, bounds continuation dispatch and coordinates reminder cancellation with its original delivery request. Gateway source now adds a locally tested client retry identity. The next priorities are bounded storage, shared readiness measurements, hosted retry acceptance and connection transitions.
+SIConnect has a working execution platform: authorization, durable requests, approval binding, native resource operations, privileged execution, declarative workflows and an authenticated gateway. The continued host implementation separates workflow recovery from readiness, bounds continuation dispatch and coordinates reminder cancellation with its original delivery request. Gateway source now adds a locally tested client retry identity. [Pass 14](engineering-pass-14.md) implements shared discovery and validated-network wake-up, deploys retry identity and verifies live same-principal read/write deduplication. The next priorities are bounded storage, blocking IO/ADB flow control and controlled connection/owner UI acceptance.
 
 ## Scope and architecture
 
@@ -32,7 +32,7 @@ flowchart TD
 | Execution | Native APIs; explicitly selected direct Binder or Shizuku; bounded subprocess capture and reliable result pipes | Blocking provider/Binder cancellation and platform dispatch races |
 | Screen and notifications | Agent-bound semantic references; protected surfaces; password exclusion; live notification-action identity checks | Full lifecycle matrix and verified business outcomes |
 | Scheduling | Stable scheduled slots, frozen run snapshots, recurrence/timezones, missed-run policies, one-off runs, health alerts | Physical AlarmManager/WorkManager and cancellation acceptance |
-| Gateway | OAuth/PKCE or private bearer, acknowledged device socket generations, bounded pending calls, original-request recovery guidance, optional caller retry identity in source | Hosted retry rollout/physical acceptance and network recovery latency |
+| Gateway | OAuth/PKCE or private bearer, acknowledged generations, original-request recovery, deployed caller retry identity and network-triggered backoff wake-up | Controlled transitions/loss/restart acceptance and client schema interpretation |
 | Owner UI | Adaptive navigation, agent permissions, Inbox, automation forms, paged activity, setup/recovery | Large-font/Fold verification, consistent action feedback and result presentation |
 
 ## Implemented fixes
@@ -73,23 +73,11 @@ Add an explicit owner retention policy and incremental maintenance. Preserve act
 
 ## Open performance and connectivity work
 
-### P2 Complete hosted acceptance of MCP retry identity
+### P2 Complete controlled connection and discovery acceptance
 
-The source-confirmed fresh-UUID gap is addressed in gateway source with optional `_siconnectOperationKey`. Local SDK v1/v2 checks prove stable original identity, changed-operation conflicts, stripped transport metadata, bounded key validation, in-flight guidance and lost-response reconciliation against a test peer. The phone freezes the first execution deadline; transport retries do not extend it. Unkeyed calls remain fresh operations.
+[Pass 14](engineering-pass-14.md) closes the source-level fresh-UUID gap for keyed MCP calls, deploys it to the existing gateway and verifies actual same-principal read/write deduplication and changed-operation conflicts. Grok's repeated keyed battery call also had one recorded execution, despite its incorrect explanation of expected native metadata stripping.
 
-The hosted gateway has not been redeployed. Verify the existing account/endpoint, deploy reviewed source, refresh discovery and test one disposable physical mutation with original-record recovery. Do not describe local fixture results as device or Durable Object restart evidence. See [pass 13](engineering-pass-13.md) and [retry guidance](gateway-deployment.md#retry-identity-and-original-result-recovery).
-
-### P2 Wake reconnection on a usable network transition
-
-Source-confirmed: [GatewayConnection][connection] reconnects using socket failure/handshake callbacks and jittered exponential delay up to roughly 256 seconds. It has no active-network observer to wake that delay when connectivity returns. Local ADB recovery has its own Wi-Fi observer; it does not manage the remote gateway.
-
-Add a lifecycle-owned, coalesced network signal and preserve socket generations, saved enrollment and original request outcomes. Measure Wi-Fi/cellular/offline/captive-portal transitions on the device before setting a reconnect target. Do not reconnect by resubmitting interrupted actions.
-
-### P2 Separate static discovery from provider readiness probes
-
-Source-confirmed: [ControlCenterState][state] rebuilds `registry.statuses()` on request/workflow events. [DocumentOperations][documents] checks saved roots and provider availability for individual document capabilities; availability detail can repeat those checks. Slow or missing providers can amplify one overview refresh into many Binder/provider calls.
-
-Share a bounded readiness snapshot across a refresh, invalidate it on relevant permission/provider changes, and avoid static schema rebuilding for ordinary request updates. Count provider calls under unavailable roots and measure equivalent UI/agent workloads before claiming a speedup.
+Shared document readiness and bounded owner metadata caching now avoid repeated provider probes while preserving fresh execution checks. Lifecycle-owned validated-network callbacks wake timed reconnect backoff without replaying actions. Six core and four Android JVM regressions, seven focused physical checks and actual hosted calls passed. These changes do not establish the exact cause of the earlier socket interruption or general latency/battery improvement. Next reproduce network/Doze/socket transitions and profile missing providers, gateway schema construction and client orchestration separately.
 
 ### P2 Make blocking IO cancellation observable
 
@@ -115,20 +103,20 @@ Use retained screen state and shared owner-action reporting, move composition-ti
 
 | Check | Result |
 | --- | --- |
-| Core JVM tests | 64 passed |
-| Android JVM tests | 89 passed |
+| Core JVM tests | 70 passed |
+| Android JVM tests | 93 passed |
 | Embedded ADB JVM tests | 2 passed |
 | Python tooling tests | 13 passed |
 | Gateway protocol integration tests | 15 passed after retry implementation; initial 10 passed against a clean dependency install |
 | Gateway typecheck and dry-run bundle | Passed |
 | Full npm dependency audit | Zero known vulnerabilities |
 | Android debug and minified unsigned release | Built |
-| Android instrumentation APK | Built; code-13 batch: 20 passed, one USB-charging precondition failure |
+| Android instrumentation APK | Code-14 focused batch: seven passed; minified integrity/record checkpoint passed separately |
 | Android debug lint | No errors; 71 warnings remain |
 | Release isolation | Debug semantic fixture absent; debug loopback endpoint removed by R8 |
 | Signing workflow metadata | Python parsed; authoritative schema resolved to 10 |
 
-The host total is now 183 passing tests: the original 178 include 38 source-audit regressions, and five gateway retry tests were added afterward. Android/Python results are from the source-audit build; the gateway checks were rerun after its change. Lint warnings include 51 `UseKtx` suggestions, nine text-formatting warnings, three inlined API checks, four version-catalog suggestions, two trust-manager warnings, one obsolete SDK check and one dependency-update suggestion. The trust-manager warnings are in the bundled ADB TLS code, whose server-certificate acceptance requires review in its local endpoint/pairing context; the HTTPS gateway client uses its normal OkHttp TLS validation. No cryptographic assurance follows from a clean build.
+The host total is now 193 passing tests: 178 from the initial audit, five gateway retry additions and ten discovery/reconnection regressions. All host modules were rerun in pass 14. The original 38 regression additions and the later increments are separate historical counts. Lint warnings include 51 `UseKtx` suggestions, nine text-formatting warnings, three inlined API checks, four version-catalog suggestions, two trust-manager warnings, one obsolete SDK check and one dependency-update suggestion. The trust-manager warnings are in the bundled ADB TLS code, whose server-certificate acceptance requires review in its local endpoint/pairing context; the HTTPS gateway client uses its normal OkHttp TLS validation. No cryptographic assurance follows from a clean build.
 
 Artifact sizes do not establish latency, battery or memory improvements. The signing workflow metadata was corrected; no hosted signing run or deployment was performed.
 
@@ -144,8 +132,8 @@ Artifact sizes do not establish latency, battery or memory improvements. The sig
 
 ## Build order
 
-1. Add owner-controlled retention and shared readiness projections; profile equivalent workloads.
-2. Complete hosted acceptance of the implemented MCP retry identity and add network-triggered recovery, retaining uncertain-outcome semantics.
+1. Add owner-controlled retention with reference, uncertainty and retry-identity protection.
+2. Fix blocked IO cancellation and ADB stream flow control; measure the deployed discovery/reconnect/retry changes under controlled failures.
 3. Complete device acceptance of the host-tested recovery, reminder cancellation and dispatch ordering.
 4. Consolidate owner action state and complete the UI/device matrix, then expand native workflow/resource features from that baseline.
 

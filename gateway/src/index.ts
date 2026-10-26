@@ -61,7 +61,9 @@ export class DeviceBridge extends DurableObject<Env> {
       this.rate.set(body.agentId, { slot, count: rate?.slot === slot ? rate.count + 1 : 1 });
       if (this.rate.size > 1000) this.rate.clear();
       const socket = await this.activeSocket();
-      if (!socket) return json({ error: 'DEVICE_OFFLINE' }, 503);
+      if (!socket) return json({ error: 'DEVICE_OFFLINE', failureLayer: 'TRANSPORT', executionDispatched: false,
+        backendAvailability: 'UNKNOWN',
+        detail: 'No acknowledged phone connection. This attempt was not forwarded; the phone backend state was not measured. Preserve any original request identity while restoring the existing connection.' }, 503);
       if (this.pending.size >= 16) return json({ error: 'DEVICE_BUSY' }, 429);
       const epoch = (socket.deserializeAttachment() as SocketState).epoch;
       const id = String(body.request.requestId);

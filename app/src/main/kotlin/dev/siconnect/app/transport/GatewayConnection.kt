@@ -46,6 +46,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
     private val generation=java.util.concurrent.atomic.AtomicLong()
     /** Refresh discovery after backend/permission changes using the same authoritative registry. */
     fun refreshCatalog() {
+        g.registry.invalidateDiscovery()
         if(state.value!=ConnectionState.ONLINE) return
         g.scope.launch {socket?.send(hello())}
     }
@@ -73,7 +74,17 @@ class GatewayConnection(private val g: RuntimeGraph) {
         if(loop?.isActive==true) return
         loop=g.scope.launch {
             g.ready.await(); var attempt=0
+            val wake=GatewayReconnectWake()
+            val monitor=GatewayNetworkMonitor(g.context.getSystemService(android.net.ConnectivityManager::class.java),wake::usableNetworkChanged)
+            // Missing observer access must not disable the existing timed retry path.
+            runCatching {monitor.start()}.onFailure {error->
+                runCatching {recordEvent(Event(System.currentTimeMillis(),eventType="gateway.network_observer_unavailable",
+                    deviceId=g.settings.deviceId,errorCode=error.javaClass.simpleName,
+                    detail="Network observation unavailable; timed reconnect remains active"))}
+            }
+            try {
             while(isActive && g.settings.gateway.value.enabled) {
+                val networkGeneration=wake.generation()
                 try {
                 val config=g.settings.gateway.value
                 val base=config.baseUrl.trimEnd('/')
@@ -179,14 +190,15 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 if(state.value==ConnectionState.AUTH_FAILED) break
                 state.value=ConnectionState.BACKOFF
                 val cap=minOf(300_000L,1000L shl attempt.coerceAtMost(8)); attempt++
-                delay(Random.nextLong(cap/2,cap+1))
+                wake.awaitBackoff(Random.nextLong(cap/2,cap+1),networkGeneration)
                 } catch(e: CancellationException) { throw e }
                   catch(e: Exception) {
                     state.value=ConnectionState.BACKOFF; detail.value="Connection unavailable: ${e.javaClass.simpleName}"
                     val cap=minOf(300_000L,1000L shl attempt.coerceAtMost(8));attempt++
-                    delay(Random.nextLong(cap/2,cap+1))
+                    wake.awaitBackoff(Random.nextLong(cap/2,cap+1),networkGeneration)
                 }
             }
+            } finally {monitor.close()}
         }
     }
 }

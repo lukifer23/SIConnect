@@ -1,5 +1,7 @@
 # Repository hygiene and shutdown
 
+Pass 14 resumed development with incremental build caches retained for rapid iteration. The current installed app is an optimized code-14 development build, and both disposable test packages are absent. The private recovery artifact is updated to that compatible code-14 APK. The inventory/cleanup below records the earlier pass-13 cleanup; it is not an instruction to repeatedly discard active build caches. See [pass 14](engineering-pass-14.md).
+
 October 26, 2026. This checkpoint covers SIConnect source, its generated local artifacts and its development processes. Other projects, owner applications and shared system caches are outside the cleanup scope.
 
 ## Inventory

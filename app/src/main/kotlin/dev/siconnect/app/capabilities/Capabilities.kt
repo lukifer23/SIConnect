@@ -137,8 +137,14 @@ fun registerCapabilities(g: RuntimeGraph) {
             c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); buildJsonObject { put("dispatched", true);put("verifiedForeground",false) }
         }
     }
-    op("alarms.next", "Next owner alarm") { _, _ -> val alarm = c.getSystemService(AlarmManager::class.java).nextAlarmClock
-        buildJsonObject { put("triggerAtMs", alarm?.triggerTime?.let(::JsonPrimitive) ?: JsonNull); put("visible", alarm != null) } }
+    op("alarms.next", "Next Android-exposed alarm; a null result does not prove that no alarms are configured") { _, _ ->
+        val alarm = c.getSystemService(AlarmManager::class.java).nextAlarmClock
+        buildJsonObject {
+            put("triggerAtMs", alarm?.triggerTime?.let(::JsonPrimitive) ?: JsonNull);put("visible",alarm!=null)
+            put("scope","ANDROID_NEXT_ALARM_CLOCK");put("allAlarmsEnumerated",false)
+            put("status",if(alarm==null) "NO_NEXT_ALARM_EXPOSED" else "NEXT_ALARM_EXPOSED")
+        }
+    }
     val notifyAvailable = { if (c.getSystemService(NotificationManager::class.java).areNotificationsEnabled()) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED }
     op("notifications.post", "Post SIConnect notification", objectSchema { string("title", "Title", true, maxLength=150); string("text", "Body", true, maxLength=1000); string("deduplicationKey","Optional per-agent stable alert key; never repeats a previously claimed post",maxLength=200)
         prop("healthCheck",false,dev.siconnect.app.automation.HealthAlertPolicy.schema())

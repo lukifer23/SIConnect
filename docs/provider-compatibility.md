@@ -1,5 +1,13 @@
 # Provider compatibility
 
+## Code 14 — October 26, 2026
+
+Fresh Grok battery/battery/shell identity/runtime reads all succeeded on the minified code-14 app and matched SQLite. An additional repeated keyed battery call returned the gateway-derived stable identity with one recorded execution. Grok initially misinterpreted intentionally stripped native arguments as failed deduplication; independent engine evidence confirms it passed. Native capability summaries are not MCP schemas. Fresh official SDK discovery on the same existing principal advertises the transport key; actual keyed reads/writes, changed-operation conflict and exact-file cleanup passed. No grant or credential changed.
+
+The first code-13 query had a socket-replaced status response (recovered by original-request lookup), successful battery, then a pre-dispatch offline shell attempt. Offline transport does not establish backend loss. The current stable sample is separate from that interruption and does not establish every network transition. Existing Grok/Hermes bearer sharing still limits independent revocation; no automatic identity migration was performed. See [pass 14](engineering-pass-14.md).
+
+Earlier checkpoints below retain their original versions and limits.
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Fresh pass-9 evidence: seven official SDK phone calls and a Hermes agent native/shell pair passed on the installed 85-tool build; Hermes IDs matched SQLite. Grokbot background submission was not confirmed before its window became inaccessible; Dots remains blocked on safe existing-session access. Earlier provider successes below are historical. OAuth/bearer identities, scopes and gateway deployment were preserved. See [pass 9](engineering-pass-9.md).

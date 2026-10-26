@@ -31,14 +31,14 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
         mutable.subscriptionCount.map {it>0}.distinctUntilChanged().collectLatest {visible ->
         if(!visible) return@collectLatest
         merge(refreshes,g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},g.proposals.updates,
-            g.gateway.state.map {Unit},g.privileged.directStatus.map {Unit},g.shizuku.status.map {Unit},
-            dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState.map {Unit},
-            dev.siconnect.app.notifications.NotificationCaptureService.connectionState.map {Unit})
-            .onStart {emit(Unit)}.debounce(100).collect {
+            discoveryUpdates(g.gateway.state),discoveryUpdates(g.privileged.directStatus),discoveryUpdates(g.shizuku.status),
+            discoveryUpdates(dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState),
+            discoveryUpdates(dev.siconnect.app.notifications.NotificationCaptureService.connectionState))
+            .onStart {g.registry.invalidateDiscovery();emit(Unit)}.debounce(100).collect {
                 try {mutable.value=ControlCenterSnapshot(mutable.value.revision+1,g.agents.all(),g.requests.recentSummaries(50),
                     g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)),
                     g.reminders.all().filter {it.state in setOf("SCHEDULED","BLOCKED","FIRING","AWAITING_APPROVAL","CANCELLING")}.sortedBy {it.fireAtMs},
-                    g.scheduler.all(),g.registry.statuses(),semanticEnabledInSettings=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+                    g.scheduler.all(),g.registry.statuses(maxAgeMs=5_000),semanticEnabledInSettings=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
                         .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)},
                     proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount(),
                     activeRequests=g.requests.historyPage(limit=50,states=setOf(RequestState.EXECUTING,RequestState.VERIFYING))) }
@@ -47,7 +47,8 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
             }
         }
     }}
-    fun refresh() {refreshes.tryEmit(Unit)}
+    private fun discoveryUpdates(flow: Flow<*>) = flow.map {g.registry.invalidateDiscovery();Unit}
+    fun refresh() {g.registry.invalidateDiscovery();refreshes.tryEmit(Unit)}
 }
 
 internal fun botDisplayName(bot:AgentRecord,bots:List<AgentRecord>):String {

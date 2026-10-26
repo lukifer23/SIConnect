@@ -1,5 +1,9 @@
 # Device testing
 
+## October 26 code-14 checkpoint
+
+[Pass 14](engineering-pass-14.md) records seven focused physical passes, the corrected framework-only minified-installation checkpoint, twelve independently correlated successful live Grok/SDK request records, and actual keyed read/write deduplication with exact-file cleanup. The final installation is an optimized code-14 APK with the existing development signer; both disposable test packages are absent. The earlier mixed Grok baseline and failed test-runner attempts are retained as limits, not silently counted as passes. General connection/owner UI acceptance remains incomplete. Prefer checks tied to a specific defect or change; avoid repeating the entire device matrix.
+
 ## October 26 code-13 checkpoint
 
 [Pass 13](engineering-pass-13.md) records an in-place compatible-signer update to 0.6.0-dev.5 / code 13 / schema 10. The 21-case physical batch had 20 passes and one explicit unplugged-phone precondition failure because USB was charging the phone; it is not a full-suite pass. Native execution/idempotency, managed files, exact reminder delivery/reconciliation, scheduler/manual-run, screen-lease and isolated SQLite/alert cases were exercised. All five original agents/grants, three reminders, two automations and the selected document-root row matched before/after; SQLite integrity passed.

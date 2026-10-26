@@ -49,7 +49,7 @@ Pass 4 deployment: version `5cf1038d-015a-42bf-bb54-ca74e2d8ecdd`, same Worker e
 
 ## Retry identity and original-result recovery
 
-The October 26 gateway source adds optional `_siconnectOperationKey` to advertised tool arguments. **It has not been deployed to the hosted gateway in this checkpoint.** Deploy the reviewed source to the existing endpoint/bindings after checking the correct account, then refresh client tool discovery. Use this field only when the discovered schema advertises it. Existing OAuth/bearer enrollment and calls without a key remain compatible.
+The October 26 gateway source adds optional `_siconnectOperationKey` to advertised tool arguments. It is now deployed to the existing endpoint/bindings in the previously verified account, with actual same-principal phone read/write acceptance. Refresh client tool discovery; see [pass 14](engineering-pass-14.md). Use this field only when the discovered schema advertises it. Existing OAuth/bearer enrollment and calls without a key remain compatible.
 
 For one intended mutation, generate and retain a unique operation key before its first call. For example:
 
@@ -68,4 +68,20 @@ The example illustrates transport identity; the selected tool's live schema and 
 
 Retain the returned request ID. Prefer `requests_get` for approval continuation, in-flight work and uncertain results; `REQUEST_IN_FLIGHT` provides that same lookup identity. An identical keyed transport retry can recover the original record but cannot extend its original execution deadline or cause the original unknown/terminal record to execute again. An unknown outcome still needs actual verification. Calls without a key create a fresh operation on every invocation and must not be blindly retried.
 
-The guarantee depends on the phone retaining its request/idempotency identity; it is not permanent exactly-once delivery across data clearing, re-enrollment or future identity-retention expiry. The new field's same-operation, conflict, concurrent and lost-response paths pass local official SDK v1/v2 tests against a test-only peer. Those results do not establish a hosted rollout, Durable Object restart or physical side-effect result.
+The guarantee depends on the phone retaining its request/idempotency identity; it is not permanent exactly-once delivery across data clearing, re-enrollment or future identity-retention expiry. The new field's same-operation, conflict, concurrent and lost-response paths pass local official SDK v1/v2 tests against a test-only peer. The later live SDK run verified identical-key device reads, one actual shell-file write across repeated calls, conflict rejection and exact-file cleanup. A Grok keyed read also had one actual execution. Durable Object restart and the full loss/recovery matrix remain unverified.
+
+## Failure boundaries and live acceptance
+
+`DEVICE_OFFLINE` now includes `failureLayer: TRANSPORT`, `executionDispatched: false` for that attempt, and `backendAvailability: UNKNOWN`. It does not establish a stopped privileged daemon. Preserve prior operation identity and use the existing connection; do not re-pair agents or add a companion based on this error.
+
+The gateway intentionally strips `_siconnectOperationKey` before native capability validation. Stored native arguments can remain `{}` while the gateway/device request identity and idempotency key correctly deduplicate. `device_capabilities` is not the MCP tool-schema endpoint. Use fresh `tools/list` and original device request evidence when a client describes stale schemas or incorrectly calls expected stripping a failure.
+
+Run the optional real-phone harness with a private config outside the repository:
+
+```sh
+node test/retry-device-client.mjs /absolute/private/gateway-config.json
+# Explicitly authorized disposable shell-file acceptance only:
+node test/retry-device-client.mjs /absolute/private/gateway-config.json --allow-disposable-write
+```
+
+The config has the same private `url`/`agentToken` shape as the existing device client. Metadata reports stay beside it. The write option uses one unique temporary shell file, checks the original identity/result and file size, then verifies deletion. It requires the existing agent's permission; it never broadens access. On interrupted work, retain the reported mutation identity/fixture path and reconcile its original outcome before cleanup or further mutation.

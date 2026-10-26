@@ -19,9 +19,10 @@ import java.util.concurrent.TimeUnit
 data class Reminder(val id: String, val fireAtMs: Long, val title: String, val text: String, val agentId: String, val state: String="SCHEDULED", val exact: Boolean=false, val error: String?=null, val revision: Long=0)
 
 fun registerAutomationCapabilities(g: RuntimeGraph) {
-    fun register(id: String, schema: JsonObject, risk: RiskClass, available: (JsonObject)->Availability={Availability.IMPLEMENTED}, body: suspend (JsonObject,ExecutionContext)->JsonElement) {
+    fun register(id: String, schema: JsonObject, risk: RiskClass, available: (JsonObject)->Availability={Availability.IMPLEMENTED},
+                 description: String = id, body: suspend (JsonObject,ExecutionContext)->JsonElement) {
         g.registry.register(object : Capability {
-            override val descriptor=CapabilityDescriptor(id,title=id,description=id,inputSchema=schema,backend=BackendKind.NATIVE,risk=risk,interaction=InteractionMode.BACKGROUND,
+            override val descriptor=CapabilityDescriptor(id,title=id,description=description,inputSchema=schema,backend=BackendKind.NATIVE,risk=risk,interaction=InteractionMode.BACKGROUND,
                 sideEffects=if(risk>RiskClass.READ_ONLY) listOf("Changes SIConnect reminders") else emptyList())
             override fun availability()=Availability.IMPLEMENTED
             override fun availability(arguments: JsonObject)=available(arguments)
@@ -59,14 +60,17 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
             text=a["text"]?.jsonPrimitive?.content ?: r.text,exact=a["exact"]?.jsonPrimitive?.booleanOrNull ?: r.exact)
         AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.put(updated))
     }
-    register("reminders.list",objectSchema(),RiskClass.READ_ONLY) { _,ctx -> JsonArray(g.reminders.all().filter { it.agentId==ctx.agentId || ctx.agentId=="local-owner" }.map { AppJson.encodeToJsonElement(Reminder.serializer(),it) }) }
+    register("reminders.list",objectSchema(),RiskClass.READ_ONLY,
+        description="List SIConnect reminders owned by the authenticated calling agent, including terminal history. This does not enumerate other agents' reminders, Clock alarms or every reminder on the phone. Check each returned state and delivery time before describing pending reminders.") { _,ctx ->
+        JsonArray(g.reminders.all().filter { it.agentId==ctx.agentId || ctx.agentId=="local-owner" }.map { AppJson.encodeToJsonElement(Reminder.serializer(),it) })
+    }
     register("reminders.cancel",objectSchema { string("id","Reminder ID",true,maxLength=200) },RiskClass.LOW_IMPACT) { a,ctx ->
         val r=owned(a.str("id"),ctx)
         AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.cancel(r.id))
     }
     val http=OkHttpClient.Builder().callTimeout(20,TimeUnit.SECONDS).build()
     g.registry.register(object : Capability {
-        override val descriptor=CapabilityDescriptor("weather.forecast",title="Open-Meteo forecast",description="Real forecast. For a commute/date window provide targetDate (YYYY-MM-DD), timezone (IANA), startHour and endHour. Hourly accumulations use their actual preceding-hour intervals. Missing data is not zero. Without a date window, legacy two-day summary remains available and is explicitly labeled FULL_RESPONSE.",
+        override val descriptor=CapabilityDescriptor("weather.forecast",title="Open-Meteo forecast",description="Forecast for one coordinate point, not an entire commute route or live traffic. Omitted coordinates use owner-configured weather settings; this tool does not obtain the phone's current GPS location. For a commute/date window provide targetDate (YYYY-MM-DD), timezone (IANA), startHour and endHour. Hourly accumulations use their actual preceding-hour intervals. Missing data is not zero. Forecast rain probability is not a guarantee about roads or future traffic. Without a date window, the legacy two-day summary is labeled FULL_RESPONSE.",
             inputSchema=objectSchema {
                 number("latitude","Latitude",min=-90.0,max=90.0);number("longitude","Longitude",min=-180.0,max=180.0)
                 string("targetDate","Target local date YYYY-MM-DD",maxLength=10);string("timezone","IANA timezone; default device timezone",maxLength=100)
@@ -74,8 +78,9 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
             },backend=BackendKind.NETWORK,risk=RiskClass.READ_ONLY,interaction=InteractionMode.BACKGROUND)
         override fun availability()=Availability.IMPLEMENTED
         override suspend fun execute(args:JsonObject,ctx:ExecutionContext):CapabilityResult=withContext(Dispatchers.IO) {
-            val lat=args["latitude"]?.jsonPrimitive?.doubleOrNull ?: g.settings.weather.latitude ?: throw CapabilityException("LOCATION_REQUIRED","Configure weather coordinates")
-            val lon=args["longitude"]?.jsonPrimitive?.doubleOrNull ?: g.settings.weather.longitude ?: throw CapabilityException("LOCATION_REQUIRED","Configure weather coordinates")
+            val locationRequired="Supply weather coordinates or configure them locally; this forecast tool does not read current GPS. Missing coordinates do not mean the phone is disconnected."
+            val lat=args["latitude"]?.jsonPrimitive?.doubleOrNull ?: g.settings.weather.latitude ?: throw CapabilityException("LOCATION_REQUIRED",locationRequired)
+            val lon=args["longitude"]?.jsonPrimitive?.doubleOrNull ?: g.settings.weather.longitude ?: throw CapabilityException("LOCATION_REQUIRED",locationRequired)
             val zone=java.time.ZoneId.of(args["timezone"]?.jsonPrimitive?.content ?: java.time.ZoneId.systemDefault().id)
             val windowed=listOf("targetDate","startHour","endHour").any {it in args}
             val date=args["targetDate"]?.jsonPrimitive?.content ?: java.time.LocalDate.now(zone).toString()
@@ -115,6 +120,12 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
                 put("minimumTemperatureC",hourly.getValue("temperature_2m").jsonArray.mapNotNull {it.jsonPrimitive.doubleOrNull}.minOrNull()?.let(::JsonPrimitive) ?: JsonNull)
             }
             val normalized=buildJsonObject {
+                put("spatialScope","FORECAST_POINT");put("includesLiveTraffic",false)
+                put("locationSource",when {
+                    "latitude" in args && "longitude" in args -> "EXPLICIT_COORDINATES"
+                    "latitude" !in args && "longitude" !in args -> "OWNER_CONFIGURED_WEATHER"
+                    else -> "MIXED_EXPLICIT_AND_CONFIGURED"
+                })
                 put("fetchedAtMs",fetchedAt);put("expiresAtMs",fetchedAt+900_000);put("provider","Open-Meteo");put("stale",now-fetchedAt>900_000)
                 put("summaryScope",if(windowed) "EXPLICIT_WINDOW" else "FULL_RESPONSE")
                 put("deviceTimezone",java.time.ZoneId.systemDefault().id);put("forecastTimezone",body["timezone"] ?: JsonPrimitive(zone.id))

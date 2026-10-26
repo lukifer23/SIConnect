@@ -154,7 +154,7 @@ import kotlinx.serialization.json.*
                         Text(if(roots.isEmpty()) "No folders selected. Android lets you choose shared folders; protected app storage is excluded." else "${roots.size} selected. Android access and each agent’s document grant are required.",style=MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick={ownerAuthentication.authenticate("Connect document folder",{documentPicker.launch(null)},{documentStatus=it})}) {Text("Choose folder")}
                         if(documentStatus.isNotBlank()) Text(documentStatus)
-                        roots.forEach {root->SettingsAccessItem(root.label,"Selected folder","Disconnect",{action {DocumentRoots(this@Management,g.db).remove(root.id);documentStatus="";message="Folder access removed"}})}
+                        roots.forEach {root->SettingsAccessItem(root.label,"Selected folder","Disconnect",{action {DocumentRoots(this@Management,g.db).remove(root.id);g.gateway.refreshCatalog();documentStatus="";message="Folder access removed"}})}
                         val exact=g.reminders.canScheduleExact()
                         SettingsAccessItem("Precise reminders",if(exact) "Allowed" else "Flexible timing available","Manage",{startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))})
                         val batteryExempt=getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)

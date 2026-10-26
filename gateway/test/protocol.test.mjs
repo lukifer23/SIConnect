@@ -297,6 +297,11 @@ test('device output error preserves original request ID and bounded retrieval gu
 test('device disconnect is reported as offline rather than synthetic success',async()=>{
   socket.close();await new Promise(r=>setTimeout(r,100));
   const c=await client();
-  try {const r=await c.callTool({name:'test_echo',arguments:{value:'offline'}});assert.equal(r.isError,true);assert.equal(r.structuredContent.error,'DEVICE_OFFLINE');}
+  try {
+    const r=await c.callTool({name:'test_echo',arguments:{value:'offline'}});
+    assert.equal(r.isError,true);assert.equal(r.structuredContent.error,'DEVICE_OFFLINE');
+    assert.equal(r.structuredContent.failureLayer,'TRANSPORT');assert.equal(r.structuredContent.executionDispatched,false);
+    assert.equal(r.structuredContent.backendAvailability,'UNKNOWN');
+  }
   finally {await c.close()}
 });

@@ -2,7 +2,7 @@
 
 ## Current source and physical checkpoints
 
-The October 26 [source audit](source-audit-2026-10-26.md) covers schema 10 and the existing 85-tool catalog, with no added tool names. The code-13 physical batch and its USB-charging precondition failure are in [pass 13](engineering-pass-13.md); earlier owner Inbox acceptance and selected SAF evidence remain in [pass 12](engineering-pass-12.md). The optional gateway retry field adds no capability names and has local protocol coverage only. Entries below retain their version-specific historical evidence; they are not a fresh acceptance result for the audited source.
+The October 26 [source audit](source-audit-2026-10-26.md) covers schema 10 and the existing 85-tool catalog, with no added tool names. The current code-14 focused device/live client evidence is in [pass 14](engineering-pass-14.md). The earlier code-13 batch and USB-charging precondition failure remain in [pass 13](engineering-pass-13.md); earlier owner Inbox acceptance and selected SAF evidence remain in [pass 12](engineering-pass-12.md). The deployed retry field adds no capability names and now has real phone read/write coverage. Native `device.capabilities` reports availability/scope; MCP `tools/list` carries the gateway transport schema. Entries below retain their version-specific historical evidence; they are not a fresh acceptance result for the audited source.
 
 ## Pass 9 checkpoint — October 21, 2026
 
