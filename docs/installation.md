@@ -1,6 +1,6 @@
 # Installation, updates and signing
 
-The current build is **0.6.0-dev.4 / versionCode 12 / SQLite 10**. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
+The current source and installed debug build are **0.6.0-dev.5 / versionCode 13 / SQLite 10**. See [pass 13](engineering-pass-13.md) for preservation checks and partial physical acceptance. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
 
 ## Preserve the existing installation
 

@@ -1,5 +1,7 @@
 # Development setup
 
+Current checkpoint: Android **0.6.0-dev.5 / code 13**, SQLite **10**, **85** tools. See [project status](project-status.md) and [pass 13](engineering-pass-13.md) for measured results and remaining gaps.
+
 ## Host toolchain (macOS, Apple silicon)
 
 ```sh
@@ -15,7 +17,7 @@ sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 ## Build and test
 
 ```sh
-./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :adb-bootstrap:testDebugUnitTest :app:lintDebug
 ./gradlew :app:assembleDebugAndroidTest
 ```
 
@@ -66,15 +68,26 @@ Install the generic [SIConnect skill](../integrations/skills/siconnect/SKILL.md)
 
 The verified local setup currently shares the owner's existing paired agent with another client. OAuth Dots pairing is now implemented and verified with separate local identities; do not describe the shared private-bearer identity as independent grants.
 
-The pass 3 Android package remains `dev.siconnect.app`, now version 0.3.0/code 2 with SQLite v4. Upgrade with `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`; preserve signing and app data. The owner-enabled connection service restores on package replacement without opening the app, subject to Android allowing the service. Reattach the bundled authority with `python3 tools/start_builtin.py --serial <serial> --restart` after code upgrades. Do not assume an older SQLite-v3 APK can downgrade a v4 database; keep a verified current APK/source checkpoint rather than wiping data. Host tooling checks include `python3 -m unittest discover -s tools/tests -v`.
+## Gateway and tooling checks
 
+```sh
+python3 -m unittest discover -s tools/tests -v
+cd gateway
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm audit --audit-level=high
+```
 
-Pass 4 keeps the same application ID and signing configuration, with version 0.4.1/code 4 and additive SQLite v6 migrations. Upgrade in place using the commands above; do not use an older database schema as a downgrade recovery method. If cache files were removed while a Gradle daemon was running, stop the daemon with `./gradlew --stop` and rebuild so its dependency transforms are recreated. Do not remove active caches during builds.
+`npm test` starts and tears down a local test-only Worker/device peer. It does not prove physical phone behavior. `npm run build` is a dry run; it does not deploy. The new optional MCP retry field requires the updated hosted gateway before a client can use it; see [gateway deployment](gateway-deployment.md).
 
+## In-place update and recovery
 
-Current follow-up package: 0.4.2/code 5, same schema v6. The daemon lifetime-observer fix requires one daemon restart after loading this APK; it is not a claim of privileged persistence across phone reboot. Following an in-place upgrade, verify acknowledged gateway readiness and actual shell identity rather than assuming installation success implies backend readiness.
+The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-10 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
 
+## Shutdown and generated files
 
-## Pass 10 setup
+Use `./gradlew --stop` after all checks finish. Stop local Worker/test/profiler processes by their verified PID. `adb kill-server` ends workstation debugging transports without deleting the phone's pairing/enrollment or stopping its outbound gateway. Restart it when needed. Do not force-stop the phone or terminate the Binder daemon to clean host processes while agents should remain connected.
 
-Current build: 0.6.0-dev.1/code 9, SQLite 9. Start with [phone setup](phone-setup.md) and [installation/signing](installation.md). Local pairing/bootstrap/recovery now has real Fold evidence; `tools/start_builtin.py` remains a development diagnostic, not a runtime requirement. Preserve the same package/signing identity and use in-place updates. Do not downgrade schema 9 to an older APK.
+Build outputs and `gateway/node_modules` are regenerable. Keep `local.properties`, `gateway/.dev.vars`, signing/Keystore material, enrolled credentials and owner data. Do not remove shared Gradle caches while a daemon is active. See [repository hygiene](repository-hygiene.md) for the exact checkpoint cleanup and rebuild costs.

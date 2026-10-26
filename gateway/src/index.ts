@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { authenticate, bearer, constantEqual, sha256, type Env } from './auth.js';
 import { oauthFetch } from './oauth.js';
 import type { Invitation, PhoneAuthorization } from './pairing.js';
+import { invocationEnvelope, invocationSchema } from './invocation.js';
 
 type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
 type SocketState = { epoch: string; ready: boolean };
@@ -53,7 +54,7 @@ export class DeviceBridge extends DurableObject<Env> {
     }
     if (path === '/catalog') return json({ protocol: 2, online: !!await this.activeSocket(), capabilities: await this.ctx.storage.get('capabilities') ?? [] });
     if (path === '/invoke') {
-      const body = await request.json() as { agentId: string; agentToken: string; request: Record<string, unknown> };
+      const body = await request.json() as { agentId: string; agentToken: string; transportExpiresAtMs?: number; request: Record<string, unknown> };
       const slot = Math.floor(Date.now() / 60_000);
       const rate = this.rate.get(body.agentId);
       if (rate?.slot === slot && rate.count >= 60) return json({ error: 'RATE_LIMITED' }, 429);
@@ -64,8 +65,9 @@ export class DeviceBridge extends DurableObject<Env> {
       if (this.pending.size >= 16) return json({ error: 'DEVICE_BUSY' }, 429);
       const epoch = (socket.deserializeAttachment() as SocketState).epoch;
       const id = String(body.request.requestId);
-      if (this.pending.has(id)) return json({ error: 'REQUEST_IN_FLIGHT' }, 409);
-      const expiry = Number(body.request.expiresAtMs);
+      if (this.pending.has(id)) return json({ error: 'REQUEST_IN_FLIGHT', requestId: id,
+        recovery: { tool: 'requests_get', arguments: { requestId: id }, doNotResubmitMutation: true } }, 409);
+      const expiry = Number(body.transportExpiresAtMs ?? body.request.expiresAtMs);
       if (!Number.isFinite(expiry) || expiry <= Date.now()) return json({ error: 'EXPIRED' }, 408);
       // Transport cancellation is not execution cancellation: the action may already
       // have committed. Only the authenticated requests.cancel tool asks the device
@@ -195,15 +197,13 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
           const descriptor = cap.descriptor;
           server.registerTool(descriptor.id.replaceAll('.', '_'), {
             title: descriptor.title, description: descriptor.description,
-            inputSchema: z.fromJSONSchema(descriptor.inputSchema),
+            inputSchema: z.fromJSONSchema(invocationSchema(descriptor.inputSchema)),
             annotations: { readOnlyHint: descriptor.risk === 'READ_ONLY', destructiveHint: ['HIGH_IMPACT', 'CRITICAL'].includes(descriptor.risk) }
           }, async (args, context) => {
-            const requestId = crypto.randomUUID();
+            const envelope = await invocationEnvelope(authorization, descriptor.id, args);
             const response = await bridge.fetch(new Request('https://internal/invoke', {
               method: 'POST', signal: context.mcpReq.signal,
-              body: JSON.stringify({ agentId: authorization.agentId, agentToken: authorization.agentToken, request: {
-                requestId, traceId: requestId, capabilityId: descriptor.id, arguments: args, expiresAtMs: Date.now() + 15 * 60_000
-              } })
+              body: JSON.stringify(envelope)
             }));
             const record = await response.json() as Record<string, unknown>;
             if (record.state === 'AWAITING_APPROVAL') record.continuation = { tool: 'requests_get', arguments: { requestId: record.requestId }, doNotResubmitMutation: true, approvalExpiresAtMs: record.approvalExpiresAtMs };

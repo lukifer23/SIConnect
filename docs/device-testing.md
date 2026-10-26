@@ -1,5 +1,11 @@
 # Device testing
 
+## October 26 code-13 checkpoint
+
+[Pass 13](engineering-pass-13.md) records an in-place compatible-signer update to 0.6.0-dev.5 / code 13 / schema 10. The 21-case physical batch had 20 passes and one explicit unplugged-phone precondition failure because USB was charging the phone; it is not a full-suite pass. Native execution/idempotency, managed files, exact reminder delivery/reconciliation, scheduler/manual-run, screen-lease and isolated SQLite/alert cases were exercised. All five original agents/grants, three reminders, two automations and the selected document-root row matched before/after; SQLite integrity passed.
+
+Calendar writes, new SAF writes, genuine owner authentication cancellation, the concurrent reminder cancellation matrix and network/reboot/Fold acceptance were not added by this batch. Read the exact selection and limits in the report. Gateway retry-key protocol tests use a local fixture; hosted deployment and physical keyed-result recovery remain pending. Host development shutdown and regenerable-artifact cleanup are described in [repository hygiene](repository-hygiene.md).
+
 ## Pass 12 fresh evidence
 
 See [the pass 12 report](engineering-pass-12.md) for three actual future scheduled health runs (first screen-off/locked), two genuine owner Inbox acceptances, eleven distinct passing physical alert/migration/retention/SAF cases and final seven-call hosted native/Binder smoke. The selected disposable SAF root completed create/write/read/hash/rename/delete/absence. Its fixture identity is root-constrained and removed after the run. Cancellation was not verified because both Inbox prompts were approved. Calendar still requires a dedicated writable test resource.

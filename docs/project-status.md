@@ -1,202 +1,39 @@
 # Project status
 
-## Source audit October 26 2026
+Updated October 26, 2026. Current Android source and installed debug build: **0.6.0-dev.5 / versionCode 13**, SQLite **10**, **85** tools. The gateway source adds optional caller retry identity; that gateway change has **not** been deployed. See [pass 13](engineering-pass-13.md) for this checkpoint, [the source audit](source-audit-2026-10-26.md) for code findings, and [next steps](next-steps.md) for the current queue.
 
-The [source audit and implementation priorities](source-audit-2026-10-26.md) trace the actual runtime and record the new execution/workflow, maintenance, permission, UI and build fixes. All 178 host tests pass; debug/release and instrumentation APKs build, lint has no errors, and the updated gateway dependencies pass npm audit. This is source verification; the latest physical checkpoint remains pass 12 below. Source is now 0.6.0-dev.5 / code 13, schema 10. Bounded continuation dispatch and reminder cancellation/dispatch ordering have host coverage; physical acceptance and bounded retention remain open.
-
-## Pass 12 development checkpoint
-
-Version **0.6.0-dev.4 / 12**, schema **10**, **85** capabilities. Implemented persisted health alert policy, dispatch-time policy recheck, clearer background classifications, visible Inbox decision controls and explicit remote block/disconnect/cancel controls. Future screen-off scan, owner Inbox acceptance, selected SAF CRUD, physical alert/migration/retention checks and hosted native/Binder diagnostics now have fresh evidence. Current CI and final delivery details are recorded in [engineering pass 12](engineering-pass-12.md). Calendar, cancellation, complete network/reboot matrix and signed public distribution remain unfinished.
-
-## Background operations milestone — October 22, 2026
-
-Android **0.6.0-dev.3 / code 11**, SQLite **9**, **85** tools. Background health scans extend the existing snapshot workflow with storage/network/thermal readings, optional threshold notifications and readable stored results. The original workflow upgrades only through owner authentication; no schedule or permission is enabled automatically. Two real owner-flow manual worker runs succeeded on the Fold with six native readings each and warnings disabled. The existing schedule remains disabled. Connection pause and local history survived an in-place update; owner-authenticated resume restored the original gateway. Seven fresh hosted native/Binder checks and live SQLite integrity passed. All five original identity/grant records, reminder rows and saved automation configuration matched the private baseline. See [background operations](background-operations.md) and [pass 11 evidence](engineering-pass-11.md).
-
-The preceding UI/security checkpoint `0577d54` passed Linux CI run `39890573408`. The new milestone requires its own CI result. A manual worker run is not a new screen-off scheduled-run or reboot acceptance result. Remaining priorities: owner-confirmed future scheduled dispatch, controlled network-transition evidence, compatible signed distribution, Calendar/SAF resources and Action Inbox lifecycle.
-
-## Earlier pass 11 checkpoint — October 22, 2026
-
-Android **0.6.0-dev.2 / code 10**, schema **9**, installed in place. CI metadata regression fixed; Linux run `39886068956` passed. UI and recovery hardening removes duplicate editors, distinguishes granted access from service connection, reuses existing gateway enrollment and serializes setup/recovery. Original identities/grants/reminders/automation were preserved. Security updates target OkHttp 5.5.1 and Bouncy Castle 1.86 with strict checksums. See [pass 11 evidence and current limitations](engineering-pass-11.md); later app/security changes require their own physical/CI results. Headless workflow expansion, connection history and owner-interactive acceptance remain active priorities.
-
-Earlier checkpoints below are historical; their versions and pending statements apply to those dates.
-
-## Pass 10 checkpoint — October 22, 2026
-
-Current development checkpoint: **0.6.0-dev.1 / code 9**, SQLite **9**, **85** tools. Existing hosted control and fresh Grokbot native/shell calls succeeded after Mac-assisted daemon restoration. Actual phone-local pairing, raw-v2 daemon bootstrap, repeated daemon recovery, ordinary app-process recovery and an owner-approved trusted-Wi-Fi reboot passed, with hosted UID 2000. Fully unassisted fresh installation and additional network/revocation cases remain open. Existing identities/grants, three reminders and one automation were preserved. See [pass 10 evidence](engineering-pass-10.md) and [phone setup](phone-setup.md). Historical checkpoints below retain their original limits.
-
-## Pass 9 checkpoint — October 21, 2026
-
-Current checkpoint: **0.5.0-dev.3 / code 8**, SQLite **v8**, **85** hosted tools. Inbox expiration/quota recovery, same-ID dispatch maintenance, indexed metadata lists and owner-policy preflight are implemented. All 48 core, 36 Android JVM, 13 Python and 10 gateway tests passed; four targeted physical SQLite/native-execution cases and seven hosted calls passed. Fresh Hermes native/shell IDs matched SQLite. Owner Inbox authentication, semantic restoration, designated Calendar/SAF resources and fresh Dots/Grokbot checks remain open. See [pass 9](engineering-pass-9.md). Earlier checkpoints below are historical.
-
-## October 21, 2026 checkpoint
-
-Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
-
-Current checkpoint: Android **0.5.0-dev.2 / code 7**, SQLite **7**, **85** hosted-discovered tools. The new Action Inbox, installed-app permission picker, service-state diagnostics and physical migration/native-proposal verification are detailed in [engineering pass 8](engineering-pass-8.md). Earlier checkpoints below retain their historical evidence and limitations.
-
-Updated October 20, 2026. This replaces the initial core-only status.
-
-| Subsystem | Implemented | Evidence / limits |
+| Area | Current state | Evidence and limits |
 | --- | --- | --- |
-| Core authorization | Current grant/scope/expiry/revocation, backend and kill-switch revalidation after approval | Host tests plus real device revocation test |
-| Idempotency | Scoped immutable-operation fingerprint; conflicts explicit; CAS execution ownership | Concurrent host submissions; actual SQLite test |
-| Durable skills | Persisted cursor, stable child IDs, pending approvals, partial/unknown outcomes, recovery | Four-step approval continuation on host; real three-step native skill on phone |
-| Android runtime | Compose UI, SQLiteOpenHelper v6, Keystore secrets, permissions, lifecycle, native registry | Debug APK built, installed and launched repeatedly on Fold 7 |
-| Privileged runtime | Bundled shell/root-only Binder service; shared bounded subprocess executor; optional explicit Shizuku backend | Bundled backend physically returned UID 2000, exit 0; no companion needed for this route |
-| Approvals | Persisted requests, notifications, exact owner review, deny and once/standing/broad permission | Instrumented deny/approve/revoke; actual UI approved browser and Clock operations |
-| Persistent permission | Exact argument/version/backend grants and explicit broad shell; owner-only SQLite changes; revoke controls | Phone UI saved broad grant; process killed and automatically restarted; new unattended shell succeeded |
-| Gateway | Worker, Durable Object, official MCP v2 handler, OAuth plus private bearer auth, device enrollment, acknowledged outbound socket | Deployed in owner's personal account; real Fold connected; SDK v1/v2 local protocol tests |
-| Grok Bot | Saved secure bearer credential; cloud-hosted MCP relay | Actual connector battery call correlated with phone record; browser and alarm operations executed after UI approval |
-| Result tracking | requests.get / requests.cancel scoped to authenticated requesting agent | Real hosted MCP lookup and interrupted-result recovery succeeded; current installed catalog has 81 tools |
-| Scheduling | Versioned reminder records, revision CAS, exact AlarmManager and deferrable WorkManager, same-ID update, reboot restoration | Real exact alarm delivered through policy/engine/notification in instrumentation; longer lifecycle testing pending |
-| Weather | Real Open-Meteo forecast/cache/normalization | Live forecast fetched; existing next-morning reminder updated to exact timing without creating a duplicate |
-| Hermes | Global HTTP MCP connection and reusable device skill | Real phone email confirmed by owner; deterministic native MCP runtime installed official app and verified package/version/installer; full LLM run interrupted after email, not reported as full success |
-| Dots/ChatGPT | OAuth, phone-created pairing, separate authenticated agent, real native and shell calls | Actual calls correlated with SQLite; app-install test denied by local scope; correct agent’s permission saved by owner and verified in SQLite; subsequent official-app install and final bounded verification succeeded |
-| Owner management UI | Bot cards, durable Apps permission, revocation, exact blocked-agent review, disambiguated duplicate labels | APK built/linted/installed; physical hierarchy shows the correct Dots permission card; permission review stayed open for 20 seconds; owner saved the correct grant; longer/configuration-change checks remain pending |
+| Execution and policy | Durable requests, immutable-operation deduplication, current-grant/deadline checks, explicit uncertain outcomes | 64 core tests; code-13 physical native execution/SQLite/idempotency test passed |
+| Workflows and recovery | Prepared startup cursors, bounded continuation workers, stable long child IDs, validated workflow conditions/output | Host regressions pass; injected Android startup/storage-failure acceptance remains open |
+| Reminders and scheduling | Serialized reminder admission/update/cancel, original-request cancellation, exact and deferrable dispatch | Physical exact delivery, interrupted-claim reconciliation, scheduler and manual-run cases passed; concurrent cancellation matrix remains open |
+| Android owner UI | Shared feedback, reminder detail navigation, narrower shell permission reduction, adaptive management screens | Builds/lint pass; full Fold/font/rotation and genuine authentication cancellation remain open |
+| Native resources | Managed files, selected SAF roots, Calendar Provider, typed diagnostics/package inspection | Code-13 managed-file round trip passed; selected SAF passed on code 12; dedicated Calendar CRUD remains open |
+| Privileged execution | Existing bundled Binder backend; explicit optional Shizuku | Code-13 actual shell identity case passed after authorized bootstrap; no universal unattended reboot recovery claim |
+| Gateway and clients | OAuth/PKCE/private bearer, acknowledged socket generations, original-result lookup; new optional retry key in source | 15 local SDK v1/v2 protocol tests pass; new keyed behavior has not been tested against the hosted phone path or deployed |
+| Storage | Indexed history, compact request tombstones, bounded health-alert ledger | SQLite integrity passed; general request/workflow retention has no production owner flow |
+| Security and release | Existing signing identity/enrollment retained; debug fixtures excluded from minified release | Host release/isolation checks passed; public signed distribution and owner-signed Actions workflow remain open |
 
-## Engineering pass 6 checkpoint
+Host verification: **183 passing tests** (64 core, 89 Android JVM, two embedded ADB, 13 Python, 15 gateway). Android debug/release and instrumentation APKs built; lint has no errors and 71 warnings. The Android/Python results are from the source-audit build; the gateway was rerun after its retry change.
 
-Starting source: `690e5fe`. Android is now **0.5.0-dev, versionCode 6**, retaining application identity and SQLite schema 6. The registry advertises 81 tools. The existing gateway deployment and authentication configuration were not changed. Pre/post checks matched all five existing grant/credential hashes and retained the three reminders; database integrity remained `ok`. No personal sends, production app installs, reboot, credential rotation or database reset were performed.
+Physical batch on code 13: **21 tests ran, 20 passed, one failed its unplugged-phone precondition because USB was charging the phone**. It is not a clean full-suite pass. No charging state was simulated. Private pre/post comparison matched all five original agents/grants, three reminders, two automations and the document-root record. No uninstall, data clear, credential rotation or new agent was used.
 
-Implemented:
+## Current blockers and acceptance gaps
 
-- Adaptive Material navigation separates Home, Agents, Automations, Activity and Settings. Home uses acknowledged gateway state, separate native/privileged readiness, real pending/upcoming work and on-demand resource measurements. Agents expose stable identity suffixes, registry-derived permission families, exact grants and explicit broad-shell management. Metadata refresh is event-driven and stops when overview state has no visible subscriber.
-- Home prominently offers semantic/notification setup only while those services are unavailable. The owner enabled both real Android services and both cards disappeared on the physical cover screen. Enabled-but-disconnected accessibility is described as **Restore**, rather than pretending the access switch is off. Instrumentation and some app replacement boundaries left Android's service in its crashed/disconnected set; silent automatic re-enablement is not claimed.
-- Native automation forms use installed skill schemas, real date/time controls, recurrence/timezone previews, timing/missed-run policies, history and current results. Reminder, diagnostics and commute workflows are actual templates over the existing runtime. Advanced JSON remains available. A manual run has a durable slot and does not move the saved schedule.
-- Queued cancellation persists a cancelled skill cursor before a worker can claim it. Workflow cancellation records a conservative unknown barrier before interrupting a pending child, reconciles actual child outcomes and cleans interrupted cancellation on startup. It never calls an uncertain mutation safely cancelled. Disabled built-in skills no longer reinstall themselves at startup; management can enable them again explicitly.
-- Nine real accessibility tools provide bounded inspection/selectors, fresh agent/window snapshots, text, click, scroll, event-driven waits and navigation. Password subtrees and protected owner/permission/biometric controls are excluded. Mutations require the existing screen lease. Owner-authenticated, per-app standing click/text permission is separate from family scope and shell authority. Generic action acceptance is not proof of app-specific completion.
-- Three notification-action tools discover live version-bound actions and dispatch supported PendingIntents/RemoteInput through the policy engine and shared-screen coordinator. Source-owner/authentication-required actions are refused. Dispatch does not prove external delivery.
+- Real unplugged health-threshold acceptance requires an unplugged device; do not fake the battery state.
+- Calendar writes require a verified dedicated writable test calendar. No personal calendar was selected or changed in this pass.
+- Biometric success/cancel, special-access restoration and disruptive network/reboot scenarios need their actual owner/platform conditions. Instrumentation force-stop is separate from ordinary process death.
+- Gateway retry identity is ready for review in source; hosted rollout, catalog refresh and physical result-loss acceptance remain separate work.
+- General storage retention, readiness-query amplification, network-triggered reconnect, blocking IO cancellation and ADB stream write flow control remain source-confirmed work.
+- Full Fold/large-font UI acceptance, quiet CPU/PSS/network/database-growth measurements and compatible signed distribution remain incomplete. There is no completed battery or 24-hour availability study.
 
-Fresh evidence: 35 core tests, 35 Android JVM tests and 10 Python tests passed; Android APK/test APK builds and lint passed. Four focused physical cases passed for manual run/cancellation and screen/grant isolation. One independent notification-fixture case verified a real RemoteInput receipt, one delivery under duplicate submission, stale-action refusal and authentication-required refusal. Seven official hosted SDK calls succeeded with 81 tools and real shell UID 2000. Grokbot's new read-only status/identity calls were correlated with successful device records. Hermes subsequently completed a fresh agent-level native/shell pair through its existing server. Dots has not had a fresh application-level invocation in this pass.
+## Historical evidence
 
-Semantic/UI verification is tracked in [device testing](device-testing.md). The first semantic fixture instrumentation skipped because the owner-enabled service did not bind in that instrumented process. Later normal-process probes exposed harness lifecycle/session problems; those failures are retained as failures, not counted as feature verification. Instrumented control-center navigation also timed out and is not reported as passed. Calendar/SAF write round trips, owner biometric interaction, unfolded/light/large-font QA and long idle/reboot behavior still need their specific physical validation.
+Dated reports preserve their original versions, measurements and limitations; they are not fresh verification of the current source.
 
-A 61.161-second owner-use annotated interval recorded 0.09 app CPU-seconds (0.1499% of one core over valid counter intervals), 43,613–46,570 KiB PSS and no increase in daemon CPU counters. The app had foreground-service importance, not foreground-UI importance. Several OEM screen/power fields were unavailable. This is not a battery-life estimate or a controlled before/after optimization result. The existing sparse soak remains active and incomplete. A fresh hosted runtime snapshot also confirmed native access with the screen noninteractive/device locked, gateway online and privileged authority available; semantic screen interaction correctly remained blocked by the lock.
-
-## Engineering pass 4 checkpoint
-
-Starting commit `8fb7b42` (the reviewed `7a720ca` is preserved). Existing recovery tags and gateway identity are retained. No device identity, OAuth resource, bearer credential or existing remote grant was rotated. Android 0.4.0 was installed in place and passed ten targeted physical cases. Android 0.4.1 (code 4, SQLite v6) has also been built, installed in place and reached the existing hosted endpoint; seven fresh official-client native/shell calls succeeded with 69 registry tools. Further provider/UI checks are in progress, not claimed complete here.
-
-Implemented:
-
-- Generic automation slots persist definition/input snapshots, reconcile existing skill runs, retain unfinished approval states and advance only after a terminal run. Configuration edits do not strand an owned slot. Unknown outcomes pause future dispatch. AlarmManager/WorkManager scheduling errors remain visible and startup reconciliation retries dispatch separately from SQLite commits.
-- Typed daily, selected-weekday, weekly, monthly and fixed-interval recurrence uses explicit timezones. Legacy intervals retain their anchored interpretation. Missed-run policy and relevance windows are explicit. Generic exact alarms dispatch WorkManager; they do not promise exact skill execution.
-- Cooperative SQLite-backed screen leases coordinate structured `apps.launch`; unrelated native operations continue. Four authenticated lease tools use the actual invoking identity. Arbitrary broad shell can bypass cooperative coordination and is deliberately retained.
-- Shell results cross Binder using bounded reliable file-descriptor pipes. Optional output encoding avoids duplicate binary/text output when requested; legacy small results remain compatible. `requests.output` returns protected bounded record chunks, while `requests.recent` helps recover an ID lost with an HTTP response. Client transport cancellation no longer means execution cancellation.
-- Nine real Calendar Provider tools require Android permission, explicit calendar selection and ordinary capability grants. Local readback is distinguished from unverified account synchronization/invitation delivery. Permission behavior is physically tested; a dedicated-calendar write round trip is not yet verified.
-- Nine real SAF document tools use owner-selected persisted tree grants and opaque root handles. Managed files remain separate. No arbitrary raw URI authorization, app-private access or MediaStore implementation is claimed. Owner-selected document round trip remains pending.
-- `weather.commute_check` is an installed declarative skill over actual forecast, calculation, notification and reminder capabilities. Evening schedules use the generic scheduler and explicit fallback wake time/timezone. Enabling its additional local-automation scopes is an explicit owner action. Missing/stale forecasts suppress actions, and native deduplication keys avoid blind repeated notifications/reminders.
-- Android strong-biometric/device-credential authentication protects UI approval, standing/broad grants, permission expansion and selected management actions. Cancellation/recreation never approves an action. This requires owner-interactive verification; it is not a claim of isolation from all broadly authorized shell behavior.
-- System/light/dark palettes, safer system-bar/keyboard insets, scrollable grant explanations and an on-demand health card improve owner visibility. The health card invokes the same native runtime capability; no continuous profiler starts when it opens.
-
-Physical checkpoint: ten targeted 0.4.0 cases passed (scheduler three, screen coordination one, transport two, calendar permission one, package inspection one, managed files one, shell identity one). The initial command named one test class incorrectly; its initialization failure was corrected and the actual transport cases subsequently passed. Real scheduler crash-boundary fixtures use SQLite; they are not mislabeled as an arbitrary live process-kill campaign. Extended wall-clock DST calculations are pure JVM tests. Calendar/shared-document writes, owner biometric interaction, reboot and full provider matrix remain pending. A Gradle daemon retained references to externally removed cache artifacts; restarting it restored successful pinned-toolchain builds. A later UI locale lint error was corrected without suppressing the check.
-
-The prior sparse collection was observed at five samples/fifteen successful calls, then its output was deleted during cleanup. That interval is not reported as a completed retained soak. A new collection uses the existing connection configuration and a new standard Application Support output file; its result is a separate interval.
-
-## Engineering pass 3 (historical checkpoint)
-
-Starting source: `abfefc5`, preserving the reviewed `b474f3d` work and the existing three remote principals. The annotated recovery tag is `siconnect-working-multiagent-2026-10-20`. Fresh baseline core/Android builds and gateway checks passed before modification. Live credentials and the database were preserved.
-
-Implemented this increment:
-
-- New OAuth bots always get fresh identities/credentials, even with duplicate labels. Resume/renew uses the persisted invitation ID. Reconnection is explicitly selected from a particular bot card; it preserves only that bot's grant. No existing identity migration or automatic credential rotation occurs.
-- `apps.inspect_detailed` uses bounded PackageManager queries for primary-user installation, version, enabled state, timestamps and installer metadata. A second query verifies state; source-permission errors and concurrent changes are explicit. Raw privileged inspection/dumps and general shell remain available.
-- Shell execution uses a deadline-bound ownership handshake before user code starts, an owned session supervisor, atomic capacity, cancellation-before-start handling and group cleanup. Successful commands avoid the previous unconditional pair of 100 ms sleeps. Legacy text/base64 fields remain compatible; maximum transport-envelope stress remains outstanding.
-- Exact reminder receivers persist a WorkManager reconciliation watchdog before quick delivery. Interrupted claims reuse their original request ID; terminal/unknown results are reconciled rather than reposted blindly. Worker failure is no longer reported as successful delivery.
-- Gateway socket generations, hello readiness, per-session in-flight ownership, stale-session rejection and same-request recovery hints are implemented and pass local Worker/SDK tests. Deployment verification is recorded separately below; source tests are not hosted evidence.
-- `device.runtime` exposes on-demand process CPU/PSS, UID network counters, database/WAL sizes and connection/backend state. A real sparse hosted MCP collector is available in `gateway/test/soak-client.mjs`; completion of a 24-hour interval is not yet established.
-- Corrupt encrypted secrets now fail explicitly instead of being treated as absent and silently regenerated. Keystore key creation is synchronized. An obsolete bundled Binder death callback cannot clear a newly attached service.
-
-Validation so far: APK/lint/instrumentation builds passed and in-place upgrades succeeded. Three focused physical tests passed: structured PackageManager inspection, actual shell supervisor behavior (nonzero exit, stderr/stdin/environment, bounded output, binary bytes, timeout, early cancellation, parent/child cleanup), and interrupted-reminder reconciliation without a second post. An earlier two-test physical run also verified package metadata and actual UID 2000 identity. Seven local gateway integration tests pass, including official SDK v1/v2, OAuth/refresh/pairing and authenticated socket replacement. Real hosted diagnostics passed after the first upgrade (seven calls; 32 tools at that point). Android instrumentation ends the target process: the app must be relaunched and its socket acknowledged before hosted checks; two prematurely started probes correctly returned DEVICE_OFFLINE.
-
-The focused live pairing test passed (one case, zero failures) for duplicate-label identity isolation, expired invitation renewal and explicitly selected reconnect; only disposable test principals were created/deleted. An initial attempt skipped while the gateway had not yet reconnected; the final test explicitly awaited ONLINE. Existing remote principals remained untouched.
-
-Outstanding audit work includes full output-envelope/Binder stress, scheduler slot recovery and wall-clock recurrence, time-window weather calculations, calendar/files, UI coordination and older-history pagination. Existing provider-specific successes remain valid historical evidence; they are not represented as newly rerun provider tests.
-
-## Pass 3 shipping increment
-
-The existing personal gateway was updated in place to version `3103541b-0f0f-4acb-8e1c-c86989f19efe`. Endpoint, OAuth resources, agent credentials and enrollment identity were retained. Commit `95d7348` was pushed to main and its CI passed. Fresh official-client calls and Hermes's configured native MCP runtime subsequently succeeded through that deployment.
-
-The next Android increment adds SQLite v4 indexes and keyset Activity pagination, indexed current-credential lookup, transactional request/audit writes, bounded app-owned file operations, explicit weather windows, interaction metadata and live capability/scope diagnostics. The APK version is 0.3.0 (code 2), same application ID. Connection recovery on package replacement and boot explicitly starts the previously owner-enabled service; Android rejection is logged, not hidden. Backend/permission changes refresh discovery. Boot execution is implemented but a physical reboot is not claimed.
-
-Actual locked-phone Hermes workflow: original read result retrieved after a real socket replacement; live runtime confirmed noninteractive screen, keyguard locked and device locked; package inspection succeeded; one unique disposable shell file was created, read/hashed and removed; an exact SIConnect reminder was scheduled and reached SUCCEEDED. Android's notification service independently confirmed the test notification. Final runtime still reported screen off/device locked. No real message, email or personal app installation was repeated. This used Hermes's real configured MCP tool runtime; it is not represented as a fresh autonomous LLM conversation test or a new Dots/Grok test.
-
-A live public-test-location forecast returned a COMPLETE four-hour explicit-window summary. The no-location call correctly failed LOCATION_REQUIRED; device defaults were not invented or changed. Three JVM fixture tests validate window selection, DST duration and missing-data semantics. File operations and SQLite pagination passed on the actual phone; an initial listing defect caused by Android's canonical path alias was reproduced and corrected. The first physical attempt had one failure, and the final three-case rerun passed. The Activity page-one controls were observed; a page-two UI attempt was stopped when the shared screen changed to Clock, so full folded/unfolded navigation is not claimed.
-
-`gateway/test/soak-client.mjs` is running a genuine 24-hour sparse read-only collection with private output and successful initial samples. Development/install activity is mixed into this interval and must be annotated. It is neither a finished soak nor a battery result.
-
-Calendar tools, SAF/MediaStore file access, phone-only privileged bootstrap, durable gateway offline execution, shared-screen leases, generic scheduler wall-clock recurrence and the full requested provider/lifecycle matrix remain unfinished. The source review fixed concrete cross-system defects; a claim of an exhaustive completed repository audit would be premature.
-
-## Physical evidence
-
-Five production-backed Android instrumentation tests passed, including actual precise reminder delivery: native execution/persistence/idempotency, package query and skill, bundled shell identity, and approval deny/approve/revoke. An additional real-device gateway setup test passed. Official MCP SDK v2 invoked seven real phone tools through the hosted gateway. Grok Bot then independently called device status, shell identity and battery; matching REMOTE request records were read from the phone's database-backed endpoint.
-
-Grok Bot submitted the owner's requested browser and Clock commands. Both waited for local approval, then completed with exit 0. Physical Chrome showed apple.com; Samsung Clock showed the named test alarm at the requested 6:08 PM. AlarmManager independently returned the same trigger time. This validates alarm creation, not an unattended scheduler guarantee. Private screenshots and outputs stay outside Git.
-
-## Remaining limits
-
-- Two explicitly authorized conversations were exercised through Grok Bot. Exact outgoing messages and Delivered state were verified on the Fold. A date-bounded message review also ran. Private content stays outside Git.
-- OAuth onboarding completed after an expired consent session was restarted. Both a ChatGPT work conversation and the actual Dots conversation executed native and privileged read-only calls. Initial browser failures remain documented as resolved onboarding failures, not a continuing connection blocker.
-- Dots app management was blocked by the active agent grant. Two same-name connections caused the wrong grant to be changed. The installed update linked the denial to the exact bot; the owner then enabled Apps and broad device control for that identity. Both choices were verified in SQLite. A denied request will not execute retroactively; the new client install and bounded final verification succeeded.
-- Approval/permission review previously closed too readily, and automated setup taps interfered with owner review. Automated phone approval taps were stopped. The installed update requires explicit Close/Done, preserves an open Home action review across activity recreation, and retains a pending notification until resolution/expiry. Extended owner interaction and configuration-change validation remain pending.
-- Full device control requires an owner-authorized ADB bootstrap after phone reboot. The Mac is not a runtime server after bootstrap. Phone-only wireless pairing is not implemented.
-- Shizuku integration is optional; its reboot/lifecycle behavior has not been exhaustively tested.
-- At the initial checkpoint calendar/files and expanded lifecycle coverage were outstanding. Pass 3 implements managed files and starts real collection; calendar, SAF/MediaStore, disposable-package regression and extended reboot/network coverage remain unfinished.
-- Request/result data can contain sensitive content. Do not export raw device evidence to this public repository.
-
-Ordinary process-death check: the owner-enabled app process was killed with its own UID (not force-stop). Android restarted the service, the Binder backend reattached, and a new arbitrary shell request succeeded without approval in 1.65 seconds. This is a single recovery measurement, not long-duration lifecycle evidence.
-
-## Current checkpoint
-
-The UI-checkpoint build (`:app:assembleDebug :app:lintDebug`) passed, then its APK was installed with `adb install -r`, bundled authority restarted and MainActivity launched. The physical UI showed the exact denied Dots connection's permission card and CONNECTED status. No permission was granted by the diagnostic check. A separate authenticated `/connection` check reported online, protocol 2 and 31 capabilities. No pending/executing request was present immediately before installation.
-
-Earlier UI-checkpoint host checks: core 30 tests (then up-to-date); gateway six tests passed with zero failures/skips. Android JVM unit task has no sources. Five physical instrumentation tests passed earlier; those are not a fresh physical validation of every subsequent UI change. Lint passed with warnings, including dependency/style suggestions; it was not disabled wholesale.
-
-The longer approval envelope was subsequently deployed to the previously verified personal gateway account. An official MCP v2 device-status call succeeded in 258 ms with an approximately fifteen-minute stored deadline. The final source also checks persistence when clearing a consumed invitation; it built/linted successfully after the installed UI checkpoint, but that last guard has not been separately exercised on the phone.
-
-## Activity and resource checkpoint
-
-Home now queries a bounded metadata projection rather than decoding complete result JSON on every request update. Full output is loaded on selection. A compact Activity dialog exposes bot/status filters and newest/oldest sorting for the latest 100 records; blocked request details display the policy reason and link to that exact bot's permissions. This keeps the primary navigation small and preserves detailed management.
-
-The activity APK and instrumentation APK built, lint passed, both installed and the bundled authority restarted. The updated native SQLite/idempotency instrumentation test passed on the physical phone (one test, zero failures). The earlier five-test suite was not rerun in full during owner review because it deliberately creates and resolves brief test approval notifications. Physical UI checks opened Activity, selected Needs attention, changed sort direction and listed real bot identities, then returned Home without changing any permission or approval.
-
-A short connected foreground resource baseline measured 0.24 CPU-seconds across 60.487 seconds and app PSS 127,060–127,960 KiB. Daemon CPU counters did not increase. This is a short mixed-observation baseline, not a battery result or an optimization comparison. The private-output process profiling harness is in `tools/profile_device.py`.
-
-The exact Dots permission screen remained open through a 20-second passive check. The owner then saved Apps and always-allow device control for the requesting OAuth principal; SQLite and its owner grant event independently confirmed the change. No diagnostic script granted permission. A new client invocation is required because prior denied records remain terminal.
-
-## Dots install completed
-
-After the owner corrected the exact agent grant, Dots completed the requested official-app installation through the existing OAuth MCP connection. Its initial package check, Play Store launch, single install tap and final bounded verification were correlated with persisted requests from that OAuth principal. Independent user-0 package inspection confirmed the expected package, version code and Google Play installer. The final verification returned exit 0 without output truncation. No application login was attempted. Dots’ separate self-addressed email test also completed; its send, Sent verification and header/body verification matched durable records, and an independent Gmail UI read confirmed the test subject/body. Hermes’ previously confirmed email was not resent.
-
-One issue surfaced during verification: a full privileged package dump can exceed the bounded output limit before reaching the version/user section. Truncation is reported. Add a typed bounded package-inspection result while preserving explicit full-dump access; do not infer installed/version state from an incomplete dump or an exit code alone.
-
-Dots also completed the owner's subsequent uninstall request. It waited for real on-phone approval, executed `apps.uninstall`, then verified absence. An independent user-0 package query confirmed removal. Its pending record had the full 600,000 ms approval window. The email test ran afterward, using the requested account and checking for an existing sent test before sending once. All personal account data and raw Gmail captures remain outside Git.
-
-## Review lifecycle completion and Pass 3 boundary
-
-The shared owner review now uses a bounded dialog layout with a separately measured action area; an actual screenshot had exposed a clipped Close control in the previous layout. The installed replacement has a fully visible 126-pixel Close touch target on the tested Fold configuration. Notification intent deliveries are consumed individually, so reopening the same stored action is permitted; a resolved/expired action can display its state without offering a new execution.
-
-The earlier review-checkpoint targeted physical instrumentation passed both cases (2 passed, 0 failed, 0 skipped): native SQLite/idempotency/metadata projection, and real singleTop review open → Close → same-request reentry. Four earlier review probe runs timed out because framework text lookup did not find Compose virtual nodes despite the visible dialog. The final test traverses actual accessible window children; those earlier failures are not counted as passes. The test uses a completed native diagnostic record and creates no destructive action or approval notification. Both APKs built/installed; final lint passed; gateway status was online/protocol 2 with 31 tools. The owner-selected Dots Apps and broad-shell grant persisted across repeated in-place upgrades and process restarts.
-
-Pass 3 begins from reviewed commit `b474f3d` plus these already verified, previously uncommitted UI/evidence updates. Preserve the live principals, credentials, database, gateway endpoint and scheduled reminders. New identity/package/shell/scheduling work must be tracked separately from the completed client action tests above.
-
-## Final pass 3 checkpoint evidence
-
-APK 0.3.0/code 2 was installed in place. Package-update connection recovery worked without launching MainActivity or changing the foreground activity. Fresh hosted official-client calls succeeded (seven tools); Hermes's configured runtime also verified five current tools, including live capability/scope metadata. Catalog count: 43. Native runtime reported ONLINE and the bundled privileged backend available. SQLite v4 quick_check passed; existing remote identities, grants and credential hashes matched the pre-upgrade snapshot, and the existing personal reminder was unchanged.
-
-Final host checks passed: 30 core, three app JVM, seven gateway and four Python tests, zero final failures/skips. The final four-case physical storage/native suite passed; earlier focused physical shell, reminder reconciliation, pairing isolation and package checks also passed. Full untouched provider UX, calendar, disposable-package regression, reboot and long idle/network-switch coverage remain outstanding. The real soak remains running, not complete.
-
-Storage cleanup removed 77.6 MiB of reproducible Android intermediates/temporary build output and Worker staging output. Current APKs/reports/dependencies/private evidence were retained. The disposable instrumentation package and one temporary device UI dump were removed; the production package, credentials, database/history and personal reminders were preserved.
-
-Legacy Grok/Hermes private-bearer use still shares one principal. Independent per-client revocation requires deliberately pairing/migrating separate identities; no silent credential rotation or grant copying occurred. OAuth same-name connections remain distinct.
-
-Concrete security review limit: no remote grant/approval API exists, but broad shell can automate unlocked management UI. Independent owner-presence authentication for those choices is not implemented; the security model now states this explicitly. Native protected confirmation is a next hardening priority, without removing owner-selected broad/background execution.
-
-
-Pass 4 follow-up: the Telegram-facing Hermes profile lacked MCP configuration even though the global profile worked. Adding the existing connection to the intended profile and using supported live reconciliation corrected that root cause. A real Grokbot-to-Telegram-to-Hermes chain completed five device actions, independently correlated against SQLite. Existing three remote identities retained identical credential hashes and grants; database quick_check passed at schema v6, with five total agents and three reminders. The shell identity was actual UID 2000. This does not represent a fresh Dots application test or independent revocation for the shared legacy bearer principal.
-
-
-Follow-up 0.4.2 (code 5, same schema v6) adds a coherent vector launcher/Home/notification identity, complete light/dark surface colors, screen-bounded Activity history and a header layout that does not squeeze connection status beside the title. More importantly, it fixes the confirmed Binder lifetime-observer loss after daemon garbage collection, which previously prevented reattachment after later app-process death. Owner authentication and new native resource scopes remain unchanged. The targeted final 0.4.1 physical suite passed 20 cases, then three Binder/identity cases passed after the recovery fix. Existing user credentials and grants were not reset. Gateway version `5cf1038d-015a-42bf-bb54-ca74e2d8ecdd` was deployed in place; fresh official-client calls passed all seven native/shell checks.
-
-
-Dots/ChatGPT was also freshly exercised through its existing OAuth conversation after deployment: shell health, battery and network succeeded and matched durable phone request IDs. This is current provider evidence, separate from official SDK checks and historical Dots installs. The Hermes profile correction preserves the deliberately shared legacy bearer principal; independently revocable credentials remain future owner-coordinated work.
+- [Pass 12: scheduled health scans, owner Inbox and selected SAF](engineering-pass-12.md)
+- [Pass 11: UI/recovery, connection controls and background workflows](engineering-pass-11.md)
+- [Pass 10: local ADB pairing, daemon recovery and authorized reboot](engineering-pass-10.md)
+- [Pass 9: proposal recovery, metadata projections and expiration](engineering-pass-9.md)
+- [Pass 8: semantic workflow, Action Inbox and provider checks](engineering-pass-8.md)
+- [Pass 6: installed platform and owner permissions](engineering-pass-6.md)

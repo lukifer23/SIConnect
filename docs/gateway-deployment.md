@@ -30,7 +30,7 @@ Grok Bot setup: ask it to add your HTTPS `/mcp` endpoint with private bearer aut
 
 OAuth is implemented with pinned `@cloudflare/workers-oauth-provider` 1.2.3 in this same Worker. Create an `OAUTH_KV` namespace, bind it in Wrangler, and set `PUBLIC_ORIGIN` to the deployment's canonical HTTPS origin. CIMD requires `global_fetch_strictly_public`. The protected resource is `/mcp`; discovery is `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`. Authorization `/authorize`, token `/token`, and dynamic registration `/oauth/register` are library-managed. Do not replace the phone endpoint or choose unauthenticated mode.
 
-For Dots/ChatGPT: Plugins → Add → Add custom MCP server, choose the existing HTTPS `/mcp` address and OAuth. In the phone app, Connection details → Pair another bot creates a separately revocable agent and a one-use invitation. Renewing a code for the same stored pairing preserves that agent and its owner-selected permissions. Enter that code only on your gateway's consent page. The displayed deadline is the actual invitation expiry; codes are valid for at most ten minutes. Each invitation is encrypted on the phone using a key derived from the code; the Durable Object stores only its hash and sealed payload. Consuming it is atomic, with a replay tombstone. The phone stores its pending invitation using Android Keystore encryption.
+For Dots/ChatGPT: Plugins → Add → Add custom MCP server, choose the existing HTTPS `/mcp` address and OAuth. In the phone app, Agents → Pair another bot creates a separately revocable agent and a one-use invitation. Renewing a code for the same stored pairing preserves that agent and its owner-selected permissions. Enter that code only on your gateway's consent page. The displayed deadline is the actual invitation expiry; codes are valid for at most ten minutes. Each invitation is encrypted on the phone using a key derived from the code; the Durable Object stores only its hash and sealed payload. Consuming it is atomic, with a replay tombstone. The phone stores its pending invitation using Android Keystore encryption.
 
 Browser consent is separately bound to its initiating browser for ten minutes. If it expires, return to the existing plugin and choose Continue connecting; do not create duplicate plugins or disable CSRF protection. A fresh pairing code may also be needed. Official SDK integration exercises S256 PKCE, consent binding, token refresh and actual MCP invocation against a test-only device peer. Actual hosted Dots/ChatGPT authorization subsequently completed; native status and privileged identity calls matched the phone database. Initial expired browser/code attempts were resolved with fresh consent, without changing security checks.
 
@@ -46,3 +46,26 @@ Pass 3 deployed the same Worker endpoint to version `3103541b-0f0f-4acb-8e1c-c86
 
 
 Pass 4 deployment: version `5cf1038d-015a-42bf-bb54-ca74e2d8ecdd`, same Worker endpoint and durable bindings, after rechecking the expected personal account. No secret upload, OAuth resource change, credential rotation or replacement endpoint was required. Previous version `3103541b-0f0f-4acb-8e1c-c86989f19efe` remains the rollback reference. This deployment adds bounded UTF-8 envelopes, explicit HTTP-disconnect unknown-outcome handling and same-agent recent/output retrieval; the phone remains the authoritative result store. Post-deployment phone smoke results are recorded in device testing rather than inferred from upload success.
+
+## Retry identity and original-result recovery
+
+The October 26 gateway source adds optional `_siconnectOperationKey` to advertised tool arguments. **It has not been deployed to the hosted gateway in this checkpoint.** Deploy the reviewed source to the existing endpoint/bindings after checking the correct account, then refresh client tool discovery. Use this field only when the discovered schema advertises it. Existing OAuth/bearer enrollment and calls without a key remain compatible.
+
+For one intended mutation, generate and retain a unique operation key before its first call. For example:
+
+```json
+{
+  "name": "files_write",
+  "arguments": {
+    "path": "disposable-test.txt",
+    "content": "fixture",
+    "_siconnectOperationKey": "example-action-001"
+  }
+}
+```
+
+The example illustrates transport identity; the selected tool's live schema and the agent's current grants still apply. The key is a string of 1–100 characters and is stripped before native capability validation. It is scoped to the authenticated device and agent; reuse with the same capability/arguments returns the original device record, including after a lost response. Reusing it with changed arguments or capability produces `IDEMPOTENCY_CONFLICT`. Deliberately new work needs a new key. Never mint a new key just to recover a missing mutation result.
+
+Retain the returned request ID. Prefer `requests_get` for approval continuation, in-flight work and uncertain results; `REQUEST_IN_FLIGHT` provides that same lookup identity. An identical keyed transport retry can recover the original record but cannot extend its original execution deadline or cause the original unknown/terminal record to execute again. An unknown outcome still needs actual verification. Calls without a key create a fresh operation on every invocation and must not be blindly retried.
+
+The guarantee depends on the phone retaining its request/idempotency identity; it is not permanent exactly-once delivery across data clearing, re-enrollment or future identity-retention expiry. The new field's same-operation, conflict, concurrent and lost-response paths pass local official SDK v1/v2 tests against a test-only peer. Those results do not establish a hosted rollout, Durable Object restart or physical side-effect result.

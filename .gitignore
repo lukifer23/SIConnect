@@ -38,6 +38,7 @@ secrets/
 *.token
 
 # Device captures, audits, diagnostics, runtime data (may contain personal data)
+.tmp/
 audit*.json
 raw-audit/
 device-captures/

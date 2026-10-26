@@ -19,6 +19,8 @@ let dir, worker, socket;
 let executions=0;
 let output='';
 const storedResults=new Map();
+const storedOperations=new Map();
+const receivedInvocations=new Map();
 let cancellationMessages=0;
 const capabilities=()=>[
   {descriptor:{id:'test.echo',version:1,title:'Fixture echo',description:'Test-only protocol peer',risk:'READ_ONLY',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}},availability:'IMPLEMENTED'},
@@ -30,10 +32,17 @@ function respond(peer) {
     const m=JSON.parse(raw);
     if(m.type==='cancel') cancellationMessages++;
     if(m.type!=='invoke') return;
+    receivedInvocations.set(m.id,m.request);
+    const operation=JSON.stringify([m.request.capabilityId,m.request.arguments,m.request.expiresAtMs ?? null]);
+    if(storedOperations.has(m.id)) {
+      if(storedOperations.get(m.id)!==operation) peer.send(JSON.stringify({type:'error',id:m.id,requestId:m.id,code:'IDEMPOTENCY_CONFLICT'}));
+      else peer.send(JSON.stringify({type:'result',id:m.id,record:storedResults.get(m.id)}));
+      return;
+    }
     executions++;
     const output=m.request.capabilityId==='requests.get'?storedResults.get(m.request.arguments.requestId):{value:m.request.arguments.value};
     const record={requestId:m.id,state:'SUCCEEDED',result:{output,backend:'TEST_ONLY'}};
-    if(m.request.capabilityId==='test.write') storedResults.set(m.id,record);
+    if(m.request.capabilityId==='test.write' || m.request.idempotencyKey) {storedResults.set(m.id,record);storedOperations.set(m.id,operation)}
     if(m.request.arguments.value==='lose-after-commit') {peer.close();return;}
     if(m.request.arguments.value==='hold-after-commit') return;
     peer.send(JSON.stringify({type:'result',id:m.id,record}));
@@ -98,6 +107,84 @@ test('SDK validates arguments and unknown tools without device execution',async(
     const bad=await c.callTool({name:'test_echo',arguments:{value:42}});assert.equal(bad.isError,true);
     await assert.rejects(c.callTool({name:'unknown',arguments:{}}),{code:-32602});
     assert.equal(executions,before);
+  } finally {await c.close()}
+});
+for(const legacy of [true,false]) test(`official v${legacy?1:2} client retries an immutable operation without a second execution`,async()=>{
+  const c=await client(legacy);const before=executions;
+  const key=secret(),arguments_={value:'retry-fixture',_siconnectOperationKey:key};
+  try {
+    const schema=(await c.listTools()).tools.find(t=>t.name==='test_write').inputSchema;
+    assert.equal(schema.properties._siconnectOperationKey.maxLength,100);
+    const first=await c.callTool({name:'test_write',arguments:arguments_});
+    const id=first.structuredContent.requestId;
+    assert.equal(first.isError,false);
+    assert.equal(id,'mcp:'+hash(JSON.stringify(['test-device','test-agent',key])));
+    assert.deepEqual(receivedInvocations.get(id).arguments,{value:'retry-fixture'});
+    assert.equal(receivedInvocations.get(id).expiresAtMs,undefined);
+    assert.equal(receivedInvocations.get(id).idempotencyKey,id);
+    // A later transport attempt must not turn the original deadline into a new operation.
+    await new Promise(r=>setTimeout(r,5));
+    const repeat=await c.callTool({name:'test_write',arguments:arguments_});
+    assert.deepEqual(repeat.structuredContent,first.structuredContent);
+    assert.equal(executions,before+1);
+    for(const changed of [{name:'test_write',arguments:{...arguments_,value:'changed'}},{name:'test_echo',arguments:arguments_}]) {
+      const conflict=await c.callTool(changed);
+      assert.equal(conflict.isError,true);assert.equal(conflict.structuredContent.error,'IDEMPOTENCY_CONFLICT');
+    }
+    assert.equal(executions,before+1);
+    const fresh=await c.callTool({name:'test_write',arguments:{...arguments_,_siconnectOperationKey:secret()}});
+    assert.notEqual(fresh.structuredContent.requestId,id);
+    const unkeyed=await c.callTool({name:'test_write',arguments:{value:'unkeyed'}});
+    const next=await c.callTool({name:'test_write',arguments:{value:'unkeyed'}});
+    assert.notEqual(unkeyed.structuredContent.requestId,next.structuredContent.requestId);
+    assert.ok(receivedInvocations.get(next.structuredContent.requestId).expiresAtMs>Date.now());
+    assert.equal(executions,before+4);
+  } finally {await c.close()}
+});
+test('invalid retry keys never reach the device',async()=>{
+  const c=await client();const before=executions;
+  try {
+    for(const key of ['', 'x'.repeat(101),42,null]) {
+      assert.equal((await c.callTool({name:'test_write',arguments:{value:'invalid',_siconnectOperationKey:key}})).isError,true);
+    }
+    assert.equal(executions,before);
+  } finally {await c.close()}
+});
+test('concurrent keyed retries identify the original in-flight request', {timeout:5000},async()=>{
+  const c=await client();const peer=socket;const before=executions;
+  const arguments_={value:'hold-after-commit',_siconnectOperationKey:secret()};
+  const received=new Promise(resolve=>{
+    const listener=raw=>{const m=JSON.parse(raw);if(m.type==='invoke' && m.request.arguments.value==='hold-after-commit'){peer.off('message',listener);resolve(m)}};
+    peer.on('message',listener);
+  });
+  let first,invocation;
+  try {
+    first=c.callTool({name:'test_write',arguments:arguments_});invocation=await received;
+    const duplicate=await c.callTool({name:'test_write',arguments:arguments_});
+    assert.equal(duplicate.isError,true);
+    assert.equal(duplicate.structuredContent.error,'REQUEST_IN_FLIGHT');
+    assert.equal(duplicate.structuredContent.requestId,invocation.id);
+    assert.equal(duplicate.structuredContent.recovery.arguments.requestId,invocation.id);
+    assert.equal(duplicate.structuredContent.recovery.doNotResubmitMutation,true);
+    assert.equal(executions,before+1);
+  } finally {
+    if(invocation) peer.send(JSON.stringify({type:'result',id:invocation.id,record:storedResults.get(invocation.id)}));
+    if(first) await first;
+    await c.close();
+  }
+});
+test('a keyed retry after a lost mutation response returns its original committed record',async()=>{
+  const c=await client();const before=executions;
+  const arguments_={value:'lose-after-commit',_siconnectOperationKey:secret()};
+  try {
+    const lost=await c.callTool({name:'test_write',arguments:arguments_});
+    assert.equal(lost.structuredContent.error,'DEVICE_DISCONNECTED_UNKNOWN_OUTCOME');
+    await reconnectPeer();
+    const recovered=await c.callTool({name:'test_write',arguments:arguments_});
+    assert.equal(recovered.isError,false);
+    assert.equal(recovered.structuredContent.requestId,lost.structuredContent.requestId);
+    assert.equal(recovered.structuredContent.state,'SUCCEEDED');
+    assert.equal(executions,before+1);
   } finally {await c.close()}
 });
 test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refresh and tool invocation',async()=>{

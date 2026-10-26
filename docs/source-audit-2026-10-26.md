@@ -1,8 +1,8 @@
 # SIConnect source audit and implementation priorities
 
-October 26, 2026. Source baseline: `30d0715`. Android source is **0.6.0-dev.5 / 13**, database schema **10**, with **85** registered tools. This checkpoint adds source fixes and host verification; installed-device evidence remains in [engineering pass 12](engineering-pass-12.md).
+October 26, 2026. Source baseline: `30d0715`. Android source is **0.6.0-dev.5 / 13**, database schema **10**, with **85** registered tools. The audit adds source fixes and host verification. [Pass 13](engineering-pass-13.md) adds the code-13 physical batch (20 passes and one USB-charging precondition failure), retry-key implementation and cleanup handoff; earlier owner Inbox/SAF evidence remains in [pass 12](engineering-pass-12.md).
 
-SIConnect has a working execution platform: authorization, durable requests, approval binding, native resource operations, privileged execution, declarative workflows and an authenticated gateway. The continued host implementation separates workflow recovery from readiness, bounds continuation dispatch and coordinates reminder cancellation with its original delivery request. The next priorities are bounded storage, shared readiness measurements, client retry identity and connection transitions.
+SIConnect has a working execution platform: authorization, durable requests, approval binding, native resource operations, privileged execution, declarative workflows and an authenticated gateway. The continued host implementation separates workflow recovery from readiness, bounds continuation dispatch and coordinates reminder cancellation with its original delivery request. Gateway source now adds a locally tested client retry identity. The next priorities are bounded storage, shared readiness measurements, hosted retry acceptance and connection transitions.
 
 ## Scope and architecture
 
@@ -32,7 +32,7 @@ flowchart TD
 | Execution | Native APIs; explicitly selected direct Binder or Shizuku; bounded subprocess capture and reliable result pipes | Blocking provider/Binder cancellation and platform dispatch races |
 | Screen and notifications | Agent-bound semantic references; protected surfaces; password exclusion; live notification-action identity checks | Full lifecycle matrix and verified business outcomes |
 | Scheduling | Stable scheduled slots, frozen run snapshots, recurrence/timezones, missed-run policies, one-off runs, health alerts | Physical AlarmManager/WorkManager and cancellation acceptance |
-| Gateway | OAuth/PKCE or private bearer, acknowledged device socket generations, bounded pending calls, original-request recovery guidance | Caller-controlled retry identity and network recovery latency |
+| Gateway | OAuth/PKCE or private bearer, acknowledged device socket generations, bounded pending calls, original-request recovery guidance, optional caller retry identity in source | Hosted retry rollout/physical acceptance and network recovery latency |
 | Owner UI | Adaptive navigation, agent permissions, Inbox, automation forms, paged activity, setup/recovery | Large-font/Fold verification, consistent action feedback and result presentation |
 
 ## Implemented fixes
@@ -73,11 +73,11 @@ Add an explicit owner retention policy and incremental maintenance. Preserve act
 
 ## Open performance and connectivity work
 
-### P2 Expose a stable retry identity to MCP callers
+### P2 Complete hosted acceptance of MCP retry identity
 
-Source-confirmed: [serveMcp][gateway] generates a new UUID for every tool call and does not forward a caller-supplied idempotency key. Engine deduplication protects repeated identities, but a fresh MCP retry can create a different mutation. Reminders, notifications and proposals have their own explicit deduplication keys; other mutations do not share that affordance.
+The source-confirmed fresh-UUID gap is addressed in gateway source with optional `_siconnectOperationKey`. Local SDK v1/v2 checks prove stable original identity, changed-operation conflicts, stripped transport metadata, bounded key validation, in-flight guidance and lost-response reconciliation against a test peer. The phone freezes the first execution deadline; transport retries do not extend it. Unkeyed calls remain fresh operations.
 
-Design a consistent client operation identity without colliding with capability arguments. Test both supported SDK generations: same operation executes once, changed arguments conflict, and lost outcomes resolve to the original device record. Keep unknown mutations out of automatic retry queues.
+The hosted gateway has not been redeployed. Verify the existing account/endpoint, deploy reviewed source, refresh discovery and test one disposable physical mutation with original-record recovery. Do not describe local fixture results as device or Durable Object restart evidence. See [pass 13](engineering-pass-13.md) and [retry guidance](gateway-deployment.md#retry-identity-and-original-result-recovery).
 
 ### P2 Wake reconnection on a usable network transition
 
@@ -119,16 +119,16 @@ Use retained screen state and shared owner-action reporting, move composition-ti
 | Android JVM tests | 89 passed |
 | Embedded ADB JVM tests | 2 passed |
 | Python tooling tests | 13 passed |
-| Gateway protocol integration tests | 10 passed against a clean dependency install |
+| Gateway protocol integration tests | 15 passed after retry implementation; initial 10 passed against a clean dependency install |
 | Gateway typecheck and dry-run bundle | Passed |
 | Full npm dependency audit | Zero known vulnerabilities |
 | Android debug and minified unsigned release | Built |
-| Android instrumentation APK | Compiled; device execution pending |
+| Android instrumentation APK | Built; code-13 batch: 20 passed, one USB-charging precondition failure |
 | Android debug lint | No errors; 71 warnings remain |
 | Release isolation | Debug semantic fixture absent; debug loopback endpoint removed by R8 |
 | Signing workflow metadata | Python parsed; authoritative schema resolved to 10 |
 
-The 178 passing tests include 38 added regression tests. Lint warnings include 51 `UseKtx` suggestions, nine text-formatting warnings, three inlined API checks, four version-catalog suggestions, two trust-manager warnings, one obsolete SDK check and one dependency-update suggestion. The trust-manager warnings are in the bundled ADB TLS code, whose server-certificate acceptance requires review in its local endpoint/pairing context; the HTTPS gateway client uses its normal OkHttp TLS validation. No cryptographic assurance follows from a clean build.
+The host total is now 183 passing tests: the original 178 include 38 source-audit regressions, and five gateway retry tests were added afterward. Android/Python results are from the source-audit build; the gateway checks were rerun after its change. Lint warnings include 51 `UseKtx` suggestions, nine text-formatting warnings, three inlined API checks, four version-catalog suggestions, two trust-manager warnings, one obsolete SDK check and one dependency-update suggestion. The trust-manager warnings are in the bundled ADB TLS code, whose server-certificate acceptance requires review in its local endpoint/pairing context; the HTTPS gateway client uses its normal OkHttp TLS validation. No cryptographic assurance follows from a clean build.
 
 Artifact sizes do not establish latency, battery or memory improvements. The signing workflow metadata was corrected; no hosted signing run or deployment was performed.
 
@@ -145,7 +145,7 @@ Artifact sizes do not establish latency, battery or memory improvements. The sig
 ## Build order
 
 1. Add owner-controlled retention and shared readiness projections; profile equivalent workloads.
-2. Add stable MCP retry identity and network-triggered recovery, retaining uncertain-outcome semantics.
+2. Complete hosted acceptance of the implemented MCP retry identity and add network-triggered recovery, retaining uncertain-outcome semantics.
 3. Complete device acceptance of the host-tested recovery, reminder cancellation and dispatch ordering.
 4. Consolidate owner action state and complete the UI/device matrix, then expand native workflow/resource features from that baseline.
 

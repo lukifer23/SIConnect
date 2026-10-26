@@ -2,7 +2,7 @@
 
 ## Current source and physical checkpoints
 
-The October 26 [source audit](source-audit-2026-10-26.md) covers schema 10 and the existing 85-tool catalog, with no added tool names. The latest physical results, including owner Inbox acceptance and a selected SAF round trip, are in [engineering pass 12](engineering-pass-12.md). Entries below retain their version-specific historical evidence; they are not a fresh acceptance result for the audited source.
+The October 26 [source audit](source-audit-2026-10-26.md) covers schema 10 and the existing 85-tool catalog, with no added tool names. The code-13 physical batch and its USB-charging precondition failure are in [pass 13](engineering-pass-13.md); earlier owner Inbox acceptance and selected SAF evidence remain in [pass 12](engineering-pass-12.md). The optional gateway retry field adds no capability names and has local protocol coverage only. Entries below retain their version-specific historical evidence; they are not a fresh acceptance result for the audited source.
 
 ## Pass 9 checkpoint — October 21, 2026
 

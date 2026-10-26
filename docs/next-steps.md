@@ -1,51 +1,27 @@
 # Next steps
 
-## Source audit October 26 2026
+Updated October 26, 2026. Resume from **0.6.0-dev.5 / code 13 / SQLite 10 / 85 tools** on `main`. Read [project status](project-status.md), [pass 13 handoff](engineering-pass-13.md) and [the source audit](source-audit-2026-10-26.md) first. This is the current queue; dated engineering reports retain historical evidence.
 
-The [current source audit](source-audit-2026-10-26.md) contains the prioritized code findings, implemented fixes and host verification. Startup/event continuation and reminder cancellation/revision ordering now have host-tested implementations in source 0.6.0-dev.5 / code 13. Next: bounded retention, shared readiness queries, MCP retry identity and network transitions, plus physical acceptance of the new recovery and reminder paths. Its device acceptance order supersedes the older next-step lists below. Physical evidence remains tied to the installed builds recorded in the engineering passes.
+## Engineering priorities
 
-## Pass 12 checkpoint
+1. **Owner-controlled retention.** Introduce explicit policy and incremental cleanup for request payloads, workflow/step results, automation history and deduplication claims. Protect active links, unknown outcomes and immutable retry identity. The existing request prune helper has no production caller; do not enable it blindly. Test notification/reminder retries after payload compaction and large-result SQLite retrieval. Measure representative database growth.
+2. **Shared readiness measurements.** Stop repeating provider-root checks across every document capability and ordinary UI request update. Share bounded discovery snapshots, invalidate on access/backend/provider changes, and keep execution-time authorization fresh. Count actual provider calls before claiming a speedup.
+3. **Gateway retry rollout and network recovery.** Source now exposes `_siconnectOperationKey`, tested with both SDK generations. Review/deploy to the existing endpoint/account, refresh catalogs and validate physical original-result recovery without duplicate writes. Add a coalesced usable-network signal to interrupt the current backoff; measure offline/Wi-Fi/cellular transitions without replaying mutations.
+4. **Blocking IO and ADB stream contract.** Own provider/HTTP cancellation where supported; preserve uncertainty after possible mutations. Correct per-packet ADB WRTE acknowledgement and empty writes, with deterministic delayed-ACK/disconnect tests.
+5. **Owner screen state.** Consolidate action/loading/error wrappers, remove composition-time database reads and finish result/form presentation. Keep public capability names compatible; preserve unrelated grants when reducing shell authority.
 
-Android **0.6.0-dev.4 / code 12**, SQLite **10**, **85** tools. A future screen-off/locked native scan ran and advanced recurrence. Two subsequent scheduled runs also succeeded, including one after an in-place update. Persisted warning cooldowns, severity escalation and bounded metadata are implemented; six new alert/migration checks passed on the physical Fold. Two real owner-authenticated Inbox acceptances and a selected SAF round trip passed. The initial SAF harness incorrectly expected writes to bypass approval; its corrected disposable identity has root-constrained standing access and is removed after the test. Original owner/agent grants remain unchanged.
+## Device acceptance
 
-Next: actual cancellation and interrupted owner review, designated test-calendar CRUD, complete Fold/large-font UI review, owner upgrade to health v3, controlled network/reboot tests, compatible signed distribution and a genuine quiet resource study. Android can block foreground-service restoration after instrumentation; do not count instrumentation force-stop as ordinary process death. See [pass 12](engineering-pass-12.md) for fresh evidence and remaining gaps. Earlier checkpoints below are historical.
+- Preserve the installed signer, five original agent/grant records, three reminders, two automations and selected root. Use in-place updates; verify schema integrity and actual gateway/Binder readiness afterward.
+- Complete real owner authentication cancellation/interruption, long-review/recreation and shell-reduction-with-unrelated-grant checks. Do not automate biometric success.
+- Exercise cancellation during a disposable mutation, workflow timeout, pending reminder approval, update/cancel/restore ordering and injected storage/startup failures. Inspect original request outcomes and absence of following steps.
+- Complete cover/unfolded/rotation/split-window/large-font/light/dark review, shared feedback, reminder details and saved forms.
+- Rerun the real native health-threshold case unplugged. The current USB batch has one explicit precondition failure, not a full green suite.
+- Use only a verified dedicated writable test calendar; reuse the explicitly selected test SAF root with disposable cleanup. Provider revocation/restoration and recurring/attendee behavior remain separate checks.
+- Validate normal-process Accessibility/listener recovery separately from instrumentation. If Android marks a service crashed, the owner may need to restore it through Settings.
+- Coordinate disruptive network/reboot tests and compatible signed installation. Preserve enrollment and original request IDs. Do not repeat personal sends or broaden grants to make a smoke test pass.
+- Collect matched quiet foreground/background/locked CPU/PSS/network/wakeup/database observations; account for boot/process changes and other agent activity. Then perform a retained long soak. No battery/availability improvement is yet established.
 
-## Background operations milestone — October 22, 2026
+## Resume after cleanup
 
-Android **0.6.0-dev.3 / code 11**, SQLite **9**, **85** tools. Background health scans extend the existing snapshot workflow with storage/network/thermal readings, optional threshold notifications and readable stored results. The original workflow upgrades only through owner authentication; no schedule or permission is enabled automatically. Two real owner-flow manual worker runs succeeded on the Fold with six native readings each and warnings disabled. The existing schedule remains disabled. New connection history and pause/resume controls reuse enrollment and retained event storage. See [background operations](background-operations.md) and [pass 11 evidence](engineering-pass-11.md).
-
-The preceding UI/security checkpoint `0577d54` passed Linux CI run `39890573408`. The new milestone requires its own CI result. A manual worker run is not a new screen-off scheduled-run or reboot acceptance result. Remaining priorities: owner-confirmed future scheduled dispatch, controlled network-transition evidence, compatible signed distribution, Calendar/SAF resources and Action Inbox lifecycle.
-
-## Earlier pass 11 checkpoint — October 22, 2026
-
-Android **0.6.0-dev.2 / code 10**, schema **9**, installed in place. CI metadata regression fixed; Linux run `39886068956` passed. UI and recovery hardening removes duplicate editors, distinguishes granted access from service connection, reuses existing gateway enrollment and serializes setup/recovery. Original identities/grants/reminders/automation were preserved. Security updates target OkHttp 5.5.1 and Bouncy Castle 1.86 with strict checksums. See [pass 11 evidence and current limitations](engineering-pass-11.md); later app/security changes require their own physical/CI results. Headless workflow expansion, connection history and owner-interactive acceptance remain active priorities.
-
-Earlier checkpoints below are historical; their versions and pending statements apply to those dates.
-
-## Pass 10 checkpoint — October 22, 2026
-
-Preserve the now-verified local pairing, raw-v2 Binder bootstrap, repeated daemon recovery, app-process recovery and owner-approved reboot. Next test Wi-Fi/cellular/new-network transitions, revocation and fully unassisted fresh installation; document exact remaining interactions. Finish owner Inbox/biometric acceptance, designated Calendar/SAF CRUD, scheduled automation/weather and semantic lifecycle tests. Configure owner-compatible signing and validate the signed artifact workflow. No complete full-platform acceptance is claimed; see [pass 10](engineering-pass-10.md).
-
-## Pass 9 checkpoint — October 21, 2026
-
-Pass 9 closed Inbox quota-expiration, transient pre-insert dispatch recovery and full-payload list-query gaps. Next: real owner Inbox acceptance/cancel; accessibility owner restoration and normal-process edge cases; explicitly selected Calendar/SAF CRUD; diagnostics Run now and configured commute delivery; existing Dots/Grokbot checks; complete retained soak. Do not repeat completed personal sends or broaden grants to pass smoke tests. See [pass 9](engineering-pass-9.md) and the owner harness instructions in [device testing](device-testing.md).
-
-## October 21, 2026 checkpoint
-
-Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
-
-Current checkpoint: 0.5.0-dev.2/code 7, SQLite 7, 85 tools. Action Inbox and installed-app picker are implemented. Prioritize remaining semantic interruption/identity cases, real owner acceptance/form-save and designated Calendar/SAF resources. See [pass 8](engineering-pass-8.md) for fresh versus historical evidence; the older roadmap below is retained for continuity.
-
-Current development checkpoint: Android 0.5.0-dev/code 6, SQLite 6 and 81 registry capabilities. Existing credentials, grants, reminder records and gateway identity are retained. See [project status](project-status.md) for measured evidence and historical checkpoints.
-
-1. Finish stable semantic interaction validation in the normal app process, including cancellation, stale nodes, password subtrees, package switches and shared-screen contention. Keep UI observation bounded. Global accessibility-event invalidation is conservative and may cause extra re-observation; do not weaken stale-action checks without measuring the cause.
-2. Validate native automation creation/save and owner biometric success/cancel on the actual phone. The real worker/manual-run and queued-cancellation paths are physically tested; form-only screenshots do not prove owner authentication or scheduled delivery.
-3. Complete unfolded, rotation, split-window, large-font, light/dark and long-review QA. Instrumented navigation requires explicit opt-in and an idle owner-approved screen. Avoid repeated instrumentation/package replacement while the owner is using Android special-access services.
-4. Exercise accessibility loss/restoration and ordinary lifecycle recovery independently of instrumentation. Distinguish configured access, bound service and availability. Android may require owner off/on recovery; do not write secure settings or claim unattended re-enablement.
-5. Finish owner-selected writable test-calendar and SAF-root round trips. Existing native tools remain implemented; provider synchronization, attendee delivery, MediaStore and recurring exceptions remain outside verified coverage.
-6. Verify the configured commute workflow end to end with a real forecast and actual reminder delivery. The form exposes explicit location/timezone/wake/departure/threshold settings; do not change Clock alarms or infer road conditions.
-7. Refresh existing provider catalogs and run brief read-only checks after the installed bridge is online. Preserve Dots OAuth and current Grok/Hermes principals; test failures during app replacement are device-offline observations, not evidence of broken authentication. Independently revocable bearer migration remains owner-coordinated future work.
-8. Continue the sparse soak and matched background/locked resource observations. The revised profiler rejects CPU intervals across restart/reboot/version/counter changes. No completed 24-hour availability or battery claim exists.
-9. Expand measured transport/gateway loss recovery with disposable writes and original-request retrieval. Preserve device SQLite authority and never blindly retry unknown mutations.
-10. Improve app selection in semantic permission management and compact package workflows. Messaging via RemoteInput is app-specific; universal RCS access and reliable generic send verification are not implemented.
-11. Investigate legitimate phone-only privileged bootstrap. Reboot still requires separately authorized testing and an authorized shell startup; retain native degraded mode and the working bundled backend.
+Follow [development setup](development-setup.md) to regenerate removed build/dependency directories. ADB can be restarted with `adb start-server`; select the authorized device explicitly. The phone's existing gateway/Binder runtime and saved agent configuration are independent of a workstation development server. See [repository hygiene](repository-hygiene.md) for preserved files and shutdown boundaries.
