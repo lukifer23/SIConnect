@@ -34,6 +34,8 @@ public class AdbStream implements Closeable {
      * Indicates whether WRTE is currently allowed
      */
     private final AtomicBoolean mWriteReady;
+    /** Keep concurrent callers' payloads ordered while ACK processing uses the stream monitor. */
+    private final Object mWriteLock = new Object();
 
     /**
      * A queue of data from the target's WRTE packets
@@ -168,43 +170,34 @@ public class AdbStream implements Closeable {
      * @throws IOException If the stream fails while sending data
      */
     public void write(byte[] bytes, int offset, int length) throws IOException {
-        synchronized (this) {
-            // Make sure we're ready for a WRTE
-            while (!mIsClosed && !mWriteReady.compareAndSet(true, false)) {
-                try {
-                    wait();
-                } catch (InterruptedException e) {
-                    //noinspection UnnecessaryInitCause
-                    throw (IOException) new IOException().initCause(e);
+        if (offset < 0 || length < 0 || offset > bytes.length - length) throw new IndexOutOfBoundsException();
+        if (length == 0) return; // An empty write must not consume the next OKAY.
+        synchronized (mWriteLock) {
+            final int maxData;
+            try {
+                maxData = mAdbConnection.getMaxData();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Write cancelled", e);
+            } catch (AdbPairingRequiredException e) {
+                throw new IOException("ADB pairing required", e);
+            }
+            if (maxData <= 0) throw new IOException("Invalid negotiated ADB payload size");
+            while (length > 0) {
+                synchronized (this) {
+                    while (!mIsClosed && !mPendingClose && !mWriteReady.compareAndSet(true, false)) {
+                        try { wait(); }
+                        catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("Write cancelled", e);
+                        }
+                    }
+                    if (mIsClosed || mPendingClose) throw new IOException("Stream closed");
                 }
-            }
-
-            if (mIsClosed) {
-                throw new IOException("Stream closed");
-            }
-        }
-        // Split and send data as WRTE packet
-        // TODO: A WRITE message may not be sent until a READY message is received.
-        //  Once a WRITE message is sent, an additional WRITE message may not be
-        //  sent until another READY message has been received.  Recipients of
-        //  a WRITE message that is in violation of this requirement will CLOSE
-        //  the connection.
-        int maxData;
-        try {
-            maxData = mAdbConnection.getMaxData();
-        } catch (InterruptedException | AdbPairingRequiredException e) {
-            //noinspection UnnecessaryInitCause
-            throw (IOException) new IOException().initCause(e);
-        }
-        while (length != 0) {
-            if (length <= maxData) {
-                mAdbConnection.sendPacket(AdbProtocol.generateWrite(mLocalId, mRemoteId, bytes, offset, length));
-                offset = offset + length;
-                length = 0;
-            } else { // if (length > maxData) {
-                mAdbConnection.sendPacket(AdbProtocol.generateWrite(mLocalId, mRemoteId, bytes, offset, maxData));
-                offset = offset + maxData;
-                length = length - maxData;
+                int count = Math.min(length, maxData);
+                mAdbConnection.sendPacket(AdbProtocol.generateWrite(mLocalId, mRemoteId, bytes, offset, count));
+                offset += count;
+                length -= count;
             }
         }
     }

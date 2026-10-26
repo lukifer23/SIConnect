@@ -8,9 +8,11 @@ import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.os.Process
+import android.os.CancellationSignal
 import android.provider.CalendarContract
 import dev.siconnect.app.RuntimeGraph
 import dev.siconnect.core.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
@@ -25,6 +27,7 @@ fun registerCalendarCapabilities(g: RuntimeGraph) {
 internal class CalendarOperations(private val context: Context) {
     private val resolver get() = context.contentResolver
     private val lock = Mutex()
+    private val queryCancellation = ThreadLocal<CancellationSignal>()
     private val events = CalendarContract.Events.CONTENT_URI
     private val calendars = CalendarContract.Calendars.CONTENT_URI
     private val reminders = CalendarContract.Reminders.CONTENT_URI
@@ -34,7 +37,7 @@ internal class CalendarOperations(private val context: Context) {
         (!write || context.checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED)
 
     private fun query(uri: Uri, projection: Array<String>, selection: String? = null, args: Array<String>? = null, order: String? = null): Cursor =
-        resolver.query(uri, projection, selection, args, order) ?: throw CapabilityException("PROVIDER_UNAVAILABLE", "Calendar Provider returned no cursor")
+        resolver.query(uri, projection, selection, args, order, queryCancellation.get()) ?: throw CapabilityException("PROVIDER_UNAVAILABLE", "Calendar Provider returned no cursor")
 
     private fun Cursor.text(name: String, max: Int = 8000): String? = getColumnIndex(name).takeIf { it >= 0 && !isNull(it) }?.let { getString(it)?.take(max) }
     private fun Cursor.number(name: String): Long? = getColumnIndex(name).takeIf { it >= 0 && !isNull(it) }?.let(::getLong)
@@ -118,9 +121,15 @@ internal class CalendarOperations(private val context: Context) {
             override fun availability() = if (permitted(write)) Availability.IMPLEMENTED else Availability.PERMISSION_REQUIRED
             override fun availabilityDetail() = if (permitted(write)) null else "Grant calendar access in SIConnect permissions; no special access is bypassed"
             override fun assess(args: JsonObject) = RiskAssessment(descriptor.risk, title, "calendar=${args["calendarId"] ?: "all accessible"}; event=${args["eventId"] ?: "new"}", descriptor.sideEffects, externalCommunication = write)
-            override suspend fun execute(args: JsonObject, ctx: ExecutionContext): CapabilityResult = lock.withLock {
-                if (!permitted(write)) throw CapabilityException("PERMISSION_REQUIRED", "Calendar permission was revoked")
-                try { body(args) } catch (e: SecurityException) { throw CapabilityException("PERMISSION_REQUIRED", "Calendar Provider denied this operation") }
+            override suspend fun execute(args: JsonObject, ctx: ExecutionContext): CapabilityResult = withContext(Dispatchers.IO) { lock.withLock {
+                val signal=CancellationSignal()
+                withContext(queryCancellation.asContextElement(signal)) {
+                    dev.siconnect.app.backend.cancellableIo(signal::cancel) {
+                        if (!permitted(write)) throw CapabilityException("PERMISSION_REQUIRED", "Calendar permission was revoked")
+                        try { body(args) } catch (e: SecurityException) { throw CapabilityException("PERMISSION_REQUIRED", "Calendar Provider denied this operation") }
+                    }
+                }
+            }
             }
         }
         fun read(out: JsonObject) = CapabilityResult(envelope(out), BackendKind.NATIVE, "uid=${Process.myUid()}")

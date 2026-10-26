@@ -93,7 +93,8 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
             var fetchedAt=now
             val cached=if(cache.exists() && now-cache.lastModified() in 0..900_000 && cache.length()<=256000) runCatching {Json.parseToJsonElement(cache.readText()).jsonObject}.getOrNull() else null
             val body=if(cached!=null) {fetchedAt=cache.lastModified();cached} else {
-                val fresh=http.newCall(Request.Builder().url(url).build()).execute().use {r ->
+                val call=http.newCall(Request.Builder().url(url).build())
+                val fresh=dev.siconnect.app.backend.cancellableIo(call::cancel) { call.execute().use {r ->
                     if(!r.isSuccessful) throw CapabilityException("WEATHER_HTTP","Provider status ${r.code}",true)
                     val bytes=java.io.ByteArrayOutputStream()
                     r.body.byteStream().use {input ->
@@ -104,7 +105,7 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
                         }
                     }
                     Json.parseToJsonElement(bytes.toString("UTF-8")).jsonObject
-                }
+                } }
                 // AtomicFile prevents concurrent readers/process interruption seeing half a forecast.
                 synchronized(http) {
                     val atomic=android.util.AtomicFile(cache);val stream=atomic.startWrite()
