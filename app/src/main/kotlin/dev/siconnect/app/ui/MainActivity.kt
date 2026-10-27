@@ -57,7 +57,8 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         if(missing.any {history.getBoolean(it,false) && !shouldShowRequestPermissionRationale(it)}) {
             permissionStatus="Android requires you to change this access in app permissions. Other ready tools remain available."
             startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))
-        } else permission.launch(missing.toTypedArray())
+        } else permission.launch(if(Manifest.permission.ACCESS_FINE_LOCATION in missing)
+            (missing+Manifest.permission.ACCESS_COARSE_LOCATION).distinct().toTypedArray() else missing.toTypedArray())
     }
     override fun onResume() { super.onResume(); permissionStatus="";permissionRevision++;graph.gateway.refreshCatalog();if(::controlModel.isInitialized) controlModel.refresh() }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent);setIntent(intent);permissionRevision++ }

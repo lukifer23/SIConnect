@@ -1,6 +1,6 @@
 # Installation, updates and signing
 
-The current source and installed debug build are **0.6.0-dev.6 / versionCode 14 / SQLite 10**. See [pass 14](engineering-pass-14.md) for preservation checks and fresh live acceptance. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
+The current source and installed debug build are **0.6.0-dev.8 / versionCode 16 / SQLite 10**. See [pass 15](engineering-pass-15.md) for preservation checks and fresh live acceptance. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
 
 ## Preserve the existing installation
 
@@ -29,3 +29,7 @@ This signed minified preview has not been installed through Android's package in
 The optimized development APK (4,896,897 bytes) was signed with the existing development certificate and installed in place. SQLite integrity and original owner records passed actual readback after installation. Fresh Grok native/shell/runtime reads and official SDK keyed read/write acceptance passed on that installed artifact. This is still a development signer; no new key or production release channel was created.
 
 Only `dev.siconnect.app` remains installed among SIConnect and its fixtures. The generic `dev.siconnect.notificationfixture` and temporary `dev.siconnect.app.test` packages were removed. The main APK excludes the debug semantic fixture and loopback endpoint. Its own foreground connection service and bundled shell daemon are normal runtime components from the same APK, not separate companion applications. Advanced control still requires authorized bootstrap; removing test packages does not eliminate Android's authorization/reboot requirements.
+
+## Code-16 commute development installation
+
+The code-16 optimized preview retains the existing development signer. Native commute reading was first checked on the actual phone in the debug build; the temporary test package is removed afterward. The final optimized installation receives a fresh gateway acknowledgement and phone-runtime read. New location consent and commute-family grants are not auto-enabled. This is a compatible development update, not a production signing-key change or public release.

@@ -122,6 +122,8 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
             }
             val normalized=buildJsonObject {
                 put("spatialScope","FORECAST_POINT");put("includesLiveTraffic",false)
+                put("roadConditionsObserved",false);put("routeWeatherCoverage","NOT_EVALUATED")
+                put("commuteGuidance","A point forecast does not verify dry roads, route-wide weather, future traffic delays or an earlier-alarm decision. Use actual route data and owner timing preferences; report unobserved road conditions as unknown.")
                 put("locationSource",when {
                     "latitude" in args && "longitude" in args -> "EXPLICIT_COORDINATES"
                     "latitude" !in args && "longitude" !in args -> "OWNER_CONFIGURED_WEATHER"

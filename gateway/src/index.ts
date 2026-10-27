@@ -61,7 +61,7 @@ export class DeviceBridge extends DurableObject<Env> {
       this.rate.set(body.agentId, { slot, count: rate?.slot === slot ? rate.count + 1 : 1 });
       if (this.rate.size > 1000) this.rate.clear();
       const socket = await this.activeSocket();
-      if (!socket) return json({ error: 'DEVICE_OFFLINE', failureLayer: 'TRANSPORT', executionDispatched: false,
+      if (!socket) return json({ error: 'DEVICE_OFFLINE', observedAtMs: Date.now(), failureLayer: 'TRANSPORT', executionDispatched: false,
         backendAvailability: 'UNKNOWN',
         detail: 'No acknowledged phone connection. This attempt was not forwarded; the phone backend state was not measured. Preserve any original request identity while restoring the existing connection.' }, 503);
       if (this.pending.size >= 16) return json({ error: 'DEVICE_BUSY' }, 429);
@@ -213,6 +213,20 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
               isError: !response.ok || (record.state !== 'SUCCEEDED' && record.state !== 'AWAITING_APPROVAL') };
           });
         }
+        server.registerTool('siconnect_connection', {
+          title: 'Fresh SIConnect gateway connection status',
+          description: 'Check whether the gateway currently has an acknowledged phone session. Works even when phone tools return DEVICE_OFFLINE. Recheck this after a connection error instead of treating an earlier failure as current state. Does not probe USB, phone internet, accessibility or privileged-service readiness, and sends no execution to the phone.',
+          inputSchema: z.object({}),
+          annotations: { readOnlyHint: true, destructiveHint: false }
+        }, async () => {
+          const fresh = await (await bridge.fetch('https://internal/catalog')).json() as { online: boolean; capabilities: Capability[] };
+          const status = { observedAtMs: Date.now(), phoneSessionAcknowledged: fresh.online,
+            nativeCatalogTools: fresh.capabilities.length, executionDispatched: false,
+            observationScope: 'GATEWAY_TO_PHONE_SESSION', backendAvailability: 'NOT_MEASURED',
+            guidance: fresh.online ? 'Phone session is acknowledged now. Retry undispatched reads; retrieve original request IDs for actions whose execution may already have started.'
+              : 'No acknowledged phone session at this observation time. USB/internet/backend readiness are separate. Restore the existing connection without re-pairing or resubmitting uncertain actions.' };
+          return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status, isError: false };
+        });
         return server;
       }, { legacy: 'stateless', responseMode: 'json', maxRequestBodySize: 131072 });
       try { return await handler.fetch(request); } finally { await handler.close(); }

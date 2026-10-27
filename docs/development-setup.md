@@ -1,6 +1,6 @@
 # Development setup
 
-Current checkpoint: Android **0.6.0-dev.6 / code 14**, SQLite **10**, **85** tools. See [project status](project-status.md) and [pass 14](engineering-pass-14.md) for measured results and remaining gaps.
+Current checkpoint: Android **0.6.0-dev.8 / code 16**, SQLite **10**, **89** phone tools plus the gateway connection-status tool. See [project status](project-status.md) and [pass 15](engineering-pass-15.md) for measured results and remaining gaps.
 
 ## Host toolchain (macOS, Apple silicon)
 

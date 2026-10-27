@@ -33,6 +33,29 @@ data class WeatherDefaults(
     val fallbackWakeMinutes: Int = 7 * 60,
 )
 
+@Serializable
+data class CommuteProfile(
+    val destination: String = "",
+    val timezone: String = java.time.ZoneId.systemDefault().id,
+    val wakeTime: String = "",
+    val arrivalTime: String = "",
+    val preparationMinutes: Int? = null,
+    val bufferMinutes: Int? = null,
+    val destinationLabel: String = "",
+) {
+    fun validated(): CommuteProfile {
+        require(destination.length <= 500) { "Destination is too long" }
+        require(destinationLabel.length <= 200) { "Destination name is too long" }
+        java.time.ZoneId.of(timezone)
+        listOf(wakeTime, arrivalTime).filter(String::isNotBlank).forEach {
+            require(it.matches(Regex("[0-2][0-9]:[0-5][0-9]"))) { "Use HH:mm times" }
+            java.time.LocalTime.parse(it)
+        }
+        require((preparationMinutes==null || preparationMinutes in 0..360) && (bufferMinutes==null || bufferMinutes in 0..180)) { "Check preparation and buffer minutes" }
+        return copy(destination=destination.trim(),destinationLabel=destinationLabel.trim())
+    }
+}
+
 /**
  * Non-secret settings in SharedPreferences; secrets encrypted with a non-exportable Android Keystore
  * AES-GCM key. The app is excluded from backups (see data_extraction_rules.xml).
@@ -69,6 +92,10 @@ class Settings(context: Context) {
     var weather: WeatherDefaults
         get() = read("weather", WeatherDefaults.serializer()) ?: WeatherDefaults()
         set(v) = write("weather", WeatherDefaults.serializer(), v)
+
+    var commute: CommuteProfile
+        get() = read("commute", CommuteProfile.serializer()) ?: CommuteProfile()
+        set(v) { check(prefs.edit().putString("commute", AppJson.encodeToString(CommuteProfile.serializer(), v.validated())).commit()) { "Could not save commute" } }
 
     var eventRetentionDays: Int
         get() = prefs.getInt("event_retention_days", 30)

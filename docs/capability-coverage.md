@@ -1,12 +1,16 @@
 # Capability coverage
 
+## Code-16 commute and connection additions
+
+The current catalog contains **89 phone capabilities** and the deployed gateway-only **`siconnect_connection`** tool (**90 MCP tools**). Added phone tools are `location.current`, `commute.profile`, `commute.route` and `commute.read_route`. They use the existing policy/engine and require their own family scopes. Commute tools control/read the real unlocked Google Maps screen through accessibility or the selected privileged backend; no routing API key or guessed driving speed. Maps date/time selection remains an actual UI workflow. Native location requires Android consent. The new gateway tool returns fresh session acknowledgement without sending a phone execution. See [pass 15](engineering-pass-15.md) for current evidence and limits.
+
 ## Current source and physical checkpoints
 
 The October 26 [source audit](source-audit-2026-10-26.md) covers schema 10 and the existing 85-tool catalog, with no added tool names. The current code-14 focused device/live client evidence is in [pass 14](engineering-pass-14.md). The earlier code-13 batch and USB-charging precondition failure remain in [pass 13](engineering-pass-13.md); earlier owner Inbox acceptance and selected SAF evidence remain in [pass 12](engineering-pass-12.md). The deployed retry field adds no capability names and now has real phone read/write coverage. Native `device.capabilities` reports availability/scope; MCP `tools/list` carries the gateway transport schema. Entries below retain their version-specific historical evidence; they are not a fresh acceptance result for the audited source.
 
 ## Pass 9 checkpoint — October 21, 2026
 
-Current installed build: **0.5.0-dev.3 / code 8**, SQLite **v8**, **85** tools. No new tool names were added in pass 9. Inbox recovery, list-query efficiency and owner-policy guidance improved; physical proposal persistence/execution and migration passed. Human Inbox authentication, Calendar/SAF writes and full semantic interruption coverage remain open. See [pass 9](engineering-pass-9.md); earlier versioned entries below retain historical coverage only.
+Historical pass-9 installed build: **0.5.0-dev.3 / code 8**, SQLite **v8**, **85** tools. No new tool names were added in pass 9. Inbox recovery, list-query efficiency and owner-policy guidance improved; physical proposal persistence/execution and migration passed. Human Inbox authentication, Calendar/SAF writes and full semantic interruption coverage remain open. See [pass 9](engineering-pass-9.md); earlier versioned entries below retain historical coverage only.
 
 ## October 21, 2026 checkpoint
 

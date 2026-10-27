@@ -1,6 +1,6 @@
 # Project status
 
-Updated October 26, 2026. Current Android source and installed debug build: **0.6.0-dev.6 / versionCode 14**, SQLite **10**, **85** tools. Optional caller retry identity and explicit transport-error details are deployed to the existing gateway. The optimized development APK is installed in place; both disposable test packages are removed. See [pass 14](engineering-pass-14.md) for this checkpoint, [the source audit](source-audit-2026-10-26.md) for code findings, and [next steps](next-steps.md) for the current queue.
+Updated October 26, 2026. Current Android source and installed debug build: **0.6.0-dev.8 / versionCode 16**, SQLite **10**, **89** phone capabilities. The deployed gateway also exposes `siconnect_connection` (**90** MCP tools total), providing a fresh acknowledgement without dispatching phone execution. See [pass 15](engineering-pass-15.md), [the source audit](source-audit-2026-10-26.md) and [next steps](next-steps.md). Existing principals, enrollment and owner data are retained. Development signing remains in use; this is not production-release acceptance.
 
 | Area | Current state | Evidence and limits |
 | --- | --- | --- |
@@ -23,13 +23,13 @@ The previous code-13 batch had 20 passes and one explicit unplugged-phone precon
 
 ## Current blockers and acceptance gaps
 
-- The real tomorrow-weather read/decision path succeeded after owner-supplied coordinates; a rain reminder was correctly skipped. Current location, commute preferences and route traffic remain product gaps. Tool metadata now distinguishes a point forecast, caller-owned reminders and the next Android-exposed alarm.
+- The real tomorrow-weather read/decision path succeeded after owner-supplied coordinates; a rain reminder was correctly skipped. Commute settings, consent-aware native location and actual Maps route-reading capabilities are now implemented. Maps UI control produced a real future-morning duration range; native GPS still requires owner consent, and Grok completed future-time selection and the corrected route using existing shell permission; the installed native reader also passed its physical check. New native-family scopes are still explicit owner choices. Tool metadata now distinguishes a point forecast, caller-owned reminders and the next Android-exposed alarm.
 
 - Real unplugged health-threshold acceptance requires an unplugged device; do not fake the battery state.
 - Calendar writes require a verified dedicated writable test calendar. No personal calendar was selected or changed in this pass.
 - Biometric success/cancel, special-access restoration and disruptive network/reboot scenarios need their actual owner/platform conditions. Instrumentation force-stop is separate from ordinary process death.
 - Hosted retry identity is deployed and verified with actual reads/writes and a single recorded execution. Grok also returned a successful stable keyed identity; its initial negative interpretation was incorrect. Review the exact results and remaining loss/restart limits in pass 14. The initial Grok status read recovered its successful original record after socket replacement; a shell attempt failed before phone dispatch.
-- General storage retention, blocking IO cancellation and ADB stream write flow control remain source-confirmed work. Shared discovery and network-triggered wake-up are implemented; broader performance and transition acceptance remain open.
+- General storage retention remains open. Blocking IO cancellation and ADB per-packet flow control are patched in code 15; their full physical interruption acceptance remains open. Shared discovery and network-triggered wake-up are implemented; broader performance and transition acceptance remain open.
 - Full Fold/large-font UI acceptance, quiet CPU/PSS/network/database-growth measurements and compatible signed distribution remain incomplete. There is no completed battery or 24-hour availability study.
 
 ## Historical evidence

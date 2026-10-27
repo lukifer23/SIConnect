@@ -95,7 +95,7 @@ test('official v1 client initializes 2025-era, lists and calls structured tools'
 test('official v2 client discovers statelessly and handles concurrent calls',async()=>{
   const c=await client();
   try {
-    assert.equal((await c.listTools()).tools.length,3);
+    assert.equal((await c.listTools()).tools.length,4);
     const before=executions;
     const values=await Promise.all([1,2,3,4].map(n=>c.callTool({name:'test_echo',arguments:{value:String(n)}})));
     assert.equal(executions-before,4);assert.equal(values[2].structuredContent.result.output.value,'3');
@@ -240,10 +240,15 @@ test('authenticated socket replacement rejects old in-flight ownership and requi
   assert.equal(result.isError,true);assert.equal(result.structuredContent.error,'DEVICE_REPLACED_UNKNOWN_OUTCOME');
   assert.equal(result.structuredContent.recovery.doNotResubmitMutation,true);
   assert.equal((await (await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).json()).online,false);
+  const disconnected=await c.callTool({name:'siconnect_connection',arguments:{}});
+  assert.equal(disconnected.isError,false);
+  assert.equal(disconnected.structuredContent.phoneSessionAcknowledged,false);
+  assert.equal(disconnected.structuredContent.executionDispatched,false);
   const ack=new Promise(resolve=>next.on('message',raw=>{if(JSON.parse(raw).type==='hello_ack') resolve()}));
   next.send(JSON.stringify({type:'hello',capabilities:capabilities()}));
   await ack;respond(next);
   socket=next;
+  assert.equal((await c.callTool({name:'siconnect_connection',arguments:{}})).structuredContent.phoneSessionAcknowledged,true);
   assert.equal((await c.callTool({name:'test_echo',arguments:{value:'new-session'}})).structuredContent.result.output.value,'new-session');
   await c.close();
 });

@@ -1,11 +1,32 @@
-# Engineering pass 15 — in progress
+# Engineering pass 15 — commute control and connection diagnosis
 
-First installed iteration: **0.6.0-dev.7 / code 15**, schema 10, 85 tools.
+October 26, 2026. Android source **0.6.0-dev.8 / code 16**, SQLite **10**, **89** phone capabilities. The deployed gateway adds one transport-only status tool: **90 MCP tools** in total. Existing identities, enrollment and signing identity are preserved. Private device evidence, credentials, location endpoints and owner preferences are excluded from this report.
 
-- ADB split writes consume one READY per packet; zero-length writes preserve readiness. Writers remain serialized and peer-close stops further output.
-- Weather HTTP cancellation owns the call through response-body consumption.
-- Calendar queries now use an operation-owned CancellationSignal on IO threads. Calendar mutations without a cancellation API retain the engine's uncertain-outcome handling.
-- Debug build and existing Android/ADB JVM checks passed in 11 seconds. In-place device installation, bundled-service bootstrap and MainActivity startup succeeded. No data clear, credential change or new test package.
-- The new in-flight cancellation and multi-packet paths have not yet been exercised on the physical phone. Build/startup success is not that evidence.
+## Changes
 
-Remaining authorized work: owner commute/location setup, safe history retention, connection diagnostics, client isolation, owner UI recovery and release configuration. These are not completed by this patch.
+- ADB split writes consume one READY per packet; empty writes preserve readiness. Writers remain serialized and peer-close stops further output. Weather response-body consumption and Calendar queries now own supported cancellation resources; uncertain mutation outcomes remain protected.
+- Owner Commute settings save the explicit destination, expected Maps name, timezone and optional arrival/wake/preparation/buffer preferences. Forecast coordinates remain independent. Forms survive recreation and prevent duplicate in-flight submissions. No wake/preparation time is invented.
+- `location.current` obtains a bounded native Android fix, reports age/accuracy/permission precision and rejects stale/mock fixes. Android location consent is requested only by the owner. No background-location grant is added; foreground restrictions produce an explicit failure.
+- `commute.route` opens actual Google Maps driving directions and reads its selected route. `commute.read_route` reads an already prepared route. Both use the existing engine, screen coordinator and explicitly selected execution authority. Accessibility is preferred when connected; otherwise the selected bundled/Shizuku service captures the actual hierarchy. No routing API, provider key, model-generated travel speed or extra companion app is used.
+- Route reading distinguishes the selected card from mode tabs, preserves duration ranges and uses their upper bound for conservative timing. Future departure verification matches the visible time-selection label against the requested time. Location fix age/accuracy remain unknown when only Maps’ location label is available.
+- Destination binding gates leave-by/wake-by advice. A mismatched saved Maps Work shortcut cannot silently replace an explicitly confirmed destination. Matching a visible business name does not independently prove its entire street address.
+- The gateway-only `siconnect_connection` tool obtains a fresh, timestamped session acknowledgement even while phone execution is unavailable. It measures neither USB/internet nor privileged/accessibility readiness. Offline execution errors now carry their observation timestamp.
+- Integration guidance covers actual Maps date/time controls, destination preservation, explicit timing preferences, existing authorized shell fallback and original-request recovery.
+
+## Actual evidence
+
+- Android JVM checks: **96 passed**. Gateway checks: **15 passed**, including connection status before and after acknowledged socket replacement. Optimized and debug builds succeeded.
+- Installed code-16 development build retained schema integrity, **five original agents, three reminders, two automations and one selected document root** at the private checkpoint. This is a preservation check, not authorization to broaden any grant.
+- Direct phone control opened real directions from Maps’ current-location label to the confirmed destination. A future morning departure produced a real duration range and distance. No navigation, share, Clock or reminder mutation was requested.
+- Grok’s first attempt occurred during app replacement/instrumentation and failed before phone dispatch. Later both the phone UI and gateway independently reported Connected; an actual MCP runtime read succeeded with `ONLINE`, code 16 and the bundled service available. The new gateway status tool was also called successfully against the deployed service.
+- Grok’s retry successfully used its existing shell permission to capture the screen and fetched a fresh complete forecast. Its typed semantic read was outside its agent scope. Maps was then on its home screen, so that read did not establish a route.
+- The next Grok run operated the actual time controls but replaced the confirmed destination with a different saved Work shortcut. It identified that mismatch in its reply. This finding caused the destination-binding guard and integration correction above. After correction, Grok used the confirmed destination, operated the actual future-time controls and returned the visible duration range/distance. It left Maps in preview. Its remaining dry-road inference was unsupported by the point forecast; output now explicitly reports road conditions and route-wide weather as unobserved.
+- Initial installed-reader checks exposed a service-attachment timing issue, an output-size request above the 128 KiB transport limit, and use of `/dev/tty` inside a process without a terminal. The adapter now uses the supported limit and `/proc/self/fd/1`. The final installed-reader check passed on the real prepared future route, including visible departure-label verification. Earlier failing runs are retained privately, not counted as passing acceptance. The temporary test package was then removed and normal app operation restored.
+- Final focused physical reader check: **1 passed**. This checks the installed implementation, not an implicit remote-client scope expansion.
+- The optimized APK was signed locally with the existing compatible development certificate and verified against the debug build. Production signing/key custody and a public release channel are separate owner decisions.
+
+## Remaining limits
+
+Maps controls must be read from the actual unlocked phone. Future departure/arrival selection is a real UI workflow; it is not a background traffic API or a locked-phone automation guarantee. Unsupported/localized/ambiguous route layouts return explicit failures. Native GPS consent and new per-agent family scopes are not silently granted. Owner arrival/wake/preparation preferences remain necessary for personal alarm advice.
+
+Safe general payload retention, client-principal separation, complete owner UI/recovery coverage and production distribution remain open. The IO patch has not completed physical in-flight cancellation/multi-packet acceptance. Calendar writes, broad connectivity transitions and long-duration battery/availability acceptance retain their existing prerequisites.

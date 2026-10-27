@@ -35,6 +35,6 @@ class DiscoveryDeviceTest {
         assertFalse("Disposable companion must be absent",runCatching {context.packageManager.getPackageInfo("dev.siconnect.notificationfixture",0)}.isSuccess)
         val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.status"),Origin.LOCAL_OWNER)
         assertEquals(r.errorMessage,RequestState.SUCCEEDED,r.state)
-        assertEquals(85,g.registry.all().size)
+        assertEquals(89,g.registry.all().size)
     }
 }

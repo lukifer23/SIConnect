@@ -1,18 +1,18 @@
 # Next steps
 
-Updated October 26, 2026. Resume from **0.6.0-dev.6 / code 14 / SQLite 10 / 85 tools** on `main`. Read [project status](project-status.md), [pass 14 findings](engineering-pass-14.md) and [the source audit](source-audit-2026-10-26.md) first. This is the current queue; dated engineering reports retain historical evidence.
+Updated October 26, 2026. Resume from **0.6.0-dev.8 / code 16 / SQLite 10 / 89 phone capabilities + gateway status** on `main`. Read [project status](project-status.md), [pass 15 findings](engineering-pass-15.md) and [the source audit](source-audit-2026-10-26.md) first. This is the current queue; dated engineering reports retain historical evidence.
 
 ## Engineering priorities
 
 1. **Owner-controlled retention.** Introduce explicit policy and incremental cleanup for request payloads, workflow/step results, automation history and deduplication claims. Protect active links, unknown outcomes and immutable retry identity. The existing request prune helper has no production caller; do not enable it blindly. Test notification/reminder retries after payload compaction and large-result SQLite retrieval. Measure representative database growth.
 2. **Profile discovery and client orchestration.** Shared per-refresh document probes and bounded UI metadata reuse are implemented. Keep execution checks fresh. The live nine-tool provider case uses one access probe; twenty metadata reads reuse it. Measure missing providers and equivalent UI workloads before claiming general speedup. Profile the gateway's stateless catalog/schema setup separately from model/client time.
 3. **Controlled connectivity and retry recovery.** The retry field is deployed and actual read/write deduplication, conflict rejection and cleanup passed. Validated-network callbacks now wake timed backoff. Next reproduce usable-network/offline/captive/Doze transitions and socket replacement, retaining original request identity. Grok's native-argument/schema interpretation was incorrect; use fresh MCP discovery and actual SQLite executions. No universal interruption root cause or fix is established by one passing rerun.
-4. **Blocking IO and ADB stream contract.** Own provider/HTTP cancellation where supported; preserve uncertainty after possible mutations. Correct per-packet ADB WRTE acknowledgement and empty writes, with deterministic delayed-ACK/disconnect tests.
+4. **Blocking IO and ADB stream contract.** Own provider/HTTP cancellation where supported; preserve uncertainty after possible mutations. The code-15 patch corrects per-packet ADB WRTE acknowledgement and empty writes; focused real in-flight cancellation/stream acceptance remains open.
 5. **Owner screen state.** Consolidate action/loading/error wrappers, remove composition-time database reads and finish result/form presentation. Keep public capability names compatible; preserve unrelated grants when reducing shell authority.
 
 ## Product gaps from real weather use
 
-The live forecast succeeded after the owner supplied a destination; no rain reminder was warranted. Tightened alarm/reminder/weather scope descriptions address the misleading conclusions. Next make owner weather/commute preferences discoverable and add permission-aware current-location setup with explicit agent authority. SIConnect currently has no native current-GPS capability or live route-traffic source. Do not infer wake/departure timing from a null next-alarm observation. See [the real workflow findings](engineering-pass-14.md#real-tomorrow-weather-workflow).
+The live forecast succeeded after the owner supplied a destination; no rain reminder was warranted. Tightened alarm/reminder/weather scope descriptions address the misleading conclusions. Commute preferences, permission-aware native location and Maps screen route readers are implemented in code 16. No routing API credential is needed. Future departure selection uses actual Maps controls; confirm the selected date/time and duration range, and keep the phone unlocked. Native GPS consent, desired arrival/wake/preparation preferences, and per-client scope choices remain owner inputs. Do not infer wake/departure timing from a null next-alarm observation. See [the real workflow findings](engineering-pass-14.md#real-tomorrow-weather-workflow).
 
 ## Device acceptance
 

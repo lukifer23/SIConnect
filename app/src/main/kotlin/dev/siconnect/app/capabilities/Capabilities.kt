@@ -34,6 +34,7 @@ fun JsonObject.long(key: String, default: Long): Long = (get(key) as? JsonPrimit
 private fun native(out: JsonElement) = CapabilityResult(out, BackendKind.NATIVE, "uid=${Process.myUid()}")
 
 fun registerCapabilities(g: RuntimeGraph) {
+    registerCommuteCapabilities(g)
     registerFileCapabilities(g)
     registerDocumentCapabilities(g)
     registerCalendarCapabilities(g)

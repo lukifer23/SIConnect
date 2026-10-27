@@ -66,8 +66,6 @@ import kotlinx.serialization.json.*
         var skillJson by remember { mutableStateOf("") }
         var url by remember { mutableStateOf(g.settings.gateway.value.baseUrl) }
         var gatewaySecret by remember { mutableStateOf("") }
-        var latitude by remember { mutableStateOf(g.settings.weather.latitude?.toString() ?: "") }
-        var longitude by remember { mutableStateOf(g.settings.weather.longitude?.toString() ?: "") }
         var approve by remember { mutableStateOf<RequestRecord?>(null) }
         fun action(block: suspend ()->Unit) { scope.launch { try { withContext(Dispatchers.IO) { g.ready.await(); block() }; refresh++ } catch(e: CancellationException) {throw e} catch(e: Exception) { message=e.message ?: e.javaClass.simpleName } } }
         LaunchedEffect(refresh,tab,health,shizuku,permissionRevision) {
@@ -164,14 +162,7 @@ import kotlinx.serialization.json.*
                         FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             listOf("SYSTEM" to "System","LIGHT" to "Light","DARK" to "Dark").forEach {(value,label)->FilterChip(selected=appearance==value,onClick={g.settings.setAppearance(value)},label={Text(label)})}
                         }
-                        Text("Weather location",style=MaterialTheme.typography.titleMedium)
-                        OutlinedTextField(latitude,{latitude=it},label={Text("Latitude")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                        OutlinedTextField(longitude,{longitude=it},label={Text("Longitude")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                        OutlinedButton(onClick={action {
-                            val lat=latitude.toDouble();val lon=longitude.toDouble();require(lat in -90.0..90.0 && lon in -180.0..180.0)
-                            g.settings.weather=g.settings.weather.copy(latitude=lat,longitude=lon);message="Weather location saved"
-                        }},enabled=latitude.isNotBlank() && longitude.isNotBlank()) {Text("Save weather location")}
-                        Text("Forecasts: Open-Meteo, CC BY 4.0. Free endpoint for personal/non-commercial use.",style=MaterialTheme.typography.bodySmall)
+                        CommuteSettings()
                         TextButton(onClick={showConnectionDetails=!showConnectionDetails}) {Text(if(showConnectionDetails) "Hide advanced connection settings" else "Advanced connection settings")}
                         if(showConnectionDetails) {
                             Row(verticalAlignment=Alignment.CenterVertically) {Text("Route privileged requests",Modifier.weight(1f));Switch(controls.privilegedEnabled,{enabled->
