@@ -122,7 +122,7 @@ class Sampler:
             return ''
         status = 'TIMEOUT' if result.timed_out else 'TRUNCATED' if result.stdout_truncated else 'FAILED' if result.code else 'OK'
         self.probes.append({'probe': probe, 'status': status, 'exit_code': result.code,
-                            'seconds': round(result.seconds, 4), 'stderr_truncated': result.stderr_truncated})
+                            'seconds': round(result.seconds, 4), 'stderr_truncated': result.stderr_truncated, 'stdout_limit_bytes': limit})
         return result.stdout if status == 'OK' else ''
 
     def process(self, name, app=False):
@@ -148,7 +148,7 @@ class Sampler:
             match = re.search(pattern, memory)
             sample[key] = int(match[1]) if match else None
         sample['app_version'] = parse_version(self.shell('app.version', 'pm', 'list', 'packages', '--user', '0', '--show-versioncode', PACKAGE, limit=4096))
-        sample['conditions'] = parse_conditions(self.shell('device.power', 'dumpsys', 'power'),
+        sample['conditions'] = parse_conditions(self.shell('device.power', 'dumpsys', 'power', limit=262144),
             self.shell('device.keyguard', 'dumpsys', 'window', 'policy'),
             self.shell('app.importance', 'am', 'package-importance', PACKAGE, limit=256))
         raw_boot_end = self.shell('boot.end', 'cat', '/proc/sys/kernel/random/boot_id', limit=128).strip()
@@ -181,7 +181,7 @@ def main():
         interrupted.append(signum); stop.set()
     for signum in [signal.SIGINT, signal.SIGTERM]:
         signal.signal(signum, stopping)
-    report = {'format': 'siconnect.device-profile.v1', 'methodology_revision': 2, 'samples': [],
+    report = {'format': 'siconnect.device-profile.v1', 'methodology_revision': 3, 'samples': [],
               'activity_mode_annotation': args.activity_mode, 'checkpoint_format': 'siconnect.device-profile-samples.v1',
               'limits': 'Observed interval, not battery-life evidence. Sequential sampling has overhead and is not atomic. Record other user/bot activity. Raw dumps, serial, credentials, notification content and hardware identity are never retained. Boot session hashes are salted per collection; do not compare them across files. Unknown/OEM-specific state fields stay null.'}
     with private_new_file(target) as output, private_new_file(checkpoint) as journal:

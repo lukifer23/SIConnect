@@ -1,0 +1,51 @@
+# Engineering pass 17 — real private app execution
+
+October 26, 2026. Installed Android **0.6.0-dev.11 / code 19**, SQLite **11**, **99 phone capabilities / 100 MCP tools** including gateway status. Existing retention and Maps/connection work remains in the working tree. See [the execution contract](private-app-execution.md) and [scope/gap review](build-plan.md).
+
+## Implemented
+
+Nine `headless.*` tools open/list/inspect/capture/click/type/scroll/close real installed apps on owned virtual displays, with a local-owner emergency cleanup operation. `commute.route_private` uses the same infrastructure for actual Maps current, departure and arrival route previews. No extra network server, app emulator, fabricated route, replacement execution engine or custom kernel is involved.
+
+The existing shell Binder creates real ImageReader surfaces, verifies own-focus/no-top-focus-stealing flags and reads only the owned display's application window. App/session ownership, exact package binding, password/protected-surface exclusion, fresh node references and bounded capture/scan/lifetime limits are enforced. Software keyboard policy is set to HIDE and read back before launch, preventing fallback keyboards on the physical display. An explicit private-touch option sets and reads back the owned display ID on each real input event, with no caller coordinates. Verified text entry can use a display-bound Tab key to commit number-picker edits. App data, account and network remain shared with the installed app.
+
+The owner can prohibit shared-screen actions per agent. Only BACKGROUND and ISOLATED_SCREEN remain eligible; arbitrary shell and unspecified modes are refused before standing grants. New private app allowances require real owner authentication and bind the selected agent/package/backend. Review captures that backend and refuses a changed selection. Installation grants no new scopes to existing agents. Automation descriptions distinguish native background, private-display and shared-screen work.
+
+Queued workspace calls have unique cancellation identities, bounded deadlines and atomic pre-dispatch admission. A dedicated cancellation RPC reports prevention only when work was still queued; the shell runner's broader cancellation acknowledgement is not reused. Backend dispatch carries the approved selection explicitly. Owner process death invalidates earlier queued generations and cleans up sessions. A kernel-owned file lock prevents two direct bootstrap paths from creating independent authorities. Failed resource release is retained for cleanup retry rather than reported as fully closed.
+
+Maps uses actual selection/focus/readback and bounded state waits. Already-selected tabs are not clicked. Number-picker entry uses a verified private node-center touch, semantic text and a private-display Tab commit. Only a confirmed stale rejection before input may rebind the same unique preview control, at most twice; uncertain inputs are never replayed. The parent recipe does not inherit a later step's no-side-effects assertion after earlier launch/query/edit work. The parser supports the actually observed compact range `Typically 6–9 min`, retaining its upper bound and rejecting ambiguous units/cards. Endpoint labels remain strictly matched; tests use the full place name observed in Maps, without relaxing destination binding.
+
+## Final evidence
+
+**206 host tests pass:** 74 core, 102 Android JVM, two embedded ADB, 13 Python and 15 gateway protocol cases. Debug, instrumentation and minified unsigned release APKs build. Release debug-isolation checks pass. Debug lint has **zero errors and 88 warnings**. Gateway typecheck and dry-run build pass. The new compact-range parser regression follows a real captured Maps hierarchy.
+
+The final combined physical batch passes **33 tests with no skips/failures** in 43.878 seconds: 24 foundation/regression cases and nine private-workspace cases. It uses the actual installed Samsung Calculator, Google Maps, Android display/window/input services, authenticated Binder, policy engine and SQLite.
+
+- Calculator enters `2 + 3`, observes result `5`, captures a real **20,993-byte JPEG**, performs a native battery read concurrently with the open workspace, and verifies unchanged built-in physical foreground/lock/power. Android removes the closed display.
+- Current Maps route: actual **300 seconds**, **1,931.2128 meters**, matched full destination label, workspace closed and display removed. Physical foreground/lock remain unchanged.
+- Tomorrow's **08:30 departure** and **09:15 arrival** in the device timezone are selected and verified from the real Maps controls/route labels. Observed range upper bounds are **540** and **600 seconds**. Both owned displays are removed and physical foreground/lock remain unchanged. These are observed previews, not universal travel-time guarantees.
+- Ownership, scope, protected surfaces, stale references, actual expiry/removal, durable narrow private allowances and shared-screen restriction pass. Even an otherwise broadly authorized test agent cannot launch on the shared screen or execute arbitrary shell when restricted.
+- Of **160 actual concurrent status requests**, **127** are canceled before dispatch. Every positive prevention acknowledgement corresponds to an actual WORKSPACE_CANCELLED/no-side-effects reply. No display, physical focus or power change occurs. An expired Binder open is rejected before creating a display or launching an app. Duplicate bootstrap attempts preserve one live daemon PID.
+
+An earlier three-case code-19 locked-phone batch passed actual locked refusal plus native battery work, expired admission and singleton checks. Subsequent UI acceptance ran awake/unlocked; that earlier batch is separate evidence, not added to the final 33 count. Owner biometric success/cancellation and the new management screens' full lifecycle/layout matrix were not simulated or newly accepted.
+
+## Failed investigations and corrected checks
+
+Initial always-unlocked/own-group attempts did not establish locked/off private UI. The Samsung display flag survived while the actual power group remained 0. A direct display-power request returned accepted, but private state returned to OFF. A diagnostic screen wake lock woke the physical panel while leaving keyguard locked; the original sleeping state was restored and that path removed. Production code requests neither screen power nor physical wake/unlock.
+
+Ordinary inspection of the shipped services/framework DEX explains the empty-name grouping path and absent client group-name override. REA/JADX were unavailable; existing SDK dexdump was used, with private artifact hashes/offsets retained outside the repository. The platform shell virtual-device route rejects a secure keyguard. Public VirtualDeviceManager needs a genuine companion association; OEM ComputerControl is disabled here and also requires applicable permissions, allowed-agent conditions and actual consent. No association, consent or result was fabricated, and no lock credential, OEM feature property or system-server code was changed.
+
+Real testing also exposed standalone shell KeyguardManager initialization requiring unavailable ApplicationSharedMemory. The backend now queries the actual trust Binder. Earlier queue tests caught shell cancellation's unconditional acknowledgement; the dedicated workspace cancellation RPC fixes that mismatch. A physical-focus test initially included an EXITING virtual display; it now identifies built-in physical displays from DisplayManager and separately waits for actual private display removal. Initial tests that skipped an unmet unlock precondition are not counted as acceptance.
+
+Maps checks exposed selected tabs, asynchronous dates/AM-PM state, widget edit/commit behavior, compact duration ranges, exact place-name mismatch in test inputs and a later stale-reference race. These failed runs remain private evidence. The final combined run passed after the corresponding fixes. External business mutations, arbitrary app compatibility and every interruption boundary remain separate work.
+
+## Installed runtime and preservation
+
+Code 19 is a compatible in-place development update. No main-app uninstall/data clear, credential rotation, gateway deployment, new original-agent scopes or production cleanup was used. A private before/after SQLite comparison preserves the original **five agents/grants/credential hashes, three reminders, two automations and one selected document root**. Only agent last-seen timestamps are excluded. Schema/integrity are 11/OK; retention remains disabled, with zero production request tombstones or compact workflow payloads.
+
+After removing the temporary test package and device probes, the existing bridge was restarted as the debug app UID for explicit Android user 0, without opening an Activity or changing service export/permissions. The initial direct shell start was correctly refused for the non-exported service; the first hosted attempt reported offline before any dispatch. After restoration, **eight fresh hosted MCP reads pass**: seven diagnostics/actual shell identity, then runtime/database verification. The catalog advertises **100 tools**; runtime is **code 19/dev.11, ONLINE, database OK, privileged available**, actual **UID 2000 / ADB_SERVICE**. One daemon and only the main SIConnect package remain. The temporary token configuration was removed; private checkpoints/artifacts stay outside the repository.
+
+## Remaining work
+
+Broad private UI while locked/off requires a legitimate platform backend and real provisioning/acceptance on this OEM build. Optional Shizuku private-display execution, wider app/widget compatibility, interrupted input/resource-release boundaries and private-workspace owner UI/authentication lifecycle remain open. Native background APIs continue to be the preferred locked-phone path.
+
+The larger roadmap still includes controlled network/captive/Doze/reboot recovery, provider/HTTP/Binder interruption acceptance, dedicated Calendar/SAF journeys, Fold/font/recreation review, quiet resource/database measurements and a long soak, plus owner-controlled release signing/distribution. The release artifact built here is unsigned; no battery, availability or production-release milestone is implied. See [next steps](next-steps.md).

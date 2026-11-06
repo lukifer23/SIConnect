@@ -10,6 +10,8 @@ import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import okhttp3.*
@@ -208,15 +210,38 @@ class ConnectionService: Service() {
         if(!graph.settings.gateway.value.enabled) {stopSelf(startId);return START_NOT_STICKY}
         startForeground(880,Notification.Builder(this,"connection").setSmallIcon(R.drawable.ic_stat).setContentTitle("SIConnect remote bridge")
             .setContentText("Owner-enabled authenticated gateway connection").setOngoing(true).build())
-        graph.gateway.start(); return START_STICKY
+        running=true;graph.gateway.start(); return START_STICKY
     }
-    override fun onDestroy() { graph.gateway.stop(); super.onDestroy() }
+    override fun onDestroy() { running=false;graph.gateway.stop(); super.onDestroy() }
     companion object {
-        /** Same idempotent Android service from Activity, system receiver or headless initialization. */
+        @Volatile private var running=false
+        private val assistanceLock=Mutex()
+        private val lastAssisted=java.util.concurrent.atomic.AtomicLong()
+        internal fun requestSavedStart(g:RuntimeGraph) {g.context.startForegroundService(Intent(g.context,ConnectionService::class.java))}
+        /** Restore only the already owner-enabled bridge. Privilege assistance is fixed to
+         * this app, ten seconds, current selected authority and existing advanced controls. */
         fun restoreOwnerEnabled(g:RuntimeGraph) {
-            if(!g.settings.gateway.value.enabled) return
+            if(!g.settings.gateway.value.enabled || running) return
             try {g.context.startForegroundService(Intent(g.context,ConnectionService::class.java))}
-            catch(e:RuntimeException) {g.gateway.backgroundStartBlocked(e.javaClass.simpleName)}
+            catch(e:RuntimeException) {
+                g.gateway.backgroundStartBlocked(e.javaClass.simpleName)
+                if(e !is ForegroundServiceStartNotAllowedException) return
+                g.scope.launch {assistanceLock.withLock {
+                    try {
+                        g.ready.await()
+                        if(!g.settings.gateway.value.enabled || running || !g.settings.controls.value.privilegedEnabled || !g.privileged.available()) return@withLock
+                        val now=android.os.SystemClock.elapsedRealtime();val previous=lastAssisted.get()
+                        if(previous!=0L && now-previous<30_000) return@withLock
+                        lastAssisted.set(now)
+                        val result=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="system.restore_bridge"),Origin.LOCAL_OWNER)
+                        if(result.state!=RequestState.SUCCEEDED) g.gateway.backgroundStartBlocked(result.errorCode ?: "BRIDGE_START_NOT_CONFIRMED")
+                    } catch(cancelled:CancellationException) {throw cancelled}
+                    catch(error:Exception) {
+                        g.events.emit(Event(System.currentTimeMillis(),eventType="gateway.background_start.assistance_failed",deviceId=g.settings.deviceId,
+                            errorCode=error.javaClass.simpleName,detail="Selected backend could not restore the existing bridge; owner recovery may be required"))
+                    }
+                }}
+            }
         }
     }
 }

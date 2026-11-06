@@ -1,6 +1,6 @@
 # Installation, updates and signing
 
-The current source and installed debug build are **0.6.0-dev.8 / versionCode 16 / SQLite 10**. See [pass 15](engineering-pass-15.md) for preservation checks and fresh live acceptance. Existing physical testing uses an in-place update of the same `dev.siconnect.app` installation and existing debug certificate. No replacement release signing key has been generated. There is not yet a validated public production-signed APK distribution channel.
+Current source and installed debug build: **0.6.0-dev.13 / versionCode 21 / SQLite 11**. The [November 6 review](source-audit-2026-11-06.md) verified the existing signer before an in-place update, then checked exact original owner records, SQLite integrity and hosted native/privileged execution. No replacement signing key was generated. The minified artifact remains unsigned; no public production-signed distribution channel has been validated. Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
 
 ## Preserve the existing installation
 
@@ -16,7 +16,7 @@ The workflow refuses incomplete signing configuration, builds/tests/lints, verif
 
 ## Database continuity
 
-Schema 9 added request tombstones; schema 10 adds a bounded health-alert ledger. Neither migration recreates the database. Physical upgrade checks confirmed SQLite integrity and preservation of the five original agent credential/grant hashes, three original reminders and original automation. The separately authorized disposable schedule was disabled after its test runs. Never downgrade an installed schema-10 database to a schema-9 APK or wipe data as recovery. Retain a compatible current APK and a private owner-controlled backup/recovery point. APK signature continuity and database integrity are separate checks.
+Schema 9 added request tombstones, schema 10 added a bounded health-alert ledger and schema 11 adds execution-retention/history projections. These migrations preserve existing tables and owner records. Retention remains disabled until locally chosen; legacy workflows receive a fresh retention interval. Never downgrade an installed schema-11 database to an older-schema APK or wipe data as recovery. Retain a compatible current APK and a private owner-controlled recovery point. APK signature continuity and database integrity are separate checks. See [pass 16](engineering-pass-16.md) for the current preservation checkpoint; older installation results below retain their historical versions.
 
 ## Pass 12 local signed-preview validation
 

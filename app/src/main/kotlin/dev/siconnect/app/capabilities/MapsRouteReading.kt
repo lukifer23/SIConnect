@@ -4,7 +4,9 @@ import dev.siconnect.core.CapabilityException
 import kotlinx.serialization.json.*
 
 /** Bounded visible labels, never text from an API or a guessed driving speed. */
-data class RouteLabel(val text:String,val description:String="",val top:Int=0,val bottom:Int=0)
+data class RouteLabel(val text:String,val description:String="",val top:Int=0,val bottom:Int=0,
+    val left:Int=0,val right:Int=0,val resourceId:String="",val clickable:Boolean=false,val focused:Boolean=false,
+    val nodeRef:String="",val snapshotId:String="",val windowId:Int=-1,val selected:Boolean=false)
 
 object MapsRouteReading {
     fun destinationMatches(expected:String,observed:String):Boolean {
@@ -25,7 +27,11 @@ object MapsRouteReading {
     /** Returns an upper bound for ranges so leave-by guidance does not use the optimistic endpoint. */
     fun durationRange(value:String):Pair<Long,Long>? {
         val parts=value.trim().removePrefix("Typically ").split(Regex("\\s*(?:–|—|\\bto\\b)\\s*"))
-        val parsed=parts.map {duration(it) ?: return null}
+        // Actual Maps renders compact single-unit ranges such as "Typically 6–9 min".
+        // Inherit only one explicit unit; a compound right side remains ambiguous.
+        val sharedUnit=if(parts.size==2 && parts[0].matches(Regex("[0-9]+")))
+            Regex("[0-9]+\\s*(hours?|hrs?|h|minutes?|mins?|m)",RegexOption.IGNORE_CASE).matchEntire(parts[1])?.groupValues?.get(1) else null
+        val parsed=parts.mapIndexed {index,part->duration(if(index==0 && sharedUnit!=null) "$part $sharedUnit" else part) ?: return null}
         return when(parsed.size) {1 -> parsed[0] to parsed[0];2 -> parsed[0].takeIf {it<=parsed[1]}?.let {it to parsed[1]};else -> null}
     }
 
@@ -49,7 +55,9 @@ object MapsRouteReading {
         val evidence=labels.flatMap {listOf(it.text,it.description)}.filter {it.isNotBlank() &&
             (it.startsWith("Best route ") && it.contains("traffic",true) || it.startsWith("Traffic ") ||
                 it.startsWith("Depart ") || it.startsWith("Arrive ") || it.startsWith("Leave "))}.distinct().take(12)
-        val timeSelection=labels.map {it.text}.firstOrNull {it.startsWith("Leave ") || it.startsWith("Depart ")}
+        fun selection(value:String)=value.startsWith("Leave ") || value.startsWith("Depart ") || value.startsWith("Arrive ") && !value.startsWith("Arrive on ")
+        val timeSelection=labels.firstOrNull {it.clickable && selection(it.description)}?.description?.substringBefore(", Some options")
+            ?: labels.map {it.text}.firstOrNull(::selection)
         return buildJsonObject {
             put("provider","GOOGLE_MAPS_SCREEN");put("travelMode","DRIVE")
             put("originLabel",origin.text.ifBlank {origin.description});put("destinationLabel",destination.text.ifBlank {destination.description})

@@ -60,6 +60,7 @@ fun registerCapabilities(g: RuntimeGraph) {
         integer("limit","Maximum recent metadata rows",min=1,max=50)
     }) {a,ctx -> JsonArray(g.requests.historyPage(limit=a.long("limit",20).toInt(),agentId=ctx.agentId).map {r->buildJsonObject {
         put("requestId",r.requestId);put("capabilityId",r.capabilityId);put("state",r.state.name);put("createdAtMs",r.createdAtMs);put("updatedAtMs",r.updatedAtMs)
+        put("payloadExpired",r.payloadExpired)
     }}) }
     op("requests.cancel", "Cancel your own request", objectSchema { string("requestId", "Request ID", true, maxLength=200) }, RiskClass.LOW_IMPACT) { a,ctx ->
         val record=g.requests.get(a.str("requestId")) ?: throw CapabilityException("NOT_FOUND", "Unknown request")
@@ -75,7 +76,7 @@ fun registerCapabilities(g: RuntimeGraph) {
         JsonArray(g.registry.statuses().map {status -> buildJsonObject {
             val d=status.descriptor
             put("id",d.id);put("title",d.title);put("backend",d.backend.name);put("availability",status.availability.name)
-            put("interaction",d.interaction.name);put("risk",d.risk.name)
+            put("interaction",d.interaction.name);put("risk",d.risk.name);put("ownerOnly",d.ownerOnly)
             put("scopeGranted",grant!=null && !grant.revoked && (grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true) && grant.scopes.any {PolicyEngine.globMatches(it,d.id)} && grant.denied.none {PolicyEngine.globMatches(it,d.id)})
             status.detail?.let {put("detail",it)}
         }})
@@ -108,6 +109,7 @@ fun registerCapabilities(g: RuntimeGraph) {
             put("charging",c.getSystemService(BatteryManager::class.java).isCharging)
             put("gatewayState",g.gateway.state.value.name);put("privilegedBackend",g.privileged.kind.name)
             put("privilegedAvailable",g.privileged.available())
+            put("gatewayBackgroundStartAssistEvents",g.db.readableDatabase.rawQuery("SELECT count(*) FROM events WHERE event_type='gateway.background_start.assisted'",null).use {it.moveToFirst();it.getLong(0)})
             put("gatewayConnectEvents",g.db.readableDatabase.rawQuery("SELECT count(*) FROM events WHERE event_type='gateway.connected'",null).use {it.moveToFirst();it.getLong(0)})
         }
     }
@@ -132,7 +134,7 @@ fun registerCapabilities(g: RuntimeGraph) {
         val p = (if (Build.VERSION.SDK_INT >= 33) c.packageManager.getPackageInfo(a.str("package"), PackageManager.PackageInfoFlags.of(0)) else c.packageManager.getPackageInfo(a.str("package"), 0))
         buildJsonObject { put("packageName", p.packageName); put("versionName", p.versionName); put("versionCode", p.longVersionCode); put("enabled", p.applicationInfo?.enabled) }
     }
-    op("apps.launch", "Launch package", objectSchema { string("package", "Package name", true, maxLength=200); string("leaseId", "Optional owned UI lease", maxLength=100) }, RiskClass.LOW_IMPACT) { a, ctx ->
+    op("apps.launch", "Launch package on the shared screen", objectSchema { string("package", "Package name", true, maxLength=200); string("leaseId", "Optional owned UI lease", maxLength=100) }, RiskClass.LOW_IMPACT) { a, ctx ->
         val i = c.packageManager.getLaunchIntentForPackage(a.str("package")) ?: throw CapabilityException("NO_LAUNCH_INTENT", "Package has no launch activity")
         g.ui.withScreen(ctx,a.str("package"),(a["leaseId"] as? JsonPrimitive)?.content) {
             c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); buildJsonObject { put("dispatched", true);put("verifiedForeground",false) }

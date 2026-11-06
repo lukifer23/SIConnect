@@ -25,8 +25,12 @@ class SchedulerDeviceTest {
     }
     @Test fun actualDeferrableRecurringSlotExecutesOnceAndAdvances()=runBlocking {
         val id="scheduler-fixture-${UUID.randomUUID()}";val slot=System.currentTimeMillis()+2000
+        val skillId="scheduler.native.${UUID.randomUUID()}"
+        val definition=SkillDefinition(skillId,1,"Disposable native scheduler acceptance",steps=listOf(
+            SkillStep("status","device.status"),SkillStep("battery","device.battery"),SkillStep("memory","device.memory")))
         try {
-            g.scheduler.put(Automation(id,"diagnostics.snapshot",slot,recurrence=Recurrence(RecurrenceKind.DAILY,"08:00"),zoneId="UTC"))
+            g.skills.install(definition)
+            g.scheduler.put(Automation(id,skillId,slot,recurrence=Recurrence(RecurrenceKind.DAILY,"08:00"),zoneId="UTC"))
             withTimeout(90_000) {while(g.scheduler.get(id)?.lastState!="SUCCEEDED") delay(200)}
             val run=Scheduler.runId(id,slot);val child=requireNotNull(g.requests.get("$run:status"))
             Assert.assertEquals(AutomationRunState.SUCCEEDED,g.scheduler.fire(id,slot))
@@ -34,7 +38,7 @@ class SchedulerDeviceTest {
             Assert.assertEquals(1,g.scheduler.runs(id).size)
             Assert.assertTrue(g.scheduler.get(id)!!.nextAtMs>slot)
             Assert.assertNotNull(g.scheduler.runs(id).single().finishedAt)
-        } finally {cleanup(id)}
+        } finally {cleanup(id);g.skills.remove(skillId)}
     }
     @Test fun ownedSlotWithoutSkillRunRecoversAndConfigChangeDoesNotStrandIt()=runBlocking {
         val id="scheduler-fixture-${UUID.randomUUID()}";val slot=System.currentTimeMillis()-1000

@@ -11,8 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.siconnect.app.graph
 import dev.siconnect.app.backend.DeviceLocation
-import dev.siconnect.app.capabilities.CommuteRouter
-import dev.siconnect.core.ExecutionContext
+import dev.siconnect.core.*
 import dev.siconnect.app.data.CommuteProfile
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -66,14 +65,30 @@ import kotlinx.serialization.json.*
     if(!locationPermitted) OutlinedButton(enabled=!busy,onClick={requestNativeAccess(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION))}) {Text("Allow current location")}
     Text(if(locationPermitted) "Android location access allowed; foreground access only." else "Allow location for the phone's current starting point. Agents can also supply explicit origin coordinates.",style=MaterialTheme.typography.bodySmall)
     Text("Commute calculation opens Maps and reads its visible route using SIConnect accessibility or the selected bundled/Shizuku service. No routing API key is needed. The phone must be unlocked.",style=MaterialTheme.typography.bodySmall)
-    Button(enabled=!busy && destination.isNotBlank(),onClick={runAction {
-        val value=profile()
-        withContext(Dispatchers.IO) {g.settings.commute=value}
-        route=null
-        val id="owner-commute-"+java.util.UUID.randomUUID().toString()
-        route=CommuteRouter(g).calculate(buildJsonObject {put("destination",value.destination)},ExecutionContext(id,id,"local-owner",g.settings.deviceId))
-        status="Maps route read. No navigation, alarms or reminders started."
-    }}) {Text(if(busy) "Reading Maps…" else "Calculate with Maps")}
+    Button(enabled=!busy && destination.isNotBlank(),onClick={
+        // Freeze the form before authenticating. The engine owns dispatch and the durable
+        // outcome even when Maps backgrounds this screen or the Activity is recreated.
+        val value=runCatching {profile()}.getOrElse {status=it.message ?: "Check commute preferences";return@Button}
+        ownerAuthentication.authenticate("Open and read Maps route",{runAction {
+            route=null
+            val result=withContext(Dispatchers.IO) {
+                g.ready.await()
+                g.settings.commute=value
+                val request=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="commute.route",
+                    arguments=buildJsonObject {
+                        put("destination",value.destination);put("timezone",value.timezone)
+                        if(value.destinationLabel.isNotBlank()) put("expectedDestinationLabel",value.destinationLabel)
+                    }),Origin.LOCAL_OWNER)
+                if(request.state==RequestState.AWAITING_APPROVAL)
+                    g.approveFromOwner(request.requestId,request.argsHash) else request
+            }
+            check(result.state==RequestState.SUCCEEDED) {
+                "${result.errorMessage ?: result.state.name}. Request ${result.requestId} is retained in Activity; inspect it before retrying."
+            }
+            route=result.result?.output as? JsonObject
+            status="Maps route read. Request ${result.requestId} is saved in Activity. No navigation, alarms or reminders started."
+        }},{status=it})
+    }) {Text(if(busy) "Reading Maps…" else "Calculate with Maps")}
     route?.let {r ->
         Text("${r["durationMinutes"]?.jsonPrimitive?.content} min · ${r["distanceMeters"]?.jsonPrimitive?.double?.div(1000.0)} km · Maps")
         Text(r["trafficStatus"]?.jsonPrimitive?.content.orEmpty(),style=MaterialTheme.typography.bodySmall)
@@ -97,7 +112,12 @@ import kotlinx.serialization.json.*
     OutlinedTextField(latitude,{latitude=it},label={Text("Latitude")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!busy)
     OutlinedTextField(longitude,{longitude=it},label={Text("Longitude")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!busy)
     OutlinedButton(enabled=!busy && locationPermitted,onClick={runAction {
-        val fix=DeviceLocation(this@CommuteSettings).current()
+        val result=withContext(Dispatchers.IO) {
+            g.ready.await()
+            g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="location.current"),Origin.LOCAL_OWNER)
+        }
+        check(result.state==RequestState.SUCCEEDED) {result.errorMessage ?: "Current location could not be read"}
+        val fix=requireNotNull(result.result?.output as? JsonObject) {"Location result is unavailable"}
         latitude=fix.getValue("latitude").jsonPrimitive.content;longitude=fix.getValue("longitude").jsonPrimitive.content
         status="Current location filled; accuracy ${fix["accuracyMeters"]?.jsonPrimitive?.content} m. Save to use it as your forecast point."
     }}) {Text("Use current location for forecast")}

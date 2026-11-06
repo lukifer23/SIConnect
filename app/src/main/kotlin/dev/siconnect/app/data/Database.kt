@@ -127,9 +127,30 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE TABLE health_alert_state (agent_id TEXT NOT NULL, policy_id TEXT NOT NULL, updated_at INTEGER NOT NULL, active INTEGER NOT NULL, json TEXT NOT NULL, PRIMARY KEY(agent_id,policy_id))")
             db.execSQL("CREATE INDEX health_alert_retention ON health_alert_state(active,updated_at)")
         }
+        if (old < 11) {
+            db.execSQL("ALTER TABLE request_tombstones ADD COLUMN capability_id TEXT")
+            db.execSQL("ALTER TABLE request_tombstones ADD COLUMN state TEXT")
+            db.execSQL("ALTER TABLE request_tombstones ADD COLUMN created_at INTEGER")
+            db.rawQuery("SELECT request_id FROM request_tombstones",null).mapAll {it.getString(0)}.forEach {id->
+                val r=AppJson.decodeFromString(RequestRecord.serializer(),requireNotNull(db.storedJson("request_tombstones","request_id",id)))
+                db.update("request_tombstones",ContentValues().apply {
+                    put("capability_id",r.capabilityId);put("state",r.state.name);put("created_at",r.createdAtMs)
+                    put("json",AppJson.encodeToString(RequestRecord.serializer(),r.copy(payloadExpired=true)))
+                },"request_id=?",arrayOf(id))
+            }
+            db.execSQL("CREATE INDEX tombstones_history ON request_tombstones(updated_at DESC,request_id DESC)")
+            db.execSQL("ALTER TABLE skill_runs ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE skill_runs ADD COLUMN payload_expired INTEGER NOT NULL DEFAULT 0")
+            // Legacy runs receive a fresh retention interval; upgrades never expire old data immediately.
+            db.execSQL("UPDATE skill_runs SET updated_at=?", arrayOf(System.currentTimeMillis()))
+            db.execSQL("CREATE INDEX skill_runs_retention ON skill_runs(payload_expired,state,updated_at,run_id)")
+            db.execSQL("ALTER TABLE automation_runs ADD COLUMN payload_expired INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("CREATE INDEX automation_runs_retention ON automation_runs(payload_expired,finished_at,run_id)")
+            db.execSQL("CREATE INDEX notification_dedup_request ON notification_dedup(request_id)")
+        }
     }
 
-    companion object { const val VERSION = 10 }
+    companion object { const val VERSION = 11 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
@@ -137,7 +158,7 @@ inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
 }
 
 /** Small history projection: listing activity never decodes potentially large shell output. */
-data class RequestSummary(val requestId:String,val agentId:String,val capabilityId:String,val state:RequestState,val createdAtMs:Long,val updatedAtMs:Long)
+data class RequestSummary(val requestId:String,val agentId:String,val capabilityId:String,val state:RequestState,val createdAtMs:Long,val updatedAtMs:Long,val payloadExpired:Boolean=false)
 
 class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     override fun <T> atomic(block:()->T):T {
@@ -177,7 +198,8 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     }
 
     override fun get(requestId: String): RequestRecord? =
-        query("request_id = ?", arrayOf(requestId)).firstOrNull() ?: tombstone("request_id=?",arrayOf(requestId))
+        db.readableDatabase.storedJson("requests", "request_id", requestId)?.let(::decode)
+            ?: tombstone("request_id=?",arrayOf(requestId))
 
     override fun findByIdempotencyKey(agentId: String, key: String): RequestRecord? =
         query("agent_id = ? AND idempotency_key = ?", arrayOf(agentId, key)).firstOrNull() ?: tombstone("agent_id=? AND idempotency_key=?",arrayOf(agentId,key))
@@ -188,8 +210,8 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
 
     fun recent(limit: Int, states: Set<RequestState>? = null): List<RequestRecord> {
         val where = states?.let { s -> "state IN (${s.joinToString(",") { "?" }})" }
-        return db.readableDatabase.query("requests", arrayOf("json"), where, states?.map { it.name }?.toTypedArray(),
-            null, null, "updated_at DESC", limit.toString()).mapAll { decode(it.getString(0)) }
+        return db.readableDatabase.query("requests", arrayOf("request_id"), where, states?.map { it.name }?.toTypedArray(),
+            null, null, "updated_at DESC", limit.coerceIn(1,500).toString()).mapAll { it.getString(0) }.mapNotNull(::get)
     }
 
     fun recentSummaries(limit:Int=100):List<RequestSummary> = historyPage(limit=limit)
@@ -209,48 +231,63 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
             where+="state IN (${it.joinToString(",") { "?" }})";args+=it.map {state->state.name}
         }
         val direction=if(newest) "DESC" else "ASC"
-        return db.readableDatabase.query("requests",arrayOf("request_id","agent_id","capability_id","state","created_at","updated_at"),
-            where.takeIf {it.isNotEmpty()}?.joinToString(" AND "),args.toTypedArray(),null,null,"updated_at $direction,request_id $direction",limit.coerceIn(1,500).toString())
-            .mapAll {RequestSummary(it.getString(0),it.getString(1),it.getString(2),RequestState.valueOf(it.getString(3)),it.getLong(4),it.getLong(5))}
+        val fields="request_id,agent_id,capability_id,state,created_at,updated_at"
+        val selection=where.takeIf {it.isNotEmpty()}?.joinToString(" AND ")?.let {"WHERE $it"}.orEmpty()
+        return db.readableDatabase.rawQuery("""SELECT * FROM (
+            SELECT $fields,0 AS payload_expired FROM requests
+            UNION ALL SELECT $fields,1 AS payload_expired FROM request_tombstones
+            ) $selection ORDER BY updated_at $direction,request_id $direction LIMIT ?""",
+            (args+limit.coerceIn(1,500).toString()).toTypedArray())
+            .mapAll {RequestSummary(it.getString(0),it.getString(1),it.getString(2),RequestState.valueOf(it.getString(3)),it.getLong(4),it.getLong(5),it.getInt(6)==1)}
     }
 
-    fun recentDeniedApps():List<RequestRecord> = db.readableDatabase.query("requests",arrayOf("json"),"state = ? AND capability_id LIKE ?",
-        arrayOf(RequestState.DENIED.name,"apps.%"),null,null,"updated_at DESC","10").mapAll {decode(it.getString(0))}
+    fun recentDeniedApps():List<RequestRecord> = db.readableDatabase.query("requests",arrayOf("request_id"),"state = ? AND capability_id LIKE ?",
+        arrayOf(RequestState.DENIED.name,"apps.%"),null,null,"updated_at DESC","10").mapAll {it.getString(0)}.mapNotNull(::get)
 
     /** Bounded payload retention. Active links keep full records; terminal links resolve to compact
      * outcome/idempotency tombstones, never an apparently missing execution eligible for replay.
      * This maintenance API is not automatically enabled by a schema upgrade. */
-    fun prune(olderThanMs: Long): Int = atomic {
+    fun prune(olderThanMs: Long, limit: Int = 25): Int = atomic {
         val w=db.writableDatabase
         val terminal = RequestState.TERMINAL.joinToString(",") { "'${it.name}'" }
-        val records=w.rawQuery("""SELECT r.json FROM requests r WHERE r.updated_at < ? AND r.state IN ($terminal) AND r.state!='UNKNOWN_OUTCOME'
-            AND r.parent_request_id IS NULL
+        val ids=w.rawQuery("""SELECT r.request_id FROM requests r WHERE r.updated_at < ? AND r.state IN ($terminal) AND r.state!='UNKNOWN_OUTCOME'
+            AND (r.parent_request_id IS NULL
+                OR EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id=r.parent_request_id AND s.payload_expired=1)
+                OR EXISTS (SELECT 1 FROM request_tombstones p WHERE p.request_id=r.parent_request_id))
             AND NOT EXISTS (SELECT 1 FROM requests child WHERE child.parent_request_id=r.request_id)
+            AND NOT EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id=r.request_id AND s.payload_expired=0)
             AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.request_id=r.request_id AND p.state IN ('ACCEPTED','EXECUTING'))
-            ORDER BY r.updated_at,r.request_id LIMIT 100""",arrayOf(olderThanMs.toString())).mapAll {decode(it.getString(0))}
-        for(r in records) {
+            AND NOT EXISTS (SELECT 1 FROM reminders m WHERE 'reminder:' || m.reminder_id=r.request_id
+                AND m.state NOT IN ('SUCCEEDED','FAILED','CANCELLED','DENIED','EXPIRED','MISSED'))
+            ORDER BY r.updated_at,r.request_id LIMIT ?""",arrayOf(olderThanMs.toString(),limit.coerceIn(1,100).toString()))
+            .mapAll {it.getString(0)}
+        var changed=0
+        for(id in ids) {
+            val r=w.storedJson("requests","request_id",id)?.let(::decode) ?: continue
             val compact=r.copy(arguments=kotlinx.serialization.json.JsonObject(emptyMap()),policy=null,assessment=null,
-                approvedBy=null,result=null,errorCode="RESULT_EXPIRED",
-                errorMessage="Execution payload expired under retention. Original outcome and idempotency identity are retained; do not resubmit this action.")
+                approvedBy=null,result=null,payloadExpired=true,errorCode=r.errorCode ?: "RESULT_EXPIRED",
+                errorMessage=r.errorMessage ?: "Execution payload expired under retention. Original outcome and idempotency identity are retained; do not resubmit this action.")
             w.insertOrThrow("request_tombstones",null,ContentValues().apply {
                 put("request_id",r.requestId);put("agent_id",r.agentId);put("idempotency_key",r.idempotencyKey)
+                put("capability_id",r.capabilityId);put("state",r.state.name);put("created_at",r.createdAtMs)
                 put("updated_at",r.updatedAtMs);put("json",AppJson.encodeToString(RequestRecord.serializer(),compact))
             })
             w.delete("requests","request_id=?",arrayOf(r.requestId))
             w.delete("request_transitions","request_id=?",arrayOf(r.requestId))
+            changed++
         }
-        // Keep compact tombstones for at least one year and while Inbox still references them.
-        // Referenced metadata survives without retaining private command/result payloads forever.
-        w.delete("request_tombstones","updated_at < ? AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.request_id=request_tombstones.request_id)",
-            arrayOf((minOf(olderThanMs,System.currentTimeMillis()-365L*86_400_000)).toString()))
-        records.size
+        // Compact identities and one-time notification claims have no replay-safe expiry.
+        // Never age them out: a late retry must still resolve to its original outcome.
+        changed
     }
 
     private fun tombstone(where:String,args:Array<String>):RequestRecord? =
-        db.readableDatabase.query("request_tombstones",arrayOf("json"),where,args,null,null,null,"1").mapAll {decode(it.getString(0))}.firstOrNull()
+        db.readableDatabase.query("request_tombstones",arrayOf("request_id"),where,args,null,null,null,"1")
+            .mapAll {it.getString(0)}.firstOrNull()?.let {db.readableDatabase.storedJson("request_tombstones","request_id",it)?.let(::decode)}
 
     private fun query(where: String, args: Array<String>) =
-        db.readableDatabase.query("requests", arrayOf("json"), where, args, null, null, null).mapAll { decode(it.getString(0)) }
+        db.readableDatabase.query("requests", arrayOf("request_id"), where, args, null, null, null)
+            .mapAll {it.getString(0)}.mapNotNull(::get)
 
     private fun decode(s: String) = AppJson.decodeFromString(RequestRecord.serializer(), s)
 

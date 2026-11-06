@@ -1,5 +1,9 @@
 # Permissions and owner control
 
+## Current owner-action behavior — November 6, 2026
+
+The Maps calculation in Commute settings now freezes the reviewed destination/timezone, requires Android owner authentication, and submits `commute.route` through the common engine. Activity retains its request ID and outcome even if Maps backgrounds the screen. Current-location lookup also uses engine policy and the existing Android consent. Cancelled authentication dispatches no route action. New grants are not added. A real code-21 Android UI test verifies cancellation and Activity recreation while authentication is open, with no saved-profile change or admitted route request. Biometric-success route execution remains pending. See [the audit](source-audit-2026-11-06.md).
+
 ## Pass 11 access controls
 
 Settings shows Android authorization separately from service connection. A granted but disconnected notification listener offers Reconnect; it does not ask for the same permission again. Returning from Android Settings refreshes access and clears stale request messages. Permanently denied runtime access opens Android app permissions. The optional native permission action covers calendar/notifications; broad local-network access is requested only in advanced local discovery.
@@ -73,6 +77,14 @@ On Home, open **Review Action Inbox**, select a proposal, review the exact actio
 
 In Agents → Automatic screen actions, **Choose installed app** searches current-user PackageManager metadata and displays exact package/version and any standing allowance. Selecting a row does not grant access. **Allow clicks and text in this app** still requires owner authentication and the UI family scope. Protected owner/permission/biometric surfaces remain excluded. Manual package entry is an advanced fallback. A saved standing allowance does not prove accessibility is connected or that Android exposes every app control.
 
+
+## Owner-only maintenance
+
+Code 20 explicitly marks owner-only capabilities in the common policy engine. Both the local-owner principal and trusted local-owner origin are required; wildcard scopes, standing grants or a scheduled/remote origin do not substitute. This covers private emergency cleanup and saved-bridge startup assistance. Agent permission lists omit owner-only operations. Bridge assistance uses existing advanced control and the selected backend for a fixed ten-second own-package allowance, without enabling a paused gateway or persisting a battery exemption. No original remote agent receives new grants.
+
+## Private workspaces and shared-screen restriction
+
+Code 19 adds a separate Private app workspaces family and owner-authenticated per-app allowances bound to the selected privileged backend. No existing agent receives new scopes automatically. Disabling Allow shared-screen actions limits the agent to declared native background and private-display operations; it also blocks arbitrary shell despite broad shell permission. Re-enabling shared-screen access requires owner authentication. Permission reduction and emergency cleanup stay available immediately. Actual app UI requires an awake, unlocked phone; private display isolation does not create a separate app account or storage profile. See [the complete contract](private-app-execution.md).
 
 ## Android 17 local discovery
 

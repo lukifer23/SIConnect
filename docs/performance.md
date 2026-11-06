@@ -1,8 +1,16 @@
 # Performance and resource evidence
 
+## November 6 host review
+
+Code 21 uses the existing bounded process supervisor for private app launches, avoiding wait-before-drain pipe stalls and unbounded `readText()` allocation. This is a source-level resource fix, not a measured phone speedup. No matched quiet CPU/memory/network profile or battery study was collected in this pass. Disposable SQLite fixtures exercised real growth/compaction; they are not a production workload measurement. Lint/build checks and remaining scaling concerns are recorded in [the audit](source-audit-2026-11-06.md). Full reminder/automation hydration and permanent identity growth remain targets for measured work. All device observations below are historical; no old collector is assumed to still be running.
+
+## Pass 18 background observation
+
+Code 20 recorded 301.074 seconds and 11 samples with continuous process/start/boot/version identity: app CPU 0.41 seconds over 299.955 valid seconds (0.1367% of one core), daemon 0.00 seconds at 100-Hz counter resolution, PSS 56,166–60,373 KiB. Foreground-service importance (125) and keyguard showing were observed throughout. This was an operator-annotated background development interval, with ADB observation and no issued app test jobs, not a matched comparison, battery study or long soak. The old power-dump bound truncated this OEM dump; unknown fields remain unknown. Methodology revision 3 raises only that bound to 256 KiB and records probe bounds. See [pass 18](engineering-pass-18.md).
+
 ## Pass 12 development observations
 
-Current debug APK: 45,297,886 bytes; unsigned minified release: 4,814,882; locally signed minified preview: 4,860,033. Build configuration differs from previous checkpoints, so size differences alone are not a performance improvement claim.
+At pass 12, the debug APK was 45,297,886 bytes; unsigned minified release: 4,814,882; locally signed minified preview: 4,860,033. Build configuration differs from previous checkpoints, so size differences alone are not a performance improvement claim.
 
 Three scheduled native scans completed in 132, 156 and 63 ms. Their start delays relative to saved slots were 26 ms, 38,634 ms and 7 ms. Only the first was verified screen-off/locked. Android deferrable dispatch timing is not guaranteed.
 
@@ -18,7 +26,7 @@ Pass-9 agent-use observation: 61.011 seconds/five samples, app CPU 0.42 seconds 
 
 ## October 21, 2026 checkpoint
 
-Pass 8 development sample: 61.423 seconds, five observations; app CPU 0.45 s / 60.347 valid seconds (0.7457% of one core), daemon 0.02 s / 60.382 s (0.0331%); app PSS 65,864–88,913 KiB and RSS 200,528–222,124 KiB. Hosted calls overlapped collection. This is not idle/battery evidence or a controlled before/after comparison. Existing sparse collection remains running and unfinished; see [pass 8](engineering-pass-8.md).
+Pass 8 development sample: 61.423 seconds, five observations; app CPU 0.45 s / 60.347 valid seconds (0.7457% of one core), daemon 0.02 s / 60.382 s (0.0331%); app PSS 65,864–88,913 KiB and RSS 200,528–222,124 KiB. Hosted calls overlapped collection. This is not idle/battery evidence or a controlled before/after comparison. At that checkpoint, sparse collection was still running and unfinished; see [pass 8](engineering-pass-8.md).
 
 Measurements below are short development observations on the actual Fold. They are not a battery-life study or a guarantee of continuous Android background execution.
 
@@ -83,7 +91,7 @@ One 61.161-second collection was annotated `owner-use`; five actual samples repo
 
 `profile_device.py` retains report-v1 compatibility with methodology revision 2. It now records bounded probe diagnostics, exact version code, process importance/RSS, available power/keyguard flags and salted boot-session brackets. CPU summaries validate every adjacent interval across PID/start/boot/version/counter and host clock/sleep continuity. Flushed JSONL checkpoints survive interruption; interrupted/failed/complete collection states are explicit. Six added parser/counter tests and four existing Python tests pass.
 
-The existing 24-hour sparse collector remains running. At the current checkpoint seven 15-minute samples contained fifteen successful read-only calls and six `DEVICE_OFFLINE` results during active upgrade/instrumentation work. This approximately 90-minute, development-contaminated span is not a completed 24-hour soak or a daily-driver availability estimate. Outputs were preserved and not restarted.
+At pass 6, the 24-hour sparse collector was still running. At that checkpoint seven 15-minute samples contained fifteen successful read-only calls and six `DEVICE_OFFLINE` results during active upgrade/instrumentation work. This approximately 90-minute, development-contaminated span is not a completed 24-hour soak or a daily-driver availability estimate. Outputs were preserved and not restarted.
 
 Overview metadata refresh is event-driven and unsubscribes while the owner screen is not collecting it. Semantic waits use accessibility events rather than persistent tree polling. No before/after resource improvement or agent-token saving is claimed without matched measurements.
 

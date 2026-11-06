@@ -41,7 +41,8 @@ internal class ReminderLifecycle(
     }
     private fun requireDelivery(r:Reminder,record:RequestRecord) {
         if(record.agentId!="local-automation" || record.capabilityId!="notifications.post" ||
-            record.origin!=Origin.LOCAL_AUTOMATION.name || record.arguments!=arguments(r))
+            record.origin!=Origin.LOCAL_AUTOMATION.name ||
+            record.argsHash!=Canonical.actionHash(record.capabilityId,record.capabilityVersion,arguments(r)))
             throw CapabilityException("DELIVERY_REQUEST_CONFLICT","Original request identity belongs to another operation; inspect it before retrying",noSideEffects=true)
     }
     private fun project(r:Reminder,record:RequestRecord):Reminder =

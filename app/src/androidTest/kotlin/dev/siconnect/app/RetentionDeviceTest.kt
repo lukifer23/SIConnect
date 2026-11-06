@@ -58,6 +58,7 @@ class RetentionDeviceTest {
         try {
             SIConnectDb(context,name).use {helper->
                 helper.writableDatabase.apply {
+                    removeExecutionRetentionSchema()
                     execSQL("INSERT INTO agents VALUES('fixture','fixture',1,NULL,'preserved')")
                     execSQL("DROP TABLE health_alert_state");execSQL("DROP TABLE request_tombstones");execSQL("DROP INDEX requests_parent");version=8
                 }

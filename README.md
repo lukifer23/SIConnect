@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Current checkpoint: Android 0.6.0-dev.8 (versionCode 16), SQLite schema 10, 89 phone capabilities plus one gateway connection-status tool.** The commute flow uses actual Google Maps screen control and visible route estimates, without a routing API key. Owner settings separate destination/timing preferences from the weather point; native location requires Android consent. See [pass 15](docs/engineering-pass-15.md), [project status](docs/project-status.md), and the [source audit](docs/source-audit-2026-10-26.md) for evidence and remaining gaps. Existing connections and data are preserved; release signing and broad device acceptance remain open.
+> **Current source: Android 0.6.0-dev.13 (versionCode 21), SQLite schema 11, 100 phone capabilities plus one gateway status tool.** The November 6 review fixes queued cancellation/revocation, workflow deadlines, owner commute dispatch, startup error presentation and private-launch process handling. Code 21 is installed in place with the compatible development signer. Focused physical tests cover storage, native execution, Calculator/Maps private displays and process-death recovery; original owner records are preserved. See [the current review and plan](docs/source-audit-2026-11-06.md), [project status](docs/project-status.md), [private execution](docs/private-app-execution.md) and historical [pass 18](docs/engineering-pass-18.md).
 
 The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
 
@@ -74,6 +74,12 @@ Device setup, gateway deployment and agent pairing are covered in [docs/developm
 
 ## Documentation
 
+- [November 6 project review, implemented fixes and verification](docs/source-audit-2026-11-06.md)
+- [Current scope, completed foundation, gaps and build order](docs/build-plan.md)
+- [Private app execution, owner controls and platform limits](docs/private-app-execution.md)
+- [Pass 18: caller lifetime, locked background recovery and resource evidence](docs/engineering-pass-18.md)
+- [Pass 17: private displays and current acceptance](docs/engineering-pass-17.md)
+- [Pass 16: opt-in retention, replay protection and large-record reads](docs/engineering-pass-16.md)
 - [Pass 14: optimized single-app installation, live Grok results and performance fixes](docs/engineering-pass-14.md)
 - [Pass 13 device checkpoint, blockers and cleanup handoff](docs/engineering-pass-13.md)
 - [Repository hygiene, shutdown and rebuild](docs/repository-hygiene.md)

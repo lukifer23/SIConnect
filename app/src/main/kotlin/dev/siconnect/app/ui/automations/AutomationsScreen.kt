@@ -269,7 +269,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         if(inspectedRunId==run.runId) {
                             val execution=inspectedRun
                             if(execution!=null) {
-                                Text("${execution.cursor} of ${execution.definition.steps.size} steps recorded",style=MaterialTheme.typography.bodySmall)
+                                Text(if(execution.payloadExpired) "Result payload expired · original outcome retained" else "${execution.cursor} of ${execution.definition.steps.size} steps recorded",style=MaterialTheme.typography.bodySmall)
                                 Text("Started: ${formatTime(execution.startedAtMs,selected.zoneId,locale)}",style=MaterialTheme.typography.bodySmall)
                                 Text("Dispatch delay: ${((execution.startedAtMs-run.slotAt).coerceAtLeast(0))/1000} seconds",style=MaterialTheme.typography.bodySmall)
                                 if(execution.state==SkillState.AWAITING_APPROVAL) Text("Waiting for owner review. Open pending approvals; this workflow is not complete.")

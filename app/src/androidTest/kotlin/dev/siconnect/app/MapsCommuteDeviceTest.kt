@@ -17,6 +17,38 @@ import java.util.UUID
  * This direct implementation check is not evidence of any remote client's scope grant.
  */
 class MapsCommuteDeviceTest {
+    private suspend fun graph():RuntimeGraph {
+        org.junit.Assume.assumeTrue("Explicit opt-in physical check",InstrumentationRegistry.getArguments().getString("class").orEmpty().contains("MapsCommuteDeviceTest"))
+        val g=InstrumentationRegistry.getInstrumentation().targetContext.graph
+        g.ready.await()
+        withTimeout(25_000) {while(!g.privileged.available() && dev.siconnect.app.accessibility.SemanticAccessibilityService.instance==null) delay(150)}
+        return g
+    }
+    private suspend fun controls(arrive:Boolean) {
+        val g=graph()
+        val privateInput=InstrumentationRegistry.getArguments().getString("mapsTestInput")
+        org.junit.Assume.assumeTrue("Supply a private destination for the physical UI check",privateInput!=null)
+        val input=Json.parseToJsonElement(requireNotNull(privateInput)).jsonObject
+        val zone=ZoneId.systemDefault()
+        val target=LocalDate.now(zone).plusDays(1).atTime(if(arrive) 7 else 6,if(arrive) 50 else 45).atZone(zone).toInstant().toEpochMilli()
+        val id="maps-controls-"+UUID.randomUUID()
+        val result=CommuteRouter(g).calculate(buildJsonObject {
+            put("destination",input.getValue("destination"));put("expectedDestinationLabel",input.getValue("expectedDestinationLabel"))
+            put(if(arrive) "arrivalAtMs" else "departureAtMs",target);put("timezone",zone.id)
+        },ExecutionContext(id,id,"local-owner",g.settings.deviceId))
+        assertEquals("EXPECTED_LABEL_MATCHED",result.getValue("destinationBinding").jsonPrimitive.content)
+        assertTrue(result.getValue(if(arrive) "forecastArrivalTimeVerified" else "forecastDepartureTimeVerified").jsonPrimitive.boolean)
+        assertTrue(result.getValue("durationSeconds").jsonPrimitive.long>0)
+        assertTrue(result.getValue("screenCaptures").jsonPrimitive.int>0)
+        InstrumentationRegistry.getInstrumentation().sendStatus(0,android.os.Bundle().apply {
+            putString("mapsAutomation",buildJsonObject {
+                put("mode",if(arrive) "ARRIVE" else "DEPART");put("durationSeconds",result.getValue("durationSeconds"))
+                put("elapsedMs",result.getValue("automationElapsedMs"));put("captures",result.getValue("screenCaptures"))
+            }.toString())
+        })
+    }
+    @Test fun setsRealFutureDeparture()=runBlocking {controls(false)}
+    @Test fun setsRealFutureArrival()=runBlocking {controls(true)}
     @Test fun readsRealPreparedMorningRoute()=runBlocking {
         org.junit.Assume.assumeTrue("Opt in by selecting this physical test class explicitly",InstrumentationRegistry.getArguments().getString("class").orEmpty().contains("MapsCommuteDeviceTest"))
         val g=InstrumentationRegistry.getInstrumentation().targetContext.graph

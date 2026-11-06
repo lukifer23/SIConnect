@@ -14,7 +14,7 @@ import dev.siconnect.core.*
 
 @Composable fun AgentsScreen(state:ControlCenterSnapshot,wide:Boolean,initialAgentId:String?,onPair:()->Unit,
     onFamily:(String,String,Boolean)->Unit,onShell:(AgentRecord)->Unit,onReconnect:(AgentRecord)->Unit,
-    onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit) {
+    onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit,onHeadlessApp:(String,String,Boolean)->Unit,onSharedScreen:(String,Boolean)->Unit) {
     var selected by rememberSaveable {mutableStateOf(initialAgentId)}
     LaunchedEffect(initialAgentId) {if(initialAgentId!=null) selected=initialAgentId}
     val agents=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
@@ -35,18 +35,18 @@ import dev.siconnect.core.*
     if(wide) Row(Modifier.fillMaxSize().padding(20.dp),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
         Column(Modifier.weight(.38f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {list()}
         Column(Modifier.weight(.62f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            current?.let {AgentDetail(it,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp)} ?: Text("Select an agent to inspect its access and activity.")
+            current?.let {AgentDetail(it,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp,onHeadlessApp,onSharedScreen)} ?: Text("Select an agent to inspect its access and activity.")
         }
     } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         if(current==null) list() else {
             TextButton(onClick={selected=null}) {Text("Back to agents")}
-            AgentDetail(current,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp)
+            AgentDetail(current,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp,onHeadlessApp,onSharedScreen)
         }
     }
 }
 
 @Composable private fun AgentDetail(a:AgentRecord,state:ControlCenterSnapshot,onFamily:(String,String,Boolean)->Unit,
-    onShell:(AgentRecord)->Unit,onReconnect:(AgentRecord)->Unit,onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit) {
+    onShell:(AgentRecord)->Unit,onReconnect:(AgentRecord)->Unit,onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit,onHeadlessApp:(String,String,Boolean)->Unit,onSharedScreen:(String,Boolean)->Unit) {
     Text(botDisplayName(a,state.agents),style=MaterialTheme.typography.headlineSmall)
     Text("Identity …${a.grant.agentId.takeLast(8)} · ${agentState(a)}")
     Text("Device-authenticated credential. OAuth/bearer use is not separately recorded for this identity.",style=MaterialTheme.typography.bodySmall)
@@ -54,10 +54,18 @@ import dev.siconnect.core.*
     Text("Permissions",style=MaterialTheme.typography.titleLarge)
     Text("Owner allowance and Android readiness are separate. Higher-risk actions still follow the approval policy.",style=MaterialTheme.typography.bodySmall)
     val usable=agentState(a)=="Active"
-    val groups=state.capabilities.groupBy {it.descriptor.id.substringBefore('.')}.toSortedMap()
+    OutlinedCard(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Allow actions on the shared screen",Modifier.weight(1f))
+            Switch(checked=a.grant.allowSharedScreen,onCheckedChange={onSharedScreen(a.grant.agentId,it)},enabled=usable)
+        }
+        Text(if(a.grant.allowSharedScreen) "This agent may request shared-screen actions under its current permissions." else "Limited to native background tools and private displays. Shared-screen launches, arbitrary shell and unspecified screen effects are blocked.",style=MaterialTheme.typography.bodySmall)
+    }}
+    val groups=state.capabilities.filterNot {it.descriptor.ownerOnly}.groupBy {it.descriptor.id.substringBefore('.')}.toSortedMap()
     groups.filterKeys {it!="shell"}.forEach {(family,caps)->
         val allowed=caps.count {allowed(a,it.descriptor.id)}
-        val ready=caps.count {allowed(a,it.descriptor.id) && it.availability.isExecutable}
+        val ready=caps.count {allowed(a,it.descriptor.id) && it.availability.isExecutable &&
+            (a.grant.allowSharedScreen || it.descriptor.interaction in setOf(InteractionMode.BACKGROUND,InteractionMode.ISOLATED_SCREEN))}
         OutlinedCard(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
             Row {
                 Column(Modifier.weight(1f)) {
@@ -75,6 +83,13 @@ import dev.siconnect.core.*
     appAllowances.forEach {pkg->Row(Modifier.fillMaxWidth()) {
         Text(pkg,Modifier.weight(1f));TextButton(onClick={onSemanticApp(a.grant.agentId,pkg,false)}) {Text("Remove")}
     }}
+    Text("Automatic private app actions",style=MaterialTheme.typography.titleLarge)
+    Text("A private display leaves your shared screen available and requires the phone to stay awake and unlocked. It uses the same installed app account and data. Select the private workspace family above, then choose a separate per-app allowance for the selected privileged backend. This can authorize sends or deletes without another prompt.",style=MaterialTheme.typography.bodySmall)
+    val privateAllowances=a.grant.standing.filter {it.capabilityId=="headless.open" && it.actionHash==null && it.constraints.keys==setOf("packageName")}
+        .mapNotNull {(it.constraints["packageName"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.let {pkg->pkg to it.backend}}
+    privateAllowances.forEach {(pkg,backend)->Row(Modifier.fillMaxWidth()) {
+        Text("$pkg · $backend",Modifier.weight(1f));TextButton(onClick={onHeadlessApp(a.grant.agentId,pkg,false)}) {Text("Remove private access")}
+    }}
     var appPackage by rememberSaveable(a.grant.agentId) {mutableStateOf("")}
     var appLabel by rememberSaveable(a.grant.agentId) {mutableStateOf("")}
     var chooseApp by rememberSaveable(a.grant.agentId) {mutableStateOf(false)}
@@ -86,6 +101,7 @@ import dev.siconnect.core.*
         if(manualPackage) OutlinedTextField(appPackage,{appPackage=it.take(200);appLabel=""},label={Text("Exact Android package")},singleLine=true,modifier=Modifier.fillMaxWidth())
         Text("Allows this agent to click any accessible control and enter text in that app, including sends or deletes. Protected owner and lock screens remain excluded. This is separate from arbitrary shell access.",style=MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick={onSemanticApp(a.grant.agentId,appPackage.trim(),true)},enabled=appPackage.isNotBlank()) {Text("Allow clicks and text in this app")}
+        OutlinedButton(onClick={onHeadlessApp(a.grant.agentId,appPackage.trim(),true)},enabled=appPackage.isNotBlank()) {Text("Allow private workspace actions in this app")}
     }
     if(chooseApp) InstalledAppPicker(appAllowances.toSet(),onSelect={appPackage=it.packageName;appLabel="${it.label} · ${it.version}";chooseApp=false},onClose={chooseApp=false})
     Text("Privileged shell",style=MaterialTheme.typography.titleLarge)
@@ -104,4 +120,4 @@ import dev.siconnect.core.*
 }
 private fun agentState(a:AgentRecord)=when {a.grant.revoked->"Revoked";a.grant.expiresAtMs?.let {it<=System.currentTimeMillis()}==true->"Expired";else->"Active"}
 private fun allowed(a:AgentRecord,id:String)=!a.grant.revoked && (a.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true) && a.grant.scopes.any {PolicyEngine.globMatches(it,id)} && a.grant.denied.none {PolicyEngine.globMatches(it,id)}
-private fun familyLabel(f:String)=mapOf("device" to "Device diagnostics","apps" to "Apps","notifications" to "Notifications","messages" to "Messaging","calendar" to "Calendar","reminders" to "Reminders","weather" to "Weather","location" to "Phone location","commute" to "Maps commute","files" to "Managed files","documents" to "Selected documents","ui" to "UI interaction","requests" to "Request results","system" to "System commands","settings" to "System settings","alarms" to "Clock information")[f] ?: f.replaceFirstChar {it.uppercase()}
+private fun familyLabel(f:String)=mapOf("device" to "Device diagnostics","apps" to "Apps","notifications" to "Notifications","messages" to "Messaging","calendar" to "Calendar","reminders" to "Reminders","weather" to "Weather","location" to "Phone location","commute" to "Maps commute","files" to "Managed files","documents" to "Selected documents","ui" to "UI interaction","headless" to "Private app workspaces","requests" to "Request results","system" to "System commands","settings" to "System settings","alarms" to "Clock information")[f] ?: f.replaceFirstChar {it.uppercase()}

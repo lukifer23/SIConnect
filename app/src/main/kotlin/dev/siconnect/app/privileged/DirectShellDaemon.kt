@@ -2,6 +2,11 @@ package dev.siconnect.app.privileged
 
 import android.content.AttributionSource
 import android.os.*
+import android.system.Os
+import android.system.OsConstants
+import java.io.FileOutputStream
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
 
 /** Bundled Binder authority, started only by an owner-authorized Android shell. */
 object DirectShellDaemon {
@@ -9,9 +14,25 @@ object DirectShellDaemon {
     // for the daemon lifetime, otherwise GC silently disables app-process recovery.
     private var attachedOwner: IBinder?=null
     private var ownerDeath: IBinder.DeathRecipient?=null
+    private var authorityChannel:FileChannel?=null
+    private var authorityLock:FileLock?=null
     @JvmStatic fun main(args: Array<String>) {
         check(Process.myUid() in setOf(0,2000)) { "An authorized shell/root bootstrap is required" }
         val appUid=args.single().toInt(); require(appUid>=10000)
+        // Local recovery and the workstation bootstrap can race. A kernel-owned lock keeps
+        // one Binder authority instead of alternating callers between independent runtimes.
+        // Keep the inode; unlinking a live lock file would defeat cross-process exclusion.
+        val fd=Os.open("/data/local/tmp/siconnect-authority-$appUid.lock",
+            OsConstants.O_CREAT or OsConstants.O_RDWR or OsConstants.O_CLOEXEC or OsConstants.O_NOFOLLOW,384)
+        if(Process.myUid()==0) Os.fchown(fd,2000,2000)
+        val channel=FileOutputStream(fd).channel
+        val lock=channel.tryLock()
+        if(lock==null) {
+            channel.close()
+            android.util.Log.i("SIConnectAuthority","Another authorized runtime already owns this app; duplicate startup stopped")
+            return
+        }
+        authorityChannel=channel;authorityLock=lock
         Looper.prepare()
         val handler=Handler(Looper.myLooper()!!)
         val service=PrivilegedShellService(appUid)
@@ -37,6 +58,8 @@ object DirectShellDaemon {
                     handler.post {
                         if(attachedOwner===owner) {
                             attachedOwner=null;ownerDeath=null
+                            // Private displays link the actual workspace caller lifetime
+                            // token; provider attachment lifetime is only for reconnection.
                             android.util.Log.i("SIConnectAuthority","Owner process ended; restoring attachment")
                             handler.postDelayed({ attach() },1000)
                         }

@@ -1,6 +1,6 @@
 # Development setup
 
-Current checkpoint: Android **0.6.0-dev.8 / code 16**, SQLite **10**, **89** phone tools plus the gateway connection-status tool. See [project status](project-status.md) and [pass 15](engineering-pass-15.md) for measured results and remaining gaps.
+Current source and installed debug build: Android **0.6.0-dev.13 / code 21**, SQLite **11**, **100** phone tools plus gateway status. See [the November 6 review](source-audit-2026-11-06.md) for host and focused physical verification, [project status](project-status.md) and [the build plan](build-plan.md). Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
 
 ## Host toolchain (macOS, Apple silicon)
 
@@ -84,7 +84,7 @@ npm audit --audit-level=high
 
 ## In-place update and recovery
 
-The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-10 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
+The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-11 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
 
 ## Shutdown and generated files
 
@@ -94,7 +94,7 @@ Build outputs and `gateway/node_modules` are regenerable. Keep `local.properties
 
 ## Optimized installation checkpoint
 
-The current device uses a minified development-signed APK with its existing compatible signer. Debug fixtures and LocalEndpoint are absent. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
+Historical code 14 used a minified development-signed APK with the existing compatible signer; debug fixtures and LocalEndpoint were absent. The current code-21 installation is a compatible debug build; its separately built minified release remains unsigned and uninstalled. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
 
 ```sh
 ./gradlew :app:assembleDebugAndroidTest -PinstallationCheckpoint=true

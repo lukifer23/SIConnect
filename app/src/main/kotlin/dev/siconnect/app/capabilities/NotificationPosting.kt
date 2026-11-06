@@ -34,14 +34,9 @@ internal suspend fun postNotification(g:RuntimeGraph,a:JsonObject,ctx:ExecutionC
             },android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
             val original=w.query("notification_dedup",arrayOf("request_id"),"agent_id=? AND key_hash=?",arrayOf(ctx.agentId,hash),null,null,null).use {it.moveToFirst();it.getString(0)}
             if(original!=ctx.requestId) {
-                val record=g.requests.get(original)
-                if(record!=null && Canonical.encode(record.arguments)!=Canonical.encode(a))
-                    throw CapabilityException("IDEMPOTENCY_CONFLICT","Alert key belongs to different arguments; inspect its original request",noSideEffects=true)
-                if(record?.state!=RequestState.SUCCEEDED)
-                    throw CapabilityException("ORIGINAL_OUTCOME_REQUIRED","Alert key already claimed by $original. Retrieve its outcome; do not repost",noSideEffects=true)
-                val out=record.result?.output as? JsonObject ?: throw CapabilityException("ORIGINAL_OUTCOME_REQUIRED","Original alert result is unavailable",noSideEffects=true)
+                val out=priorNotificationOutcome(original,g.requests.get(original),a)
                 w.setTransactionSuccessful()
-                return buildJsonObject {out.forEach {(k,v)->put(k,v)};put("originalRequestId",original);put("deduplicated",true)}
+                return out
             }
             w.setTransactionSuccessful()
         } finally {w.endTransaction()}

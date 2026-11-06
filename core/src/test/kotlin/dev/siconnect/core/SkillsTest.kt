@@ -19,9 +19,10 @@ class SkillsTest {
     private val notify = CountingCapability("notifications.post", RiskClass.LOW_IMPACT).also(registry::register)
     private val shell = CountingCapability("shell.execute", RiskClass.HIGH_IMPACT, shell = true).also(registry::register)
     private val store = MemoryStore()
+    private val clock = FakeClock()
     private val grants = mapOf("a" to AgentGrant("a", "A", scopes = listOf("*"), autoApproveUpTo = RiskClass.LOW_IMPACT))
     private val engine = ExecutionEngine("d", registry, PolicyEngine(), store, {}, RecordingApprovals(), { grants[it] },
-        { DeviceControls() }, CoroutineScope(SupervisorJob() + Dispatchers.Default))
+        { DeviceControls() }, CoroutineScope(SupervisorJob() + Dispatchers.Default), clock)
     private val ctx = ExecutionContext("skillreq", "trace", "a", "d")
 
     private val def = SkillJson.parse("""
@@ -38,14 +39,14 @@ class SkillsTest {
     @Test fun validDefinitionPasses() = assertEquals(emptyList(), SkillValidator.validate(def, registry))
 
     @Test fun conditionSkipsStepBelowThreshold() = runBlocking {
-        val r = SkillRunner(engine).run(def, JsonObject(emptyMap()), ctx, Origin.REMOTE)
+        val r = SkillRunner(engine, clock).run(def, JsonObject(emptyMap()), ctx, Origin.REMOTE)
         assertTrue(r.succeeded)
         assertEquals("SKIPPED", r.steps[1].state)
         assertEquals(0, notify.executions.get())
     }
 
     @Test fun conditionRunsStepAtThresholdWithInterpolatedArgs() = runBlocking {
-        val r = SkillRunner(engine).run(def, buildJsonObject { put("threshold", 1) }, ctx, Origin.REMOTE)
+        val r = SkillRunner(engine, clock).run(def, buildJsonObject { put("threshold", 1) }, ctx, Origin.REMOTE)
         assertEquals("SUCCEEDED", r.steps[1].state)
         assertEquals(JsonPrimitive("SUCCEEDED"), (r.output as JsonObject)["warned"])
         assertEquals("\"n=1\"", (r.steps[1].output as JsonObject)["echo"].toString())
@@ -53,7 +54,7 @@ class SkillsTest {
 
     @Test fun skillStepsCannotEscalate() = runBlocking {
         val s = SkillDefinition("test.shell", 1, "shell", steps = listOf(SkillStep("run", "shell.execute", buildJsonObject { put("value", "id") })))
-        val r = SkillRunner(engine).run(s, JsonObject(emptyMap()), ctx, Origin.REMOTE)
+        val r = SkillRunner(engine, clock).run(s, JsonObject(emptyMap()), ctx, Origin.REMOTE)
         assertFalse(r.succeeded)
         assertEquals("AWAITING_APPROVAL", r.steps[0].state)
         assertEquals(0, shell.executions.get())
@@ -72,6 +73,27 @@ class SkillsTest {
     @Test fun missingDataNeverSatisfiesThreshold() {
         val c = buildJsonObject { put("op", "gte"); put("left", "${'$'}{input.missing}"); put("right", 0) }
         assertFalse(Conditions.eval(c, mapOf("input" to JsonObject(emptyMap()))))
+    }
+
+    @Test fun workflowCannotExtendTheCallingRequestDeadline() = runBlocking {
+        val deadline = clock.now + 1000
+        val r = SkillRunner(engine, clock).run(def, JsonObject(emptyMap()), ctx.copy(deadlineAtMs = deadline), Origin.REMOTE)
+        assertTrue(r.succeeded)
+        assertEquals(deadline, store.get("skillreq:probe")!!.expiresAtMs)
+    }
+
+    @Test fun expiredCallingRequestCannotStartWorkflowChildren() = runBlocking {
+        val r = SkillRunner(engine, clock).run(def, JsonObject(emptyMap()), ctx.copy(deadlineAtMs = clock.now), Origin.REMOTE)
+        assertFalse(r.succeeded)
+        assertEquals("SKILL_TIMEOUT", r.error)
+        assertTrue(store.records.isEmpty())
+        assertEquals(0, read.executions.get())
+    }
+
+    @Test fun workflowKeepsItsShorterDefinitionDeadline() = runBlocking {
+        val r = SkillRunner(engine, clock).run(def, JsonObject(emptyMap()), ctx.copy(deadlineAtMs = clock.now + 1_000_000), Origin.REMOTE)
+        assertTrue(r.succeeded)
+        assertEquals(clock.now + def.timeoutMs, store.get("skillreq:probe")!!.expiresAtMs)
     }
 
     @Test fun canonicalEncodingIsOrderIndependent() {

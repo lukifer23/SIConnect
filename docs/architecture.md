@@ -1,5 +1,7 @@
 # Architecture
 
+Current source: **code 21 / SQLite 11**, with [November 6 host and focused physical verification](source-audit-2026-11-06.md). Execution rechecks policy at actual coroutine dispatch, finalizes pre-dispatch cancellation and inherits caller workflow deadlines. Owner commute actions use the durable engine; deferred startup failures have an error screen; private launch uses bounded process supervision. Code-21 storage/native/private-display and caller/backend-death checks pass; wider lifecycle and owner authentication success remain open. Historical [pass 18](engineering-pass-18.md) covers caller-process lifetime, owner-only policy and locked native recovery; [pass 17](engineering-pass-17.md) covers private displays and [pass 16](engineering-pass-16.md) retention. See [the execution contract](private-app-execution.md) and [build plan](build-plan.md).
+
 ## Pass 9 checkpoint — October 21, 2026
 
 SQLite v8 adds indexed proposal metadata without replacing immutable detail JSON or device request authority. Inbox reads use keyset projections. The existing sparse runtime tick reconciles bounded accepted/request-state candidates and expired proposals; startup recovery pages active rows. Retries require an authoritative missing request and keep the same request ID/deadline. Recorded unknown outcomes are never resubmitted. See [pass 9](engineering-pass-9.md).
@@ -95,7 +97,7 @@ Pass 3 device sockets carry persisted generation/readiness attachments. In-fligh
 
 SQLite v4 adds history-order and credential-hash indexes without modifying existing records. Production request creation/state transition and their audit insert now share a database transaction; record update notifications are emitted after commit. A failed audit insert cannot leave an EXECUTING record before backend registration. Persistent storage failure after external side effects can still prevent recording a definitive outcome; do not infer safe failure from missing output.
 
-InteractionMode is registry metadata independent of privilege: BACKGROUND, SCREEN, MAY_OPEN_SCREEN, UNSPECIFIED. Native app launch is explicitly SCREEN; arbitrary approved shell may use the screen. Device runtime reports actual interactive/keyguard/device-lock state. Owner-enabled package-update recovery starts the connection service without opening MainActivity. Managed-file paths are canonical and confined to the app-owned managed directory; no universal storage permission is implied.
+InteractionMode is registry metadata independent of privilege: BACKGROUND, ISOLATED_SCREEN, SCREEN, MAY_OPEN_SCREEN, UNSPECIFIED. ISOLATED_SCREEN uses owned virtual-display rendering/semantic input, with no default-display input fallback. Disabling an agent’s shared-screen permission allows only BACKGROUND and ISOLATED_SCREEN, before standing grants or broad-shell evaluation. Native app launch is explicitly SCREEN; arbitrary approved shell may use the screen. Device runtime reports actual interactive/keyguard/device-lock state. Owner-enabled package-update recovery starts the connection service without opening MainActivity. Managed-file paths are canonical and confined to the app-owned managed directory; no universal storage permission is implied.
 
 ## Pass 4 runtime additions
 

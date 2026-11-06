@@ -1,5 +1,7 @@
 # Phone setup and advanced control
 
+Current source and installed compatible debug build: **0.6.0-dev.13 / code 21 / SQLite 11**. The [November 6 review](source-audit-2026-11-06.md) includes original-record preservation and actual hosted native/UID-2000 readiness after focused physical tests. See [project status](project-status.md). The setup/recovery walkthrough below was collected on code 12 and remains historical.
+
 Status: development build **0.6.0-dev.4 / code 12**, SQLite **10**. Actual app TLS/SPAKE2 pairing with owner fingerprint confirmation, phone-local ADB/Binder startup, repeated daemon recovery, app-process recovery and an owner-approved reboot have passed on the physical Fold. No Mac bootstrap command was used for local recovery or post-reboot restoration. The first pairing UI was driven from the Mac; fully unassisted fresh-install setup remains a distinct pending acceptance scenario. See [pass 10 evidence and precise limits](engineering-pass-10.md).
 
 ## Start with native features

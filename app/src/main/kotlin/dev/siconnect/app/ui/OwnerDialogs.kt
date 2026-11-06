@@ -43,8 +43,11 @@ import kotlinx.serialization.json.*
                     Text("Review stays open until you close it.",style=MaterialTheme.typography.bodySmall)
                     if(pending) Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(r.approvalExpiresAtMs ?: r.expiresAtMs))}")
                     Text(r.capabilityId,style=MaterialTheme.typography.titleMedium)
-                    Text(r.assessment?.shellCommand ?: r.arguments.toString())
-                    Text("Risk: ${r.assessment?.risk}\n${r.assessment?.sideEffects?.joinToString() ?: ""}")
+                    if(r.payloadExpired) Text("Payload expired under your retention setting. The original outcome and retry identity are retained.")
+                    else {
+                        Text(r.assessment?.shellCommand ?: r.arguments.toString())
+                        Text("Risk: ${r.assessment?.risk}\n${r.assessment?.sideEffects?.joinToString() ?: ""}")
+                    }
                     Text("Backend: ${r.selectedBackend ?: "selected at execution"}",style=MaterialTheme.typography.bodySmall)
                     if(pending) Text("Always allow saves this exact action and backend. Broader shell access is managed separately under Agents. Completion is verified by the capability where supported; external effects may not be reversible.",style=MaterialTheme.typography.bodySmall)
                     if(busy) {LinearProgressIndicator(Modifier.fillMaxWidth());Text("Saving your decision and checking current permissions…")}

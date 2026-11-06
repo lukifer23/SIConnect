@@ -16,6 +16,10 @@ class BackgroundExecutionTest {
         assertEquals(BackgroundExecution.Kind.BACKGROUND_ONLY,BackgroundExecution.classify(definition,listOf(status(InteractionMode.BACKGROUND))))
         assertEquals(BackgroundExecution.Kind.PERMISSION_OR_BACKEND_DEPENDENT,BackgroundExecution.classify(definition,listOf(status(InteractionMode.BACKGROUND,Availability.PERMISSION_REQUIRED))))
     }
+    @Test fun privateDisplayIsDistinctFromNativeBackgroundAndSharedScreen() {
+        assertEquals(BackgroundExecution.Kind.PRIVATE_DISPLAY,BackgroundExecution.classify(definition,listOf(status(InteractionMode.ISOLATED_SCREEN))))
+        assertEquals(BackgroundExecution.Kind.PERMISSION_OR_BACKEND_DEPENDENT,BackgroundExecution.classify(definition,listOf(status(InteractionMode.ISOLATED_SCREEN,Availability.PRIVILEGE_REQUIRED))))
+    }
     @Test fun unknownAndMissingMetadataStayUnknown() {
         assertEquals(BackgroundExecution.Kind.UNKNOWN,BackgroundExecution.classify(definition,emptyList()))
         assertEquals(BackgroundExecution.Kind.UNKNOWN,BackgroundExecution.classify(definition,listOf(status(InteractionMode.UNSPECIFIED))))

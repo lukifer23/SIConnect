@@ -1,6 +1,12 @@
 # Background work and connection controls
 
+Current source and installed debug build are code 21. The [November 6 review](source-audit-2026-11-06.md) includes native original-result recovery, private caller/backend death and fresh hosted execution; older phone results below remain historical. Queued work now rechecks policy when its execution coroutine starts, and a workflow cannot extend its caller’s deadline. Cancellation before backend dispatch records a terminal no-effect outcome; effects already dispatched remain subject to verification/uncertainty.
+
 SIConnect runs saved deterministic workflows through its existing scheduler, policy engine and device-side request store. A remote model or connected computer is not required to execute a saved native workflow. Android access, current local-automation grants and any required approval still apply to every step.
+
+## Private app execution
+
+Native background APIs remain the first choice, including while locked when their platform permissions allow. Code 19 adds real app virtual displays with their own focus and no focus-stealing request. The owner can prohibit shared-screen actions for an agent, independently of private per-app permissions. The actual Samsung power grouping still requires the phone awake and unlocked for private UI. No wake, unlock or shared-screen fallback is requested. See [private app execution](private-app-execution.md) and [pass 17](engineering-pass-17.md) for tools, lifecycle and measured limits.
 
 ## Device health scans
 
@@ -19,7 +25,7 @@ Missing data never satisfies a threshold. An unknown battery percentage is exclu
 
 Health workflow version 3 persists condition identities and notification receipts across runs and process restarts. Choose a minimum cooldown (15 minutes to 24 hours) and whether ordinary unchanged conditions should produce reminders. New conditions alert when eligible; worsening conditions can alert after a one-minute guard. Critical conditions use a repeat interval no longer than one hour even when ordinary persistent reminders are off. Battery and storage recovery margins reduce threshold oscillation. Missing readings preserve the last known condition rather than clearing it.
 
-The existing notification capability posts one aggregated warning and verifies the actual native notification. A confirmed permission denial does not consume the cooldown. An uncertain delivery retains its original request reference instead of replaying the same action. A later, independently scheduled observation can notify when its cooldown permits. Cleared conditions remove only the health policy's own notification. The ledger stores compact condition metadata, caps policy rows and prunes inactive rows after 30 days. Readings remain in the ordinary bounded execution history.
+The existing notification capability posts one aggregated warning and verifies the actual native notification. A confirmed permission denial does not consume the cooldown. An uncertain delivery retains its original request reference instead of replaying the same action. A later, independently scheduled observation can notify when its cooldown permits. Cleared conditions remove only the health policy's own notification. The ledger stores compact condition metadata, caps policy rows and prunes inactive rows after 30 days. Readings remain in ordinary durable execution history. Recent-history queries are bounded; full completed payloads expire only under the owner’s opt-in retention policy, and compact retry identities remain permanent.
 
 Run history explains active and unavailable conditions, notification suppression, the next eligible reminder and unverified earlier delivery. A successful warning step can mean that no notification was needed; inspect the readable outcome rather than treating every successful step as a posted alert.
 
@@ -32,6 +38,12 @@ Workflow cards distinguish background-only work, work that requires the screen, 
 Daily, weekday, weekly, monthly and fixed-interval schedules use the existing scheduler. Fixed intervals have a 15-minute minimum. Deferrable work may be delayed by Android; precise alarm timing does not guarantee immediate completion of the whole workflow. Review the saved timezone, next-run preview and missed-run policy. No polling service, screen scan or local model is added by health scans.
 
 Native device readings do not require the privileged daemon. Remote calls require internet connectivity and the owner-enabled gateway connection. Screen interaction remains subject to lock state, service availability and screen coordination. Force-stop and Android background restrictions are separate from ordinary process recovery.
+
+## Caller death and privileged background restoration
+
+Code 20 ties volatile private sessions to the actual caller process’s Binder lifetime. Provider reconnection does not restore a private session or replay its original request. Native original-result recovery and owner-enabled phone-local backend replacement have real locked-phone evidence. Code-21 private-window interruption now passes on the actual awake/unlocked phone, including real display removal and original-result no-replay checks.
+
+If Android refuses normal startup of an already enabled bridge, the local-owner runtime can submit fixed `system.restore_bridge` maintenance through the policy engine. With current advanced controls and the selected backend, it requests a ten-second startup allowance for SIConnect only, then requests service startup. Owner-only policy binds identity and origin; remote scopes cannot grant this role. The saved enablement preference is never changed. A service-start acknowledgement is separate from actual ONLINE state. See [pass 18](engineering-pass-18.md).
 
 ## Connection history and remote access
 

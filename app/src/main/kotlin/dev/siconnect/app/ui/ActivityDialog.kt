@@ -63,6 +63,7 @@ import dev.siconnect.core.RequestState
                 Column(Modifier.fillMaxWidth().clickable {onOpen(r.requestId)}.padding(vertical=10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     Text(title(r.capabilityId),style=MaterialTheme.typography.titleSmall)
                     Text("${labels[r.agentId] ?: "Unknown bot"} · ${actionStateLabel(r.state)}",style=MaterialTheme.typography.bodySmall)
+                    if(r.payloadExpired) Text("Payload expired · outcome retained",style=MaterialTheme.typography.labelSmall)
                     Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.MEDIUM).format(java.util.Date(r.updatedAtMs)),style=MaterialTheme.typography.labelSmall)
                 }
                 HorizontalDivider()

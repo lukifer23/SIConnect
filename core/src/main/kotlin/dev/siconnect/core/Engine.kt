@@ -12,10 +12,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Serializable
 data class InvocationRequest(
@@ -55,6 +58,8 @@ data class RequestRecord(
     val parentRequestId: String? = null,
     val operationFingerprint: String = "",
     val selectedBackend: BackendKind? = null,
+    /** Payload was compacted; state, hashes and retry identity remain authoritative. */
+    val payloadExpired: Boolean = false,
 )
 
 interface RequestStore {
@@ -319,14 +324,35 @@ class ExecutionEngine(
             return transition(record,RequestState.EXPIRED,"request.expired") {it}
         executing = transitionBlocking(record, RequestState.EXECUTING, "execution.started", backend = capability.descriptor.backend.name) { it }
             ?: return store.get(record.requestId) ?: record
-        val ctx = ExecutionContext(executing.requestId, executing.traceId, executing.agentId, deviceId)
         val started = clock.nowMs()
+        val ctx = ExecutionContext(executing.requestId, executing.traceId, executing.agentId, deviceId,
+            minOf(executing.expiresAtMs, started + capability.descriptor.timeoutMs))
+        val bodyStarted = AtomicBoolean(false)
         job = scope.launch(start = CoroutineStart.LAZY) {
+            bodyStarted.set(true)
+            var backendDispatched = false
             try {
+                // Admission can precede actual dispatcher execution. Owner restrictions and
+                // backend selection may change while this coroutine is still queued.
+                if (capability.descriptor.version != executing.capabilityVersion ||
+                    (executing.selectedBackend != null && executing.selectedBackend != capability.descriptor.backend))
+                    throw CapabilityException("CAPABILITY_CHANGED", "Capability or selected backend changed before dispatch", noSideEffects = true)
+                val dispatchPolicy = policy.evaluate(agents.grant(executing.agentId), capability.descriptor, executing.arguments,
+                    executing.assessment ?: capability.assess(executing.arguments),
+                    runCatching { capability.availability(executing.arguments) }.getOrDefault(Availability.UNKNOWN),
+                    controls(), Origin.valueOf(executing.origin), clock.nowMs())
+                if (dispatchPolicy.outcome == PolicyOutcome.DENY || dispatchPolicy.outcome == PolicyOutcome.UNAVAILABLE)
+                    throw CapabilityException("POLICY_DENIED", dispatchPolicy.reason, noSideEffects = true)
+                if (dispatchPolicy.outcome == PolicyOutcome.REQUIRE_APPROVAL && record.state != RequestState.APPROVED)
+                    throw CapabilityException("POLICY_CHANGED", "Current policy requires owner review; submit a new request", noSideEffects = true)
                 val remaining=executing.expiresAtMs-clock.nowMs()
                 if(remaining<=0) throw CapabilityException("EXPIRED","Request deadline reached before backend dispatch",noSideEffects=true)
                 val budget=minOf(capability.descriptor.timeoutMs,remaining)
-                val result = withTimeout(budget) { capability.execute(executing.arguments, ctx) }
+                val result = withTimeout(budget) {
+                    currentCoroutineContext().ensureActive()
+                    backendDispatched = true
+                    capability.execute(executing.arguments, ctx)
+                }
                 capability.descriptor.outputSchema?.let { schema ->
                     if (Schema.validate(schema, result.output).isNotEmpty())
                         throw CapabilityException("INVALID_OUTPUT", "Backend result violates output schema")
@@ -341,19 +367,26 @@ class ExecutionEngine(
                         errorMessage = if (state != RequestState.SUCCEEDED) result.verificationDetail else null)
                 }
             } catch (e: TimeoutCancellationException) {
-                unknownOrFailed(executing, capability, "TIMEOUT", "Capability timeout or request deadline reached", started)
+                unknownOrFailed(executing, capability, "TIMEOUT", "Capability timeout or request deadline reached", started, noSideEffects = !backendDispatched)
             } catch (e: CancellationException) {
-                unknownOrFailed(executing, capability, "CANCELLED", e.message ?: "cancelled", started, cancelled = true)
+                unknownOrFailed(executing, capability, "CANCELLED", e.message ?: "cancelled", started, cancelled = true, noSideEffects = !backendDispatched)
             } catch (e: CapabilityException) {
                 if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
-                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started, noSideEffects=e.noSideEffects)
+                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started, noSideEffects=e.noSideEffects || !backendDispatched)
             } catch (e: Exception) {
                 if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
-                    unknownOrFailed(executing, capability, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", started)
+                    unknownOrFailed(executing, capability, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", started, noSideEffects = !backendDispatched)
             }
         }
         running[executing.requestId] = job
-        job.invokeOnCompletion { running.remove(executing.requestId, job) }
+        job.invokeOnCompletion { cause ->
+            running.remove(executing.requestId, job)
+            // A cancelled queued/lazy coroutine never enters its try/catch. Close the durable
+            // admission here; otherwise it stays EXECUTING until a process restart.
+            if (!bodyStarted.get() && cause != null)
+                unknownOrFailed(executing, capability, "CANCELLED", "Execution cancelled before backend dispatch",
+                    started, cancelled = true, noSideEffects = true)
+        }
         job.start()
         }
         if (awaitCompletion) job.join()

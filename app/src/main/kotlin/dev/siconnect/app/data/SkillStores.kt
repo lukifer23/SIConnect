@@ -6,8 +6,8 @@ import dev.siconnect.core.*
 class SqlSkillRunStore(private val db: SIConnectDb) : SkillRunStore {
     override fun insert(run: SkillExecution): Boolean = db.writableDatabase.insertWithOnConflict("skill_runs", null,
         values(run), android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE) != -1L
-    override fun get(runId: String): SkillExecution? = db.readableDatabase.query("skill_runs", arrayOf("json"), "run_id=?", arrayOf(runId), null, null, null)
-        .mapAll { AppJson.decodeFromString(SkillExecution.serializer(), it.getString(0)) }.firstOrNull()
+    override fun get(runId: String): SkillExecution? = db.readableDatabase.storedJson("skill_runs","run_id",runId)
+        ?.let {AppJson.decodeFromString(SkillExecution.serializer(),it)}
     override fun update(run: SkillExecution, expectedRevision: Long): Boolean {
         val w = db.writableDatabase; w.beginTransaction()
         try {
@@ -18,13 +18,14 @@ class SqlSkillRunStore(private val db: SIConnectDb) : SkillRunStore {
             w.setTransactionSuccessful(); return changed
         } finally { w.endTransaction() }
     }
-    override fun active() = db.readableDatabase.query("skill_runs", arrayOf("json"), "state IN ('READY','RUNNING','AWAITING_APPROVAL')", null, null, null, null)
-        .mapAll { AppJson.decodeFromString(SkillExecution.serializer(), it.getString(0)) }
-    override fun cancellations() = db.readableDatabase.query("skill_runs",arrayOf("json"),"state = ?",arrayOf(SkillState.UNKNOWN_OUTCOME.name),null,null,null)
-        .mapAll {AppJson.decodeFromString(SkillExecution.serializer(),it.getString(0))}
+    override fun active() = db.readableDatabase.query("skill_runs", arrayOf("run_id"), "state IN ('READY','RUNNING','AWAITING_APPROVAL')", null, null, null, null)
+        .mapAll {it.getString(0)}.mapNotNull(::get)
+    override fun cancellations() = db.readableDatabase.query("skill_runs",arrayOf("run_id"),"state = ?",arrayOf(SkillState.UNKNOWN_OUTCOME.name),null,null,null)
+        .mapAll {it.getString(0)}.mapNotNull(::get)
         .filter {it.error in setOf("CANCELLATION_REQUESTED","CANCELLATION_HANDOFF_UNCERTAIN")}
     private fun values(r: SkillExecution) = ContentValues().apply {
         put("run_id", r.runId); put("state", r.state.name); put("revision", r.revision); put("json", AppJson.encodeToString(SkillExecution.serializer(), r))
+        put("updated_at",System.currentTimeMillis()); put("payload_expired",if(r.payloadExpired) 1 else 0)
     }
 }
 

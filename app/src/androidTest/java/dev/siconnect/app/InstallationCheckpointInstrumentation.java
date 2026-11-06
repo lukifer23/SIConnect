@@ -28,7 +28,7 @@ public final class InstallationCheckpointInstrumentation extends Instrumentation
             JSONObject expected = new JSONObject(raw);
             try (SQLiteDatabase db = SQLiteDatabase.openDatabase(
                     getTargetContext().getDatabasePath("siconnect.db").getPath(), null, SQLiteDatabase.OPEN_READONLY)) {
-                if (db.getVersion() != 10) throw new IllegalStateException("Unexpected schema");
+                if (db.getVersion() != dev.siconnect.app.data.SIConnectDb.VERSION) throw new IllegalStateException("Unexpected schema");
                 try (Cursor c = db.rawQuery("PRAGMA quick_check", null)) {
                     if (!c.moveToFirst() || !"ok".equals(c.getString(0))) throw new IllegalStateException("Integrity check failed");
                 }

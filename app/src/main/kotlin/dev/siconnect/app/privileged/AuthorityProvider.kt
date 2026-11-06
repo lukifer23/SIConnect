@@ -26,7 +26,11 @@ class AuthorityProvider: ContentProvider() {
             }
         },0)
         DirectAuthority.status.value="Connected; checking execution identity"
-        context?.graph?.let {g->g.scope.launch {g.privileged.refreshDirectAuthority(IPrivilegedShell.Stub.asInterface(binder))}}
+        context?.graph?.let {g->g.scope.launch {
+            g.ready.await()
+            g.privileged.refreshDirectAuthority(IPrivilegedShell.Stub.asInterface(binder))
+            dev.siconnect.app.transport.ConnectionService.restoreOwnerEnabled(g)
+        }}
         android.util.Log.i("SIConnectAuthority","Authority stored")
         return Bundle().apply { putBinder("owner",owner) }
     }

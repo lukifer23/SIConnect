@@ -281,12 +281,18 @@ class RuntimeDeviceTest {
         }
     }
     @Test fun durableNativeSkillAndPackageQuery()=runBlocking {
-        val def=g.skills.get("diagnostics.snapshot")!!
+        // Run a real disposable read-only workflow, never an owner's possibly customized definition.
+        val def=SkillDefinition("physical.native.${UUID.randomUUID()}",1,"Native background acceptance",steps=listOf(
+            SkillStep("status","device.status"),SkillStep("battery","device.battery"),SkillStep("memory","device.memory")))
+        val power=g.context.getSystemService(android.os.PowerManager::class.java).isInteractive
+        val locked=g.context.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked
         val id="physical-skill:${UUID.randomUUID()}"
         val result=g.runner.start(def,JsonObject(emptyMap()),ExecutionContext(id,id,"local-owner",g.settings.deviceId),Origin.LOCAL_OWNER)
         Assert.assertEquals(SkillState.SUCCEEDED,result.state)
-        Assert.assertEquals(3,result.steps.size)
+        Assert.assertEquals(def.steps.size,result.steps.size)
         Assert.assertEquals(result,g.runner.resume(id))
+        Assert.assertEquals(power,g.context.getSystemService(android.os.PowerManager::class.java).isInteractive)
+        Assert.assertEquals(locked,g.context.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked)
         val packages=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="apps.inspect",arguments=buildJsonObject { put("package","dev.siconnect.app") }),Origin.LOCAL_OWNER)
         Assert.assertEquals(RequestState.SUCCEEDED,packages.state)
     }

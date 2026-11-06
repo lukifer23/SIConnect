@@ -101,6 +101,10 @@ class Settings(context: Context) {
         get() = prefs.getInt("event_retention_days", 30)
         set(v) = prefs.edit().putInt("event_retention_days", v.coerceIn(1, 365)).apply()
 
+    var executionRetention: RetentionPolicy
+        get() = RetentionPolicy(prefs.getInt("execution_retention_days", 0).takeIf { it in RetentionPolicy.OPTIONS })
+        set(value) { check(prefs.edit().putInt("execution_retention_days", value.days ?: 0).commit()) { "Could not save retention policy" } }
+
     /** Device credential presented to the gateway. Generated once; rotated by re-enrollment. */
     fun deviceSecret(): String = getSecret("device_secret") ?: randomToken("sid_").also { putSecret("device_secret", it) }
     fun setDeviceSecret(value: String) { require(value.length in 20..300); putSecret("device_secret", value.trim()) }

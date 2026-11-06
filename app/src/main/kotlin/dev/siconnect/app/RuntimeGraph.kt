@@ -32,6 +32,7 @@ class RuntimeGraph(val context: Context) {
     val db = SIConnectDb(context)
     val requests = SqlRequestStore(db)
     val events = SqlEventLog(db)
+    val retention = StorageRetention(db, { settings.executionRetention }, { settings.executionRetention = it })
     internal val healthAlerts = HealthAlertStore(db)
     val agents = AgentStore(db)
     val registry = CapabilityRegistry()
@@ -71,6 +72,8 @@ class RuntimeGraph(val context: Context) {
         registerCapabilities(this)
         registerAutomationCapabilities(this)
         dev.siconnect.app.capabilities.registerWeatherCommuteCapabilities(this)
+        dev.siconnect.app.capabilities.registerHeadlessCapabilities(this)
+        dev.siconnect.app.capabilities.registerBridgeMaintenance(this)
         dev.siconnect.app.capabilities.registerProposalCapabilities(this)
         ready = scope.async {
             check(db.readableDatabase.rawQuery("PRAGMA quick_check", null).use { it.moveToFirst() && it.getString(0) == "ok" }) { "SQLite integrity check failed; database preserved for recovery" }
@@ -126,6 +129,19 @@ class RuntimeGraph(val context: Context) {
                         it.pendingRequestId?.let {id->requests.get(id)?.state?.isTerminal}==true}.forEach {run ->
                         workflowDispatch.submit(run.runId)
                     }
+                }
+            }
+        }
+        // Separate from readiness and recovery. Opt-in maintenance cannot delay startup or
+        // remove an expiration/continuation collector if a storage operation fails.
+        scope.launch {
+            ready.await()
+            while (isActive) {
+                delay(15 * 60_000L)
+                recovery.run("Execution retention") {
+                    val batch = retention.maintain()
+                    if (batch.total > 0) events.emit(Event(System.currentTimeMillis(), eventType="storage.payloads.compacted",
+                        detail="${batch.requests} requests, ${batch.workflows} workflows, ${batch.automationRuns} automation runs"))
                 }
             }
         }
@@ -250,6 +266,38 @@ class RuntimeGraph(val context: Context) {
             val added=if(enabled) ids.map {id->StandingGrant(id,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=BackendKind.ACCESSIBILITY,note="Owner-selected semantic app access")} else emptyList()
             agents.put(a.copy(grant=a.grant.copy(standing=retained+added)))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.semantic_app.changed",agentId=agentId,detail="Local owner ${if(enabled) "allowed" else "removed"} semantic clicks/text for $targetPackage"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
+
+    /** Persist revocation and its audit event together; callers are local management screens only. */
+    fun setHeadlessPackagePermissionFromOwner(agentId:String,targetPackage:String,enabled:Boolean,selected:BackendKind=privileged.kind) {
+        require(!agentId.startsWith("local-")) {"Select a remote identity"}
+        dev.siconnect.app.capabilities.HeadlessRules.validatePackage(targetPackage)
+        val ids=setOf("headless.open","headless.click","headless.set_text","headless.scroll","headless.close")
+        val constraints=mapOf("packageName" to JsonPrimitive(targetPackage))
+        if(enabled) require(privileged.kind==selected) {"Selected backend changed during owner review; review the private allowance again"}
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
+            require(!record.grant.revoked && (record.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
+            if(enabled) require(ids.all {id->record.grant.scopes.any {PolicyEngine.globMatches(it,id)} && record.grant.denied.none {PolicyEngine.globMatches(it,id)}}) {"Allow the private workspace capability family first"}
+            val retained=record.grant.standing.filterNot {it.capabilityId in ids && it.backend in setOf(BackendKind.ADB_SERVICE,BackendKind.SHIZUKU) && it.actionHash==null && it.constraints==constraints}
+            val added=if(enabled) ids.map {StandingGrant(it,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=selected,note="Owner-selected private app workspace access")} else emptyList()
+            agents.put(record.copy(grant=record.grant.copy(standing=retained+added)))
+            events.emit(Event(System.currentTimeMillis(),eventType="grant.private_app.changed",agentId=agentId,detail="Local owner ${if(enabled) "allowed" else "removed"} private app actions for $targetPackage"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
+
+    fun setSharedScreenPermissionFromOwner(agentId:String,allowed:Boolean) {
+        require(!agentId.startsWith("local-")) {"Select a remote identity"}
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
+            agents.put(record.copy(grant=record.grant.copy(allowSharedScreen=allowed)))
+            events.emit(Event(System.currentTimeMillis(),eventType="grant.shared_screen.changed",agentId=agentId,
+                detail=if(allowed) "Local owner allowed shared-screen operations" else "Local owner restricted agent to background APIs and private displays"))
             w.setTransactionSuccessful()
         } finally {w.endTransaction()}
     }

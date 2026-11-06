@@ -27,7 +27,12 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
     private val mutable=MutableStateFlow(ControlCenterSnapshot())
     val state:StateFlow<ControlCenterSnapshot> = mutable.asStateFlow()
     init {viewModelScope.launch(Dispatchers.IO) {
-        g.ready.await()
+        try { g.ready.await() }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            mutable.value = mutable.value.copy(error = "Local runtime could not start: ${e.javaClass.simpleName}. Saved data was preserved.")
+            return@launch
+        }
         mutable.subscriptionCount.map {it>0}.distinctUntilChanged().collectLatest {visible ->
         if(!visible) return@collectLatest
         merge(refreshes,g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},g.proposals.updates,

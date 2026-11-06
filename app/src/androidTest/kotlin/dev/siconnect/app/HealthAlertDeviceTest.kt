@@ -64,6 +64,7 @@ class HealthAlertDeviceTest {
                 InteractionMode.MAY_OPEN_SCREEN->assertEquals(BackgroundExecution.Kind.MAY_REQUIRE_SCREEN,kind)
                 InteractionMode.UNSPECIFIED->assertEquals(BackgroundExecution.Kind.UNKNOWN,kind)
                 InteractionMode.BACKGROUND->assertEquals(if(status.availability.isExecutable) BackgroundExecution.Kind.BACKGROUND_ONLY else BackgroundExecution.Kind.PERMISSION_OR_BACKEND_DEPENDENT,kind)
+                InteractionMode.ISOLATED_SCREEN->assertEquals(if(status.availability.isExecutable) BackgroundExecution.Kind.PRIVATE_DISPLAY else BackgroundExecution.Kind.PERMISSION_OR_BACKEND_DEPENDENT,kind)
             }
         }
     }
@@ -115,6 +116,7 @@ class HealthAlertDeviceTest {
         val name="health-migration-${UUID.randomUUID()}.db"
         try {
             SIConnectDb(context,name).use {db->db.writableDatabase.apply {
+                removeExecutionRetentionSchema()
                 execSQL("INSERT INTO agents VALUES('fixture','hash',1,NULL,'preserved')")
                 execSQL("DROP TABLE health_alert_state");version=9
             }}
@@ -128,7 +130,7 @@ class HealthAlertDeviceTest {
     @Test fun interruptedUpgradeRollsBackBeforeSuccessfulRetry() {
         val name="health-interrupted-${UUID.randomUUID()}.db"
         try {
-            SIConnectDb(context,name).use {db->db.writableDatabase.apply {execSQL("DROP TABLE health_alert_state");version=9}}
+            SIConnectDb(context,name).use {db->db.writableDatabase.apply {removeExecutionRetentionSchema();execSQL("DROP TABLE health_alert_state");version=9}}
             val interrupted=object:android.database.sqlite.SQLiteOpenHelper(context,name,null,10) {
                 override fun onCreate(db:android.database.sqlite.SQLiteDatabase)=error("Existing fixture required")
                 override fun onUpgrade(db:android.database.sqlite.SQLiteDatabase,old:Int,new:Int) {
@@ -138,7 +140,7 @@ class HealthAlertDeviceTest {
             }
             try {interrupted.writableDatabase;fail("Interrupted migration accepted")} catch(_:android.database.sqlite.SQLiteException) {} finally {interrupted.close()}
             SIConnectDb(context,name).use {db->
-                assertEquals(10,db.readableDatabase.version)
+                assertEquals(SIConnectDb.VERSION,db.readableDatabase.version)
                 assertEquals(0,db.readableDatabase.rawQuery("SELECT count(*) FROM sqlite_master WHERE name='interrupted_fixture'",null).use {it.moveToFirst();it.getInt(0)})
                 assertEquals(0,android.database.DatabaseUtils.queryNumEntries(db.readableDatabase,"health_alert_state"))
             }

@@ -1,5 +1,9 @@
 # Security model
 
+## Current host checkpoint — November 6, 2026
+
+Code 21 adds actual-dispatch revalidation and caller-bounded workflow deadlines. The owner Maps button now authenticates and submits through the common durable engine; current-location lookup also uses engine policy. These changes add no remote owner authority or new standing grants. The real Android commute cancellation/recreation regression now passes without admitting a route or saving the draft; biometric-success execution remains open. See [the source audit](source-audit-2026-11-06.md) for exact evidence and remaining acceptance.
+
 ## Pass 9 checkpoint — October 21, 2026
 
 Inbox acceptance now revalidates original-agent policy, availability and emergency stop after authentication, before allocating a request link. Preflight is guidance, never a permission grant. Transient retry requires a successful missing-record lookup and reuses the same ID; unknown outcomes are reconciled. The optional debug Inbox harness has no acceptance endpoint, uses expiring isolated credentials and is excluded from the minified release. Existing credentials/grants were unchanged. See [pass 9](engineering-pass-9.md).
@@ -40,7 +44,7 @@ Action Inbox trust boundary: proposal text/source references are untrusted displ
 
 The emergency stop is a switch in the app (Home and management UI) that sets `DeviceControls.remoteExecutionEnabled = false`.
 
-- It is checked at submit time and again before an approved action executes.
+- It is checked at submit time, execution admission and actual coroutine dispatch, including already-approved actions waiting for a dispatcher. It does not terminate already-dispatched work.
 - A separate switch, `privilegedEnabled`, disables privileged routing.
 - Neither switch needs another computer.
 
@@ -95,6 +99,6 @@ The local bootstrap controller is reachable only from owner UI, with owner confi
 
 ## Dispatch-time owner restrictions
 
-The engine rechecks the current agent grant, device controls, capability version/backend and availability inside its execution lock immediately before moving a request to EXECUTING. Owner blocking therefore covers work queued after initial evaluation. It does not revoke effects already committed or terminate an already executing command. Pending owner acceptance still dispatches under the original agent and current policy. General authorized shell retains the authority of its selected backend and is not isolated by narrow native UI permissions.
+The engine rechecks the current agent grant, device controls, capability version/backend and availability inside its execution lock before admission and again when the execution coroutine actually starts. The second check closes the dispatcher wait gap after the durable EXECUTING transition. Cancellation before backend dispatch records a terminal no-effect result, including a lazy coroutine that never enters its body. Owner blocking therefore covers work queued after initial evaluation. It does not revoke effects already committed or terminate an already executing command. Pending owner acceptance still dispatches under the original agent and current policy. General authorized shell retains the authority of its selected backend and is not isolated by narrow native UI permissions.
 
 Health notification suppression uses compact per-agent policy state and the same notification capability, grants and request records. It creates no new background daemon or owner bootstrap endpoint. An unverified post retains a claim and original request reference; notification cooldown does not authorize replay of that request.

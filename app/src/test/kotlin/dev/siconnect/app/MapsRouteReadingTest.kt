@@ -30,6 +30,13 @@ class MapsRouteReadingTest {
         try {MapsRouteReading.read(labels()+listOf(RouteLabel("1 hr",top=400,bottom=460),RouteLabel("52 mi",top=400,bottom=460)),1000);fail("Ambiguous routes must not be selected")}
         catch(e:CapabilityException) {assertEquals("ROUTE_SCREEN_UNREADABLE",e.code)}
     }
+    @Test fun compactRangeObservedOnTheRealPrivateMapsDisplayUsesItsExplicitSharedUnit() {
+        assertEquals(360L to 540L,MapsRouteReading.durationRange("Typically 6–9 min"))
+        assertEquals(3600L to 7200L,MapsRouteReading.durationRange("1–2 hr"))
+        assertNull(MapsRouteReading.durationRange("9–6 min"))
+        assertNull(MapsRouteReading.durationRange("6–1 hr 30 min"))
+        assertNull(MapsRouteReading.durationRange("6–9"))
+    }
     @Test fun leaveAndWakeCanFallOnPreviousLocalDate() {
         val arrival=Instant.parse("2026-10-28T05:30:00Z").toEpochMilli()
         val profile=CommuteProfile(timezone="America/Chicago",preparationMinutes=45,bufferMinutes=10)

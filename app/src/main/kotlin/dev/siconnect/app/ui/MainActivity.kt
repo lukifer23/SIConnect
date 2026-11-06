@@ -14,6 +14,7 @@ import dev.siconnect.app.ui.automations.AutomationsScreen
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.net.toUri
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -61,7 +62,12 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             (missing+Manifest.permission.ACCESS_COARSE_LOCATION).distinct().toTypedArray() else missing.toTypedArray())
     }
     override fun onResume() { super.onResume(); permissionStatus="";permissionRevision++;graph.gateway.refreshCatalog();if(::controlModel.isInitialized) controlModel.refresh() }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent);setIntent(intent);permissionRevision++ }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent);setIntent(intent);permissionRevision++
+        // A launcher intent can reach this existing root while an Android Settings page
+        // remains on top of its task. Restore the saved bridge even without onStart.
+        ConnectionService.restoreOwnerEnabled(graph)
+    }
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         ownerAuthentication=dev.siconnect.app.approvals.OwnerAuthentication(this)
@@ -77,7 +83,34 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                         isAppearanceLightStatusBars=!dark;isAppearanceLightNavigationBars=!dark
                     }
                 }
-                Surface(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {Home()}
+                Surface(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                    var initialized by remember { mutableStateOf(false) }
+                    var startupError by remember { mutableStateOf<String?>(null) }
+                    LaunchedEffect(graph) {
+                        try { graph.ready.await(); initialized = true }
+                        catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { startupError = e.javaClass.simpleName }
+                    }
+                    // Do not launch data-dependent effects against a failed initialization.
+                    // A preserved database must remain diagnosable instead of crashing the UI.
+                    if (initialized) Home() else Column(
+                        Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Text("SIConnect", style = MaterialTheme.typography.headlineMedium)
+                        if (startupError == null) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("Starting the local runtime…")
+                        } else {
+                            Text("Local runtime could not start", style = MaterialTheme.typography.titleLarge)
+                            Text("Saved data and permissions have not been reset. Restart SIConnect from Android app settings, then open it again. Keep its stored data; if this continues, it is needed for diagnosis.")
+                            OutlinedButton(onClick = {
+                                startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$packageName".toUri()))
+                            }) { Text("Open Android app settings") }
+                            Text("Failure: $startupError", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
         }
     }
@@ -220,6 +253,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     onSemanticApp={id,pkg,enabled->
                         val apply={work {g.setSemanticPackagePermissionFromOwner(id,pkg,enabled)}}
                         if(enabled) ownerAuthentication.authenticate("Allow screen actions in $pkg",apply,{note=it}) else apply()
+                    },onHeadlessApp={id,pkg,enabled->
+                        val selected=g.privileged.kind
+                        val apply={work {g.setHeadlessPackagePermissionFromOwner(id,pkg,enabled,selected)}}
+                        if(enabled) ownerAuthentication.authenticate("Allow private app actions in $pkg via $selected",apply,{note=it}) else apply()
+                    },onSharedScreen={id,allowed->
+                        val apply={work {g.setSharedScreenPermissionFromOwner(id,allowed)}}
+                        if(allowed) ownerAuthentication.authenticate("Allow shared-screen actions",apply,{note=it}) else apply()
                     })
                 Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier.padding(16.dp))
                 Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id}) {id->work {inspected=g.requests.get(id)}}

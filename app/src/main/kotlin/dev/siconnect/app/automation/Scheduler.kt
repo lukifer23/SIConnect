@@ -207,8 +207,9 @@ class Scheduler(private val g: RuntimeGraph) {
             var snapshot:Automation?=null;var definition:SkillDefinition?=null;var priorState:String?=null
             w.beginTransaction()
             try {
-                w.query("automation_runs",arrayOf("automation_json","skill_json","state"),"run_id=?",arrayOf(runId),null,null,null).use {c->
+                w.query("automation_runs",arrayOf("automation_json","skill_json","state","payload_expired"),"run_id=?",arrayOf(runId),null,null,null).use {c->
                     if(c.moveToFirst()) {
+                        if(c.getInt(3)==1) return@withLock AutomationRunState.valueOf(c.getString(2))
                         snapshot=if(c.isNull(0)) get(id) else decode(c.getString(0))
                         definition=if(c.isNull(1)) null else SkillJson.parse(c.getString(1));priorState=c.getString(2)
                     }
@@ -274,11 +275,16 @@ class Scheduler(private val g: RuntimeGraph) {
         val now=System.currentTimeMillis();val w=g.db.writableDatabase;var next:Automation?=null
         w.beginTransaction()
         try {
-            val previous=w.query("automation_runs",arrayOf("state","finished_at","json","error_code"),"run_id=?",arrayOf(runId),null,null,null,"1").use {c->
-                if(!c.moveToFirst()) null else listOf(c.getString(0),if(c.isNull(1)) null else c.getLong(1).toString(),if(c.isNull(2)) null else c.getString(2),if(c.isNull(3)) null else c.getString(3))
-            }
             val encoded=result?.let {AppJson.encodeToString(SkillExecution.serializer(),it)}
-            val changed=previous==null || previous[0]!=state.name || (encoded!=null && previous[2]!=encoded) || previous[3]!=error
+            // Compare large result JSON inside SQLite rather than loading it into a CursorWindow.
+            val previous=w.rawQuery("SELECT state,finished_at,CASE WHEN json=? THEN 1 ELSE 0 END,error_code,payload_expired FROM automation_runs WHERE run_id=?",
+                arrayOf(encoded,runId)).use {c->
+                if(!c.moveToFirst()) null else {
+                    if(c.getInt(4)==1) return // Late reconciliation cannot restore expired snapshots.
+                    listOf(c.getString(0),if(c.isNull(1)) null else c.getLong(1).toString(),c.getInt(2).toString(),if(c.isNull(3)) null else c.getString(3))
+                }
+            }
+            val changed=previous==null || previous[0]!=state.name || (encoded!=null && previous[2]!="1") || previous[3]!=error
             w.update("automation_runs",ContentValues().apply {
                 put("state",state.name);put("updated_at",now);put("error_code",error)
                 if(state.terminal) put("finished_at",previous?.get(1)?.toLongOrNull() ?: now) else putNull("finished_at")

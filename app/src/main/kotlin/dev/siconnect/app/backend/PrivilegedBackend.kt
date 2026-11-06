@@ -4,6 +4,7 @@ import dev.siconnect.app.privileged.DirectAuthority
 import dev.siconnect.app.data.*
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.JsonObject
 
 /** Explicit owner selection. Losing one backend never switches authority to another. */
 class PrivilegedBackend(private val settings: Settings, val shizuku: ShizukuBackend) {
@@ -23,9 +24,16 @@ class PrivilegedBackend(private val settings: Settings, val shizuku: ShizukuBack
             .getOrElse {"Built-in service unavailable: ${it.javaClass.simpleName}. Run SIConnect setup once after reboot."}
         synchronized(DirectAuthority) {if(DirectAuthority.service?.asBinder()===service.asBinder()) directStatus.value=detail}
     }
-    suspend fun execute(req: ShellRequest): ShellResult {
-        if(kind==BackendKind.SHIZUKU) return shizuku.execute(req)
+    suspend fun execute(req: ShellRequest,selected:BackendKind=kind): ShellResult {
+        if(kind!=selected) throw CapabilityException("PRIVILEGE_REQUIRED","Selected backend changed before dispatch",noSideEffects=true)
+        if(selected==BackendKind.SHIZUKU) return shizuku.execute(req)
         val service=DirectAuthority.service ?: throw CapabilityException("PRIVILEGE_REQUIRED",detail())
         return ShellTransport.execute(service,req)
+    }
+    suspend fun workspace(request:JsonObject,selected:BackendKind):JsonObject {
+        if(kind!=selected) throw CapabilityException("PRIVILEGE_REQUIRED","Selected backend changed before dispatch",noSideEffects=true)
+        if(selected==BackendKind.SHIZUKU) return shizuku.workspace(request)
+        val service=DirectAuthority.service ?: throw CapabilityException("PRIVILEGE_REQUIRED",detail(),noSideEffects=true)
+        return WorkspaceTransport.execute(service,request)
     }
 }

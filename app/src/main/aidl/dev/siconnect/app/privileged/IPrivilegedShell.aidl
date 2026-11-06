@@ -15,4 +15,9 @@ interface IPrivilegedShell {
     // Pipe carries bounded JSON without putting shell output in the shared Binder buffer.
     // Legacy exec remains available for existing clients.
     ParcelFileDescriptor execStream(String requestJson) = 4;
+
+    // Agent-owned private displays. The phone's engine supplies the authenticated agent identity.
+    ParcelFileDescriptor workspaceStream(String requestJson, IBinder ownerToken) = 5;
+    // True only when this workspace operation was prevented from starting.
+    boolean cancelWorkspace(String execId) = 6;
 }

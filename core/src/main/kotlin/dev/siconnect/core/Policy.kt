@@ -44,6 +44,8 @@ data class AgentGrant(
     val standing: List<StandingGrant> = emptyList(),
     val revoked: Boolean = false,
     val expiresAtMs: Long? = null,
+    /** Owner choice: reject shared-screen, possible-screen and unspecified interactions. */
+    val allowSharedScreen: Boolean = true,
 )
 
 @Serializable
@@ -81,9 +83,14 @@ class PolicyEngine {
         if (agent.expiresAtMs != null && nowMs >= agent.expiresAtMs) return deny("Agent grant expired", "agent_expired")
         if (agent.denied.any { globMatches(it, descriptor.id) }) return deny("Capability denied for this agent", "agent_denylist")
         if (agent.scopes.none { globMatches(it, descriptor.id) }) return deny("Capability outside agent scope", "agent_scope")
+        if(descriptor.ownerOnly && (origin!=Origin.LOCAL_OWNER || agent.agentId!="local-owner"))
+            return deny("Operation is restricted to the local owner runtime", "owner_only")
+        if(!agent.allowSharedScreen && descriptor.interaction !in setOf(InteractionMode.BACKGROUND,InteractionMode.ISOLATED_SCREEN))
+            return deny("Owner restricted this agent to background APIs and private displays", "shared_screen_disabled")
         if (!availability.isExecutable)
             return PolicyDecision(PolicyOutcome.UNAVAILABLE, "Capability is $availability", "availability")
-        if (descriptor.backend in PRIVILEGED && !controls.privilegedEnabled)
+        if (descriptor.backend in PRIVILEGED && !controls.privilegedEnabled &&
+            !(origin==Origin.LOCAL_OWNER && descriptor.id=="headless.stop_all"))
             return PolicyDecision(PolicyOutcome.UNAVAILABLE, "Privileged execution is disabled by the owner", "privileged_disabled")
 
         val risk = maxOf(descriptor.risk, assessment.risk)

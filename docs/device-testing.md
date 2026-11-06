@@ -1,5 +1,15 @@
 # Device testing
 
+## Current source and next acceptance — November 6, 2026
+
+Code 21 / schema 11 is installed with the compatible signer. The [source audit](source-audit-2026-11-06.md) records 215 passing host tests plus focused physical native/storage/Calculator/Maps and normal-process recovery checks. Wider device acceptance remains open; older code-20 evidence is in [pass 18](engineering-pass-18.md).
+
+The compatible code-21 update preserved the signer, enrollment and saved records. Twenty-four focused physical cases plus three process-death scenarios now pass, including commute authentication cancellation/recreation, Calculator/Maps private launch and caller-lifetime/queued-open/revocation behavior. Next prioritize genuine authenticated commute success with the original stored request, policy-routed location consent, deferred startup failure presentation and deliberately stalled private-launch cleanup. Then use the [device acceptance queue](next-steps.md#device-acceptance). Do not reset data or change grants to make a test pass.
+
+## Historical code-18 checkpoint
+
+See [pass 16](engineering-pass-16.md) for its retention/migration/large-record/retry/UI checks and then-current host totals. That pass used code 18/schema 11. Retention tests target disposable databases and leave the owner's policy disabled. UI tests must explicitly retrieve interactive accessibility windows; use all-display window discovery on the Fold. Genuine owner authentication and the full Fold/font/lifecycle matrix remain separate acceptance work. Historical checkpoints below describe their original installed artifacts.
+
 ## October 26 code-14 checkpoint
 
 [Pass 14](engineering-pass-14.md) records seven focused physical passes, the corrected framework-only minified-installation checkpoint, twelve independently correlated successful live Grok/SDK request records, and actual keyed read/write deduplication with exact-file cleanup. The final installation is an optimized code-14 APK with the existing development signer; both disposable test packages are absent. The earlier mixed Grok baseline and failed test-runner attempts are retained as limits, not silently counted as passes. General connection/owner UI acceptance remains incomplete. Prefer checks tied to a specific defect or change; avoid repeating the entire device matrix.

@@ -127,7 +127,22 @@ data class SkillExecution(
     val state: SkillState = SkillState.READY, val cursor: Int = 0,
     val steps: List<StepOutcome> = emptyList(), val pendingRequestId: String? = null,
     val output: JsonElement = JsonNull, val error: String? = null, val revision: Long = 0,
-)
+    val operationFingerprint: String = "", val payloadExpired: Boolean = false,
+) {
+    /** Also works for records written before fingerprints were persisted. */
+    fun identityFingerprint(): String = operationFingerprint.ifBlank {
+        Canonical.sha256Hex(Canonical.encode(buildJsonObject {
+            put("definition", SkillJson.json.encodeToJsonElement(SkillDefinition.serializer(), definition))
+            put("inputs", inputs); put("agent", agentId); put("device", deviceId); put("origin", origin)
+        }))
+    }
+
+    fun compactPayload(): SkillExecution = copy(
+        operationFingerprint = identityFingerprint(), payloadExpired = true,
+        definition = definition.copy(description = "", inputs = objectSchema(), steps = emptyList(), output = JsonObject(emptyMap())),
+        inputs = JsonObject(emptyMap()), steps = steps.map { it.copy(output = JsonNull) }, output = JsonNull,
+    )
+}
 
 interface SkillRunStore {
     fun insert(run: SkillExecution): Boolean
@@ -159,11 +174,14 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
     suspend fun start(def: SkillDefinition, inputs: JsonObject, ctx: ExecutionContext, origin: Origin): SkillExecution {
         require(def.timeoutMs in 1..86_400_000) { "Invalid skill timeout" }
         require(Schema.validate(def.inputs, inputs).isEmpty()) { "Invalid skill inputs" }
-        val r = SkillExecution(ctx.requestId, def, inputs, ctx.agentId, ctx.deviceId, ctx.traceId, origin.name,
-            clock.nowMs(), clock.nowMs() + def.timeoutMs)
+        val started = clock.nowMs()
+        val deadline = minOf(Math.addExact(started, def.timeoutMs), ctx.deadlineAtMs ?: Long.MAX_VALUE)
+        val initial = SkillExecution(ctx.requestId, def, inputs, ctx.agentId, ctx.deviceId, ctx.traceId, origin.name,
+            started, deadline)
+        val r = initial.copy(operationFingerprint = initial.identityFingerprint())
         if (!store.insert(r)) {
             val old = requireNotNull(store.get(r.runId))
-            require(old.definition == def && old.inputs == inputs && old.agentId == ctx.agentId && old.origin == origin.name) { "Skill run identity conflict" }
+            require(old.identityFingerprint() == r.operationFingerprint) { "Skill run identity conflict" }
         }
         return resume(r.runId)
     }

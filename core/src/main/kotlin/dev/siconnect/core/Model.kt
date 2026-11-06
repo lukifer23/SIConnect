@@ -55,7 +55,7 @@ enum class RequestState {
 
 /** Expected UI interaction, independent of backend privilege and Android scheduling guarantees. */
 @Serializable
-enum class InteractionMode { BACKGROUND, SCREEN, MAY_OPEN_SCREEN, UNSPECIFIED }
+enum class InteractionMode { BACKGROUND, SCREEN, MAY_OPEN_SCREEN, UNSPECIFIED, ISOLATED_SCREEN }
 
 @Serializable
 data class CapabilityDescriptor(
@@ -75,6 +75,8 @@ data class CapabilityDescriptor(
     val retryable: Boolean = false,
     val verification: String = "none",
     val interaction: InteractionMode = InteractionMode.UNSPECIFIED,
+    /** Requires both the local-owner principal and the trusted local-owner origin. */
+    val ownerOnly: Boolean = false,
 ) {
     /** MCP / OpenAI-compatible tool name: dots are not allowed by several clients. */
     val toolName: String get() = id.replace('.', '_')
@@ -118,6 +120,7 @@ data class ExecutionContext(
     val traceId: String,
     val agentId: String,
     val deviceId: String,
+    val deadlineAtMs: Long? = null,
 )
 
 interface Capability {

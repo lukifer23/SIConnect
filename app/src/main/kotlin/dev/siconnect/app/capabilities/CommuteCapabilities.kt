@@ -20,7 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import org.xmlpull.v1.XmlPullParser
 
-private const val MAPS_PACKAGE="com.google.android.apps.maps"
+internal const val MAPS_PACKAGE="com.google.android.apps.maps"
 
 /** Timing is derived from provider duration, never straight-line distance or a guessed speed. */
 object CommuteTiming {
@@ -67,45 +67,17 @@ class CommuteRouter(private val g:RuntimeGraph) {
             throw CapabilityException("SCREEN_LOCKED","Unlock the phone to read Maps; no lock-screen controls were used",noSideEffects=true)
     }
 
-    private suspend fun capture(ctx:ExecutionContext,backend:BackendKind):Pair<List<RouteLabel>,String> {
-        unlocked()
-        if(backend==BackendKind.ACCESSIBILITY) {
-            val service=SemanticAccessibilityService.instance ?: throw CapabilityException("ACCESSIBILITY_DISCONNECTED","Accessibility disconnected; restore it or make a new request using the selected privileged backend")
-            val snapshot=service.inspect(ctx.agentId,MAPS_PACKAGE,buildJsonObject {put("maxScanNodes",1000)},200)
-            return snapshot.getValue("nodes").jsonArray.map {it.jsonObject}.map {node ->
-                val b=node.getValue("bounds").jsonObject
-                RouteLabel(node["text"]?.jsonPrimitive?.content.orEmpty(),node["description"]?.jsonPrimitive?.content.orEmpty(),b.getValue("top").jsonPrimitive.int,b.getValue("bottom").jsonPrimitive.int)
-            } to "uid=${android.os.Process.myUid()}"
-        }
-        if(!g.settings.controls.value.privilegedEnabled || g.privileged.kind!=backend)
-            throw CapabilityException("PRIVILEGE_REQUIRED","The selected privileged backend changed or was disabled; make a fresh request",noSideEffects=true)
-        // The owned shell process has no controlling terminal. Write to its actual stdout pipe.
-        val result=g.privileged.execute(ShellRequest(ctx.requestId+"-maps-read",argv=listOf("uiautomator","dump","/proc/self/fd/1"),timeoutMs=8_000,maxOutputBytes=128*1024))
-        if(result.exitCode!=0 || result.timedOut || result.cancelled || result.stdoutTruncated)
-            throw CapabilityException("ROUTE_SCREEN_UNREADABLE","Maps hierarchy capture did not complete; inspect the screen or restore accessibility")
-        val start=result.stdout.indexOf("<?xml")
-        val end=result.stdout.lastIndexOf("</hierarchy>")
-        if(start<0 || end<start) throw CapabilityException("ROUTE_SCREEN_UNREADABLE","Maps hierarchy was not available")
-        val parser=Xml.newPullParser().apply {setInput(result.stdout.substring(start,end+12).reader())}
-        val labels=mutableListOf<RouteLabel>()
-        while(parser.eventType!=XmlPullParser.END_DOCUMENT && labels.size<1000) {
-            if(parser.eventType==XmlPullParser.START_TAG && parser.name=="node" && parser.getAttributeValue(null,"package")==MAPS_PACKAGE && parser.getAttributeValue(null,"password")!="true") {
-                val bounds=parser.getAttributeValue(null,"bounds").orEmpty()
-                val match=Regex("\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]").matchEntire(bounds)
-                if(match!=null) labels+=RouteLabel(parser.getAttributeValue(null,"text").orEmpty(),parser.getAttributeValue(null,"content-desc").orEmpty(),match.groupValues[2].toInt(),match.groupValues[4].toInt())
-            }
-            parser.next()
-        }
-        unlocked()
-        return labels to result.identity
-    }
 
-    suspend fun calculate(args:JsonObject,ctx:ExecutionContext,open:Boolean=true):JsonObject {
-        unlocked()
-        val selected=backend()
+    suspend fun calculate(args:JsonObject,ctx:ExecutionContext,open:Boolean=true,privateDisplay:Boolean=false):JsonObject {
+        if(!privateDisplay) unlocked()
+        val selected=if(privateDisplay) g.privileged.kind else backend()
         if(selected!=BackendKind.ACCESSIBILITY && !g.settings.controls.value.privilegedEnabled)
             throw CapabilityException("PRIVILEGE_REQUIRED","Privileged execution is disabled; enable accessibility or the selected service",noSideEffects=true)
         val profile=g.settings.commute
+        val zone=ZoneId.of(args["timezone"]?.jsonPrimitive?.content ?: profile.timezone)
+        val selectedTime=if(open) args["departureAtMs"]?.jsonPrimitive?.longOrNull ?: args["arrivalAtMs"]?.jsonPrimitive?.longOrNull else null
+        val arrive=selectedTime!=null && "departureAtMs" !in args
+        if(selectedTime!=null) MapsScreen.validateTime(selectedTime,zone)
         // Validate timing before taking the shared screen.
         CommuteTiming.calculate(profile,args,0.0,System.currentTimeMillis())
         val destination=args["destination"]?.jsonPrimitive?.content?.trim()?.takeIf(String::isNotBlank) ?: profile.destination
@@ -113,11 +85,15 @@ class CommuteRouter(private val g:RuntimeGraph) {
             ?: profile.destinationLabel.takeIf {it.isNotBlank() && (!open || destination.equals(profile.destination,true))}
             ?: (if(open) destination else profile.destination).substringBefore(',').trim().takeIf(String::isNotBlank)
         if(open && destination.isBlank()) throw CapabilityException("DESTINATION_REQUIRED","Supply the destination address or save it in Commute settings",noSideEffects=true)
-        return g.ui.withScreen(ctx,MAPS_PACKAGE,args["leaseId"]?.jsonPrimitive?.content) {
-            if(open) {
-                val uri=Uri.parse("https://www.google.com/maps/dir/").buildUpon().appendQueryParameter("api","1")
+        val started=android.os.SystemClock.elapsedRealtime()
+        val uri=if(open) Uri.parse("https://www.google.com/maps/dir/").buildUpon().appendQueryParameter("api","1")
                     .appendQueryParameter("destination",destination).appendQueryParameter("travelmode","driving")
-                    .apply {args["origin"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)?.let {appendQueryParameter("origin",it)}}.build()
+                    .apply {args["origin"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)?.let {appendQueryParameter("origin",it)}}.build() else null
+        val client=if(privateDisplay) HeadlessClient(g,ctx,selected) else null
+        var workspace:JsonObject?=null
+        val operate:suspend ()->JsonObject = route@{
+            val screen=MapsScreen(g,ctx,selected,workspace)
+            if(open && !privateDisplay) {
                 if(selected==BackendKind.ACCESSIBILITY) withContext(Dispatchers.Main) {
                     g.context.startActivity(Intent(Intent.ACTION_VIEW,uri).setPackage(MAPS_PACKAGE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 } else {
@@ -125,25 +101,33 @@ class CommuteRouter(private val g:RuntimeGraph) {
                     if(launch.exitCode!=0 || launch.timedOut || launch.stdout.contains("Error:")) throw CapabilityException("MAPS_LAUNCH_FAILED","Maps could not open the requested driving route")
                 }
             }
+            if(selectedTime!=null) screen.selectTime(selectedTime,arrive,zone)
             val deadline=android.os.SystemClock.elapsedRealtime()+15_000
             var last:CapabilityException?=null
             do {
                 try {
-                    val (labels,identity)=capture(ctx,selected)
+                    val (labels,identity)=screen.capture()
                     val reading=MapsRouteReading.read(labels,System.currentTimeMillis())
-                    return@withScreen buildJsonObject {
+                    return@route buildJsonObject {
                         reading.forEach { (k,v)->put(k,v) }
                         put("screenBackend",selected.name);put("screenExecutionIdentity",identity)
-                        args["expectedDepartureAtMs"]?.jsonPrimitive?.longOrNull?.let {expected ->
-                            val zone=ZoneId.of(args["timezone"]?.jsonPrimitive?.content ?: profile.timezone)
+                        put("executionSurface",if(privateDisplay) "PRIVATE_DISPLAY" else "SHARED_SCREEN")
+                        put("usesSharedScreen",!privateDisplay)
+                        val expectedDeparture=if(open && !arrive) selectedTime else args["expectedDepartureAtMs"]?.jsonPrimitive?.longOrNull
+                        val expectedArrival=if(open && arrive) selectedTime else args["expectedArrivalAtMs"]?.jsonPrimitive?.longOrNull
+                        for((expected,isArrival) in listOf(expectedDeparture to false,expectedArrival to true)) if(expected!=null) {
                             val expectedTime=Instant.ofEpochMilli(expected).atZone(zone)
                             fun normalized(s:String)=s.replace(Regex("[\\s\\u00a0\\u202f]+"),"").lowercase()
                             val formatted=expectedTime.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d, h:mma",java.util.Locale.US))
                             val label=reading["timeSelectionLabel"]?.jsonPrimitive?.content.orEmpty()
-                            if(kotlin.math.abs(expected-System.currentTimeMillis())>366L*86_400_000 || normalized(label) !in listOf(normalized("Leave $formatted"),normalized("Depart $formatted")))
-                                throw CapabilityException("ROUTE_TIME_MISMATCH","Maps' visible departure label does not match the requested departure. Use its actual time controls, inspect the selected date/time, then read again.")
-                            put("forecastDepartureTimeVerified",true);put("evaluatedDepartureAtMs",expected)
+                            val allowed=if(isArrival) listOf("Arrive $formatted") else listOf("Leave $formatted","Depart $formatted")
+                            if(kotlin.math.abs(expected-System.currentTimeMillis())>366L*86_400_000 || normalized(label) !in allowed.map(::normalized))
+                                throw CapabilityException("ROUTE_TIME_MISMATCH","Maps' visible date/time does not match the requested route. Inspect the screen before retrying.")
+                            put(if(isArrival) "forecastArrivalTimeVerified" else "forecastDepartureTimeVerified",true)
+                            put(if(isArrival) "evaluatedArrivalAtMs" else "evaluatedDepartureAtMs",expected)
                         }
+                        put("screenCaptures",screen.captures);put("automationElapsedMs",android.os.SystemClock.elapsedRealtime()-started)
+
                         if(open) {put("requestedDestination",destination);put("routeOpened",true);put("destinationAddressFullyVerified",false)}
                         val destinationMatches=expectedDestination?.let {MapsRouteReading.destinationMatches(it,reading.getValue("destinationLabel").jsonPrimitive.content)}
                         put("destinationBinding",when(destinationMatches) {true->"EXPECTED_LABEL_MATCHED";false->"DESTINATION_MISMATCH";null->"DESTINATION_CONFIRMATION_REQUIRED"})
@@ -161,6 +145,20 @@ class CommuteRouter(private val g:RuntimeGraph) {
             } while(android.os.SystemClock.elapsedRealtime()<deadline)
             throw last ?: CapabilityException("ROUTE_SCREEN_UNREADABLE","Read the actual Maps screen before calculating timing")
         }
+        if(!privateDisplay) return g.ui.withScreen(ctx,MAPS_PACKAGE,args["leaseId"]?.jsonPrimitive?.content) {operate()}
+        val opened=client!!.call("open",buildJsonObject {put("packageName",MAPS_PACKAGE);put("uri",requireNotNull(uri).toString());put("ttlMs",120_000)})
+        workspace=buildJsonObject {put("packageName",MAPS_PACKAGE);put("sessionId",opened.getValue("sessionId"))}
+        var closed=false
+        val result=try {operate()} catch(e:CapabilityException) {
+            // A downstream pre-dispatch rejection says nothing about earlier app launch,
+            // route queries or preview edits in this parent recipe.
+            throw CapabilityException(e.code,e.message ?: "Private Maps operation failed",e.retryable,noSideEffects=false)
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                closed=runCatching {client.call("close",workspace!!)["closed"]?.jsonPrimitive?.booleanOrNull==true}.getOrDefault(false)
+            }
+        }
+        return buildJsonObject {result.forEach {(k,v)->put(k,v)};put("privateWorkspaceClosed",closed);put("privateDisplayId",opened.getValue("displayId"))}
     }
 }
 
@@ -178,27 +176,31 @@ fun registerCommuteCapabilities(g:RuntimeGraph) {
         override fun availability()=Availability.IMPLEMENTED
         override suspend fun execute(args:JsonObject,ctx:ExecutionContext)=CapabilityResult(AppJson.encodeToJsonElement(CommuteProfile.serializer(),g.settings.commute),BackendKind.NATIVE,"uid=${android.os.Process.myUid()}")
     })
-    for(open in listOf(true,false)) g.registry.register(object:Capability {
-        override val descriptor get()=CapabilityDescriptor(if(open) "commute.route" else "commute.read_route",title=if(open) "Open and read Maps commute" else "Read selected Maps route",
-            description=if(open) "Opens Google Maps driving directions from Maps' current location (or explicit origin address/coordinates) to the destination and reads the visible selected route. No API key. Shared screen must be unlocked. Uses accessibility when connected, otherwise the owner's selected privileged service. Does not start navigation. For tomorrow, use real UI controls to Set depart or arrive time and then call commute.read_route; a current route is not tomorrow's prediction."
+    for((open,privateDisplay) in listOf(true to false,false to false,true to true)) g.registry.register(object:Capability {
+        override val descriptor get()=CapabilityDescriptor(if(privateDisplay) "commute.route_private" else if(open) "commute.route" else "commute.read_route",title=if(privateDisplay) "Read Maps commute on a private display" else if(open) "Open and read Maps commute" else "Read selected Maps route",
+            description=if(privateDisplay) "Opens actual Google Maps driving directions on an agent-owned private display, reads its real duration/distance and closes the workspace. Own focus and top-focus stealing disabled; no shared-screen launch, physical unlock or fallback. Uses the selected privileged backend, without a routing API key. Same installed Maps account/data. Phone must already be awake and unlocked. No wake request. Maps must not already be visible on a shared display. Supports departureAtMs/arrivalAtMs through actual Maps controls over the next seven local dates in the device timezone. A current route is not tomorrow's prediction. Does not start navigation."
+            else if(open) "Explicitly uses the shared phone screen; prefer commute.route_private to leave that screen available. Opens Google Maps driving directions from Maps' current location (or explicit origin address/coordinates) to the destination and reads the visible selected route. No API key. Shared screen must be unlocked. Uses accessibility when connected, otherwise the owner's selected privileged service. Does not start navigation. Pass departureAtMs to set and verify future departure through actual Maps controls; or arrivalAtMs without departureAtMs to set Arrive. Uses direct verified time-field edits. Supports future whole-minute times over the next seven dates in the device timezone. A current route is not tomorrow's prediction."
             else "Read duration, distance, endpoint labels and traffic wording from the actual foreground Maps driving-route screen. Use UI tools to select a future departure/arrival time first. Range estimates use their upper bound for leave-by timing. Confirm date, endpoints and selected mode on screen; no API request, guessed travel speed or alarm changes.",
             inputSchema=objectSchema {
-                if(open) {string("destination","Address; otherwise owner-saved commute destination",maxLength=500);string("origin","Starting address or latitude,longitude; omit for Maps current location",maxLength=500)}
-                else integer("expectedDepartureAtMs","Require visible Maps departure label to match this epoch time; mismatch refuses timing advice",min=1)
+                if(open) {string("destination","Address; otherwise owner-saved commute destination",maxLength=500);string("origin","Starting address or latitude,longitude; omit for Maps current location",maxLength=500)
+                    integer("departureAtMs","Set actual Maps departure; future epoch milliseconds, whole-minute precision, device timezone, next seven local dates",min=1)}
+                else {integer("expectedDepartureAtMs","Require visible Maps departure label to match this epoch time; mismatch refuses timing advice",min=1)
+                    integer("expectedArrivalAtMs","Require visible Maps Arrive label to match this epoch time",min=1)}
                 string("expectedDestinationLabel","Confirmed destination name to match on screen before timing advice; otherwise saved name or destination prefix. Never replace the owner's address with Maps saved Work.",maxLength=200)
-                string("leaseId","Optional existing owned Maps screen lease",maxLength=100)
-                integer("arrivalAtMs","Desired arrival epoch milliseconds for timing arithmetic",min=1)
+                if(!privateDisplay) string("leaseId","Optional existing owned Maps screen lease",maxLength=100)
+                integer("arrivalAtMs","Desired arrival epoch milliseconds. For commute.route without departureAtMs, sets Maps Arrive time; whole-minute precision, next seven local dates",min=1)
                 string("targetDate","Local arrival date YYYY-MM-DD for saved arrival time; otherwise today",maxLength=10)
                 string("timezone","IANA timezone; otherwise profile timezone",maxLength=100)
                 integer("bufferMinutes","Extra arrival buffer",min=0,max=180)
                 integer("preparationMinutes","Waking to departure preparation",min=0,max=360)
-            },backend=router.backend(),risk=if(open) RiskClass.MODERATE_IMPACT else RiskClass.READ_ONLY,
-            interaction=InteractionMode.SCREEN,timeoutMs=40_000,sideEffects=if(open) listOf("Opens Google Maps on the shared phone screen; sends route endpoints to Maps") else emptyList())
-        override fun availability()=router.availability()
-        override fun availabilityDetail()="Unlock the phone and connect SIConnect accessibility or its selected bundled/Shizuku service. Scope and shared-screen lease are enforced."
+            },backend=if(privateDisplay) g.privileged.kind else router.backend(),risk=if(open) RiskClass.MODERATE_IMPACT else RiskClass.READ_ONLY,
+            interaction=if(privateDisplay) InteractionMode.ISOLATED_SCREEN else InteractionMode.SCREEN,timeoutMs=if(open) 120_000 else 40_000,
+            sideEffects=if(open) listOf(if(privateDisplay) "Opens Google Maps on a private display; sends route endpoints to Maps" else "Opens Google Maps on the shared phone screen; sends route endpoints to Maps") else emptyList())
+        override fun availability()=if(!privateDisplay) router.availability() else if(android.os.Build.VERSION.SDK_INT<34) Availability.UNSUPPORTED else if(g.privileged.available()) Availability.IMPLEMENTED else Availability.PRIVILEGE_REQUIRED
+        override fun availabilityDetail()=if(privateDisplay) "Selected trusted-display-capable privileged backend, a free private workspace and an awake, unlocked phone. No shared-screen fallback." else "Unlock the phone and connect SIConnect accessibility or its selected bundled/Shizuku service. Scope and shared-screen lease are enforced."
         override suspend fun execute(args:JsonObject,ctx:ExecutionContext):CapabilityResult {
-            val selected=router.backend()
-            val result=router.calculate(args,ctx,open)
+            val selected=if(privateDisplay) g.privileged.kind else router.backend()
+            val result=router.calculate(args,ctx,open,privateDisplay)
             return CapabilityResult(result,selected,result.getValue("screenExecutionIdentity").jsonPrimitive.content,VerificationStatus.VERIFIED,"Duration and distance read from the actual Maps route screen; complete destination address requires owner confirmation. See forecastDepartureTimeVerified for time-label verification.")
         }
     })

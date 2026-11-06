@@ -9,12 +9,13 @@ import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import rikka.shizuku.Shizuku
+import kotlinx.serialization.json.JsonObject
 
 class ShizukuBackend(context: Context, private val scope: CoroutineScope) {
     val status = MutableStateFlow("Shizuku is not running")
     @Volatile private var service: IPrivilegedShell? = null
     private val args = Shizuku.UserServiceArgs(ComponentName(context, PrivilegedShellService::class.java))
-        .tag("siconnect.shell").version(3).daemon(false).processNameSuffix("privileged")
+        .tag("siconnect.shell").version(6).daemon(false).processNameSuffix("privileged")
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = IPrivilegedShell.Stub.asInterface(binder)
@@ -44,5 +45,9 @@ class ShizukuBackend(context: Context, private val scope: CoroutineScope) {
     suspend fun execute(request: ShellRequest): ShellResult {
         val remote = service?.takeIf { available() } ?: throw CapabilityException("PRIVILEGE_REQUIRED", status.value)
         return ShellTransport.execute(remote,request)
+    }
+    suspend fun workspace(request:JsonObject):JsonObject {
+        val remote=service?.takeIf {available()} ?: throw CapabilityException("PRIVILEGE_REQUIRED",status.value,noSideEffects=true)
+        return WorkspaceTransport.execute(remote,request)
     }
 }

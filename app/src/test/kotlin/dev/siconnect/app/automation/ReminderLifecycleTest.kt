@@ -161,6 +161,18 @@ class ReminderLifecycleTest {
         assertEquals(cancelled,f.lifecycle.put(original,deduplicate=true));assertTrue(f.dispatch.jobs.isEmpty())
     }
 
+    @Test fun interruptedReminderProjectionResolvesACompactedDeliveryWithoutReposting() = runTest {
+        val f=Fixture(backgroundScope);f.create();f.due()
+        val delivery=async {f.lifecycle.deliver("fixture")};runCurrent()
+        assertEquals(RequestState.SUCCEEDED,delivery.await())
+        val original=f.requests.get("reminder:fixture")!!
+        f.requests.records[original.requestId]=original.copy(arguments=JsonObject(emptyMap()),result=null,payloadExpired=true)
+        f.store.records.computeIfPresent("fixture") {_,r->r.copy(state="FIRING")}
+        f.lifecycle.restore()
+        assertEquals("SUCCEEDED",f.store.get("fixture")!!.state)
+        assertEquals(RequestState.SUCCEEDED,f.lifecycle.deliver("fixture"));assertEquals(1,f.posts)
+    }
+
     @Test fun platformFailureLeavesRecoverableBlockedState() = runTest {
         val f=Fixture(backgroundScope);f.dispatch.beforeStop={error("Platform unavailable")}
         try {f.create();fail("Dispatch must fail")}

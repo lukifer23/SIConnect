@@ -27,6 +27,7 @@ class RequestOutputCapability(private val g:RuntimeGraph):Capability {
         val end=minOf(bytes.size.toLong(),offset.toLong()+limit).toInt()
         return CapabilityResult(buildJsonObject {
             put("requestId",record.requestId);put("state",record.state.name);put("updatedAtMs",record.updatedAtMs)
+            put("payloadExpired",record.payloadExpired)
             put("encoding","BASE64_UTF8_JSON");put("offset",offset);put("totalBytes",bytes.size)
             put("data",Base64.getEncoder().encodeToString(bytes.copyOfRange(offset,end)))
             put("sha256",MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {"%02x".format(it)})
