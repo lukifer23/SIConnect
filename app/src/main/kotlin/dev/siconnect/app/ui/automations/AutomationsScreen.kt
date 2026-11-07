@@ -30,13 +30,17 @@ import dev.siconnect.app.R
 import dev.siconnect.app.ui.*
 import dev.siconnect.app.automation.*
 import dev.siconnect.app.capabilities.WeatherCommute
-import dev.siconnect.app.data.AppJson
+import dev.siconnect.app.data.*
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.*
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+
+private data class AutomationResources(val skills:List<SkillDefinition>,val capabilities:List<CapabilityStatus>,
+    val grant:AgentGrant?,val exactAllowed:Boolean,val notificationsAllowed:Boolean)
 
 /** Form-driven owner management over the existing durable scheduler and skill runtime. */
 @Composable
@@ -47,14 +51,31 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
     val locale=LocalLocale.current.platformLocale
     val lifecycle=LocalLifecycleOwner.current
     var refresh by remember {mutableIntStateOf(0)}
-    var automations by remember {mutableStateOf(emptyList<Automation>())}
+    var resourcesRefresh by remember {mutableIntStateOf(0)}
+    val projections=remember(g) {ScheduleProjectionStore(g.db)}
+    var automations by remember {mutableStateOf(emptyList<AutomationSummary>())}
+    var automationFilter by rememberSaveable {mutableStateOf(AutomationFilter.ALL)}
+    var search by rememberSaveable {mutableStateOf("")}
+    var query by remember {mutableStateOf(search)}
+    var automationCursors by remember {mutableStateOf(listOf<AutomationSummary?>(null))}
+    var moreAutomations by remember {mutableStateOf(false)}
+    var listLoading by remember {mutableStateOf(true)}
+    var listError by remember {mutableStateOf<String?>(null)}
     var skills by remember {mutableStateOf(emptyList<SkillDefinition>())}
     var selectedId by rememberSaveable {mutableStateOf<String?>(null)}
+    var selectedAutomation by remember {mutableStateOf<Automation?>(null)}
+    var selectionLoadedId by remember {mutableStateOf<String?>(null)}
     var draftJson by rememberSaveable {mutableStateOf<String?>(null)}
     var discardDraft by rememberSaveable {mutableStateOf(false)}
     var runs by remember {mutableStateOf(emptyList<AutomationRun>())}
+    var runFilter by rememberSaveable {mutableStateOf(AutomationRunFilter.ALL)}
+    var runCursors by remember {mutableStateOf(listOf<AutomationRun?>(null))}
+    var moreRuns by remember {mutableStateOf(false)}
+    var runsLoading by remember {mutableStateOf(false)}
+    var runsError by remember {mutableStateOf<String?>(null)}
     var inspectedRunId by rememberSaveable {mutableStateOf<String?>(null)}
     var inspectedRun by remember {mutableStateOf<SkillExecution?>(null)}
+    var inspectedLoadedId by remember {mutableStateOf<String?>(null)}
     var busy by remember {mutableStateOf(false)}
     var message by rememberSaveable {mutableStateOf("")}
     var capabilities by remember {mutableStateOf(emptyList<CapabilityStatus>())}
@@ -63,16 +84,17 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
     var notificationsAllowed by remember {mutableStateOf(false)}
     var ready by remember {mutableStateOf(false)}
     fun work(block:suspend ()->Unit) {
+        if(busy) return
+        busy=true
         scope.launch {
-            busy=true
-            try {withContext(Dispatchers.IO) {g.ready.await();block()};refresh++;onChanged()}
+            try {withContext(Dispatchers.IO) {g.ready.await();block()};refresh++;resourcesRefresh++;onChanged()}
             catch(e:CancellationException) {throw e}
             catch(e:Exception) {message=e.message ?: "Action could not complete";refresh++}
             finally {busy=false}
         }
     }
     DisposableEffect(lifecycle) {
-        val observer=object:DefaultLifecycleObserver {override fun onStart(owner:LifecycleOwner) {refresh++}}
+        val observer=object:DefaultLifecycleObserver {override fun onStart(owner:LifecycleOwner) {refresh++;resourcesRefresh++}}
         lifecycle.lifecycle.addObserver(observer)
         onDispose {lifecycle.lifecycle.removeObserver(observer)}
     }
@@ -81,24 +103,68 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
             g.ready.await();g.runner.runUpdates.collect {refresh++}
         }
     }
-    LaunchedEffect(g,refresh,selectedId,inspectedRunId) {
-        withContext(Dispatchers.IO) {
-            runCatching {
+    LaunchedEffect(search) {delay(250);query=search;automationCursors=listOf(null)}
+    LaunchedEffect(g,resourcesRefresh) {
+        try {
+            val loaded=withContext(Dispatchers.IO) {
                 g.ready.await()
                 val installed=g.skills.all()
-                skills=if(g.skills.exists(AutomationTemplates.NOTICE_SKILL)) installed else listOf(AutomationTemplates.notice())+installed
-                automations=g.scheduler.all();runs=selectedId?.let {g.scheduler.runs(it,30)} ?: emptyList()
-                inspectedRun=inspectedRunId?.let(g.skillRuns::get)
-                capabilities=g.registry.statuses();automationGrant=g.agents.grant("local-automation")
-                exactAllowed=g.context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
-                notificationsAllowed=g.context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
-                ready=true
-            }.onFailure {message="Could not load automations: ${it.javaClass.simpleName}"}
+                AutomationResources(if(g.skills.exists(AutomationTemplates.NOTICE_SKILL)) installed else listOf(AutomationTemplates.notice())+installed,
+                    g.registry.statuses(maxAgeMs=5_000),g.agents.grant("local-automation"),
+                    g.context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms(),
+                    g.context.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
+            }
+            skills=loaded.skills;capabilities=loaded.capabilities;automationGrant=loaded.grant
+            exactAllowed=loaded.exactAllowed;notificationsAllowed=loaded.notificationsAllowed;ready=true
+        } catch(e:CancellationException) {throw e}
+          catch(e:Exception) {message="Could not load automations: ${e.javaClass.simpleName}"}
+    }
+    LaunchedEffect(g,refresh,automationFilter,query,automationCursors) {
+        listLoading=true;listError=null
+        try {
+            val loaded=withContext(Dispatchers.IO) {g.ready.await();projections.automationPage(51,automationCursors.last(),automationFilter,query)}
+            automations=loaded.take(50);moreAutomations=loaded.size>50
+        } catch(e:CancellationException) {throw e}
+          catch(e:Exception) {listError="Could not load saved automations: ${e.javaClass.simpleName}"}
+        finally {listLoading=false}
+    }
+    LaunchedEffect(g,selectedId,refresh) {
+        val id=selectedId
+        if(selectedAutomation?.id!=id) selectedAutomation=null
+        selectionLoadedId=null
+        try {selectedAutomation=withContext(Dispatchers.IO) {g.ready.await();id?.let(g.scheduler::get)};selectionLoadedId=id}
+        catch(e:CancellationException) {throw e}
+        catch(e:Exception) {message="Could not load this automation: ${e.javaClass.simpleName}";selectionLoadedId=id}
+    }
+    LaunchedEffect(g,selectedId,refresh,runFilter,runCursors) {
+        val id=selectedId
+        runsLoading=true;runsError=null
+        try {
+            val loaded=withContext(Dispatchers.IO) {g.ready.await();if(id==null) emptyList() else projections.runPage(id,31,runCursors.last(),runFilter)}
+            runs=loaded.take(30);moreRuns=loaded.size>30
+        } catch(e:CancellationException) {throw e}
+          catch(e:Exception) {runsError="Could not load run history: ${e.javaClass.simpleName}"}
+        finally {runsLoading=false}
+    }
+    LaunchedEffect(g,inspectedRunId,lifecycle) {
+        val id=inspectedRunId
+        inspectedRun=null;inspectedLoadedId=null
+        if(id!=null) lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            coroutineScope {
+                val wakes=Channel<Unit>(Channel.CONFLATED)
+                launch(start=CoroutineStart.UNDISPATCHED) {g.runner.runUpdates.collect {if(it.runId==id) wakes.trySend(Unit)}}
+                wakes.trySend(Unit)
+                try {for(wake in wakes) {
+                    try {inspectedRun=withContext(Dispatchers.IO) {g.ready.await();g.skillRuns.get(id)};inspectedLoadedId=id}
+                    catch(e:CancellationException) {throw e}
+                    catch(e:Exception) {message="Could not load this run: ${e.javaClass.simpleName}"}
+                }} finally {wakes.close()}
+            }
         }
     }
-    val selected=automations.firstOrNull {it.id==selectedId}
+    val selected=selectedAutomation?.takeIf {it.id==selectedId}
     val draft=draftJson?.let {AppJson.decodeFromString(AutomationDraft.serializer(),it)}
-    fun closeSelection() {draftJson=null;selectedId=null;inspectedRunId=null}
+    fun closeSelection() {draftJson=null;selectedId=null;inspectedRunId=null;runCursors=listOf(null)}
     fun leave() {if(draftJson!=null) discardDraft=true else closeSelection()}
     BackHandler(enabled=draftJson!=null || selectedId!=null) {leave()}
     if(discardDraft) AlertDialog(onDismissRequest={discardDraft=false},
@@ -115,7 +181,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
     fun startNew() { (skills.firstOrNull {it.id==AutomationTemplates.NOTICE_SKILL} ?: skills.firstOrNull())?.let(::startTemplate) }
     fun settings(action:String) {runCatching {g.context.startActivity(Intent(action).setData(Uri.parse("package:${g.context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure {message="Open Android Settings → SIConnect to change this access"}}
     PageLayout(modifier) {
-        PageHeader(if(draft!=null) if(selected!=null) "Edit automation" else "New automation" else if(selected!=null) selected.label.ifBlank {"Automation"} else "Automations",
+        PageHeader(if(draft!=null) if(selectedId!=null) "Edit automation" else "New automation" else if(selected!=null) selected.label.ifBlank {"Automation"} else "Automations",
             if(draft!=null) "Choose the action, timing, and access. Review before saving." else "Build a routine. Let your phone handle the repeat.") {
             if(draft!=null || selectedId!=null) TextButton(onClick=::leave,enabled=!busy) {Text("Back")}
             else Button(onClick=::startNew,enabled=ready && !busy && skills.isNotEmpty()) {Text("New")}
@@ -124,7 +190,16 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
             Text(message);TextButton(onClick={message=""}) {Text("Dismiss")}
         }}
         if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if(!ready) {Text("Loading saved workflows and schedules…");return@PageLayout}
+        if(!ready) {
+            Text("Loading saved workflows and schedules…")
+            if(message.isNotBlank()) TextButton(onClick={resourcesRefresh++}) {Text("Retry loading")}
+            return@PageLayout
+        }
+        if(selectedId!=null && selected==null) {
+            if(selectionLoadedId!=selectedId) {LinearProgressIndicator(Modifier.fillMaxWidth());Text("Loading this automation…")}
+            else EmptyState("Automation unavailable","Return to saved automations and choose another schedule.")
+            return@PageLayout
+        }
         if(draft!=null) {
             val definition=skills.firstOrNull {it.id==draft.skillId}
             if(definition==null) {Text("This workflow is unavailable. Enable it in workflow management before editing.");return@PageLayout}
@@ -261,6 +336,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                             val id=selected.id;val revision=selected.revision;val slot=System.currentTimeMillis()
                             authenticate("Run ${selected.label.ifBlank {"automation"}} now",{work {
                                 val idRun=g.scheduler.runNow(id,slot,revision)
+                                runCursors=listOf(null);runFilter=AutomationRunFilter.ALL
                                 inspectedRunId=idRun;message="Run queued. The saved schedule is unchanged."
                             }},{message=it})
                         },enabled=!busy) {Text("Run now")}
@@ -272,7 +348,15 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     },enabled=!busy)}
                     HorizontalDivider()
                     Text("Run history",style=MaterialTheme.typography.titleMedium)
-                    if(runs.isEmpty()) Text("No runs yet")
+                    FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        listOf(AutomationRunFilter.ALL to "All runs",AutomationRunFilter.ACTIVE to "Active",
+                            AutomationRunFilter.ATTENTION to "Needs attention",AutomationRunFilter.COMPLETED to "Completed").forEach {(value,label)->
+                            FilterChip(selected=runFilter==value,onClick={runFilter=value;runCursors=listOf(null);inspectedRunId=null},label={Text(label)})
+                        }
+                    }
+                    if(runsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    runsError?.let {Text(it,color=MaterialTheme.colorScheme.error);TextButton(onClick={refresh++}) {Text("Retry history")}}
+                    if(!runsLoading && runs.isEmpty() && runsError==null) Text(if(runFilter==AutomationRunFilter.ALL) "No runs yet" else "No runs match this filter")
                 }
                 items(runs,key={it.runId}) {run->
                     OutlinedCard(onClick={inspectedRunId=if(inspectedRunId==run.runId) null else run.runId}) {Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
@@ -280,7 +364,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         Text(formatTime(run.slotAt,selected.zoneId,locale),style=MaterialTheme.typography.bodySmall)
                         run.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
                         if(inspectedRunId==run.runId) {
-                            val execution=inspectedRun
+                            val execution=inspectedRun?.takeIf {it.runId==run.runId}
                             if(execution!=null) {
                                 Text(if(execution.payloadExpired) "Result payload expired · original outcome retained" else "${execution.cursor} of ${execution.definition.steps.size} steps recorded",style=MaterialTheme.typography.bodySmall)
                                 Text("Started: ${formatTime(execution.startedAtMs,selected.zoneId,locale)}",style=MaterialTheme.typography.bodySmall)
@@ -299,12 +383,21 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                                     Text(text.take(6000),style=MaterialTheme.typography.bodySmall)
                                     if(text.length>6000) Text("Preview limited to 6,000 characters; full result remains in the stored workflow.",style=MaterialTheme.typography.bodySmall)
                                 }
+                            } else if(inspectedLoadedId!=run.runId) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth());Text("Loading this run…",style=MaterialTheme.typography.bodySmall)
                             } else {
                                 Text(if(run.state=="READY") "Queued durably; waiting for its worker" else "No skill details retained for this run",style=MaterialTheme.typography.bodySmall)
                                 if(run.state in setOf("READY","RUNNING")) TextButton(onClick={val id=run.runId;work {g.scheduler.cancelRun(id);message="Queued run cancelled"}},enabled=!busy) {Text("Cancel this run")}
                             }
                         }
                     }}
+                }
+                item {
+                    Text("History page ${runCursors.size} · ${runs.size} runs",style=MaterialTheme.typography.labelSmall)
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                        TextButton(onClick={runCursors=runCursors.dropLast(1);inspectedRunId=null},enabled=!runsLoading && runCursors.size>1) {Text("Newer runs")}
+                        TextButton(onClick={runs.lastOrNull()?.let {runCursors=runCursors+it;inspectedRunId=null}},enabled=!runsLoading && moreRuns) {Text("Older runs")}
+                    }
                 }
             }
         } else {
@@ -324,6 +417,15 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         if(!LocalExpandedLayout.current) {templates();Spacer(Modifier.height(20.dp))}
                         SectionHeading("Saved automations")
                         Text("Android can delay scheduled work. Screen actions and approvals need your interaction.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(search,{search=it.take(200)},label={Text("Find saved automations")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                            listOf(AutomationFilter.ALL to "All",AutomationFilter.ENABLED to "Enabled",AutomationFilter.PAUSED to "Paused",
+                                AutomationFilter.ATTENTION to "Needs attention").forEach {(value,label)->
+                                FilterChip(selected=automationFilter==value,onClick={automationFilter=value;automationCursors=listOf(null)},label={Text(label)})
+                            }
+                        }
+                        if(listLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        listError?.let {Text(it,color=MaterialTheme.colorScheme.error);TextButton(onClick={refresh++}) {Text("Retry saved automations")}}
                     }
                 val healthUpgrade=skills.firstOrNull {AutomationTemplates.upgradeableHealth(it)}
                 if(healthUpgrade!=null) item {
@@ -336,16 +438,26 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         }},{message=it})},enabled=!busy) {Text("Upgrade health snapshot")}
                     }}
                 }
-                if(automations.isEmpty()) item {EmptyState("Your first routine starts here","Choose a template above or create an automation.",R.drawable.ic_nav_automations)}
+                if(!listLoading && automations.isEmpty() && listError==null) item {
+                    if(query.isBlank() && automationFilter==AutomationFilter.ALL) EmptyState("Your first routine starts here","Choose a template above or create an automation.",R.drawable.ic_nav_automations)
+                    else EmptyState("No matching automations","Try another name or schedule filter.")
+                }
                 items(automations,key={it.id}) {a->
-                    OutlinedCard(onClick={selectedId=a.id;inspectedRunId=null},modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    OutlinedCard(onClick={selectedId=a.id;inspectedRunId=null;runCursors=listOf(null);runFilter=AutomationRunFilter.ALL},modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                         Text(a.label.ifBlank {a.id},style=MaterialTheme.typography.titleMedium)
                         skills.firstOrNull {it.id==a.skillId}?.let {Text(BackgroundExecution.description(it,capabilities),style=MaterialTheme.typography.bodySmall)}
                         StatusPill(if(a.enabled) a.scheduleState.lowercase().replace('_',' ') else "Paused",if(a.enabled) StatusTone.GOOD else StatusTone.NEUTRAL)
-                        if(a.enabled) Text("Next: ${formatTime(a.nextAtMs,a.zoneId,locale)}",style=MaterialTheme.typography.bodyMedium)
+                        if(a.enabled) Text(a.nextAtMs?.let {"Next: ${formatTime(it,a.zoneId,locale)}"} ?: "Next run time unavailable",style=MaterialTheme.typography.bodyMedium)
                         a.lastState?.let {Text("Last run: ${it.lowercase().replace('_',' ')}",style=MaterialTheme.typography.bodySmall)}
                         a.error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
                     }}
+                }
+                item {
+                    Text("Page ${automationCursors.size} · ${automations.size} automations",style=MaterialTheme.typography.labelSmall)
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                        TextButton(onClick={automationCursors=automationCursors.dropLast(1)},enabled=!listLoading && automationCursors.size>1) {Text("Previous automations")}
+                        TextButton(onClick={automations.lastOrNull()?.let {automationCursors=automationCursors+it}},enabled=!listLoading && moreAutomations) {Text("More automations")}
+                    }
                 }
                 }
             }

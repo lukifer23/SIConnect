@@ -39,6 +39,9 @@ class SkillCatalog(private val db: SIConnectDb, private val registry: Capability
     }
     fun all(includeDisabled:Boolean=false): List<SkillDefinition> = db.readableDatabase.query("skills", arrayOf("json"), if(includeDisabled) null else "enabled=1", null, null, null, null)
         .mapAll { SkillJson.parse(it.getString(0)) }
+    /** Owner projection: definition and enabled state come from the same SQLite cursor. */
+    fun rowsIncludingDisabled():List<Pair<SkillDefinition,Boolean>> = db.readableDatabase.query("skills",arrayOf("json","enabled"),null,null,null,null,"skill_id")
+        .mapAll {SkillJson.parse(it.getString(0)) to (it.getInt(1)==1)}
     /** Atomic owner update: a changed or disabled definition cannot be overwritten after review. */
     fun replaceIfUnchanged(expected:SkillDefinition,replacement:SkillDefinition) {
         require(expected.id==replacement.id && replacement.version>expected.version) {"Invalid workflow upgrade"}

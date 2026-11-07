@@ -1,6 +1,6 @@
 # Development setup
 
-Current source: Android **0.6.0-dev.17 / code 25**, SQLite **11**, **104** phone tools plus gateway status. See [the November 6 review](source-audit-2026-11-06.md) for host and focused physical verification, [project status](project-status.md) and [the build plan](build-plan.md). The installed debug checkpoint is code 25 with verified native Termux recovery, private scrolling/capture and normal-process readiness. [Pass 19](engineering-pass-19.md) tracks new fixes and pending acceptance. Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
+Current installed source: Android **0.6.0-dev.18 / code 26**, SQLite **12**, **104 phone tools / 105 MCP tools**. See [pass 21](engineering-pass-21.md) for current host/device validation and expanded UI acceptance, [project status](project-status.md) and [the build plan](build-plan.md). [Pass 20](engineering-pass-20.md) records the preceding native/private/recovery checkpoint; the [November 6 audit](source-audit-2026-11-06.md) describes historical code 21.
 
 The [code-25 native/background checkpoint](engineering-pass-20.md) records 207 host tests, eight focused device cases, actual Termux timeout/PID-death recovery, native Codex sign-in verification and the existing Dot catalog refreshed to 105 tools.
 ## Host toolchain (macOS, Apple silicon)
@@ -85,7 +85,7 @@ npm audit --audit-level=high
 
 ## In-place update and recovery
 
-The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-11 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
+The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-12 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
 
 ## Shutdown and generated files
 
@@ -95,7 +95,7 @@ Build outputs and `gateway/node_modules` are regenerable. Keep `local.properties
 
 ## Optimized installation checkpoint
 
-Historical code 14 used a minified development-signed APK with the existing compatible signer; debug fixtures and LocalEndpoint were absent. The current code-25 installation is a compatible debug build; its separately built minified release remains unsigned and uninstalled. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
+Historical code 14 used a minified development-signed APK with the existing compatible signer; debug fixtures and LocalEndpoint were absent. The current code-26 installation is a compatible debug build; its separately built minified release remains unsigned and uninstalled. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
 
 ```sh
 ./gradlew :app:assembleDebugAndroidTest -PinstallationCheckpoint=true

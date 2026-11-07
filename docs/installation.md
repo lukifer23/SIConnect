@@ -1,9 +1,10 @@
 # Installation, updates and signing
 
-The current control-center refresh is **0.6.0-dev.17 / code 25 / SQLite 11** with the existing compatible development signer. It restores the disabled package in place and preserves owner records and credentials. See [current status and verification](project-status.md). Code-21 evidence below describes the preceding backend milestone.
+The current control-center refresh is **0.6.0-dev.18 / code 26 / SQLite 12** with the existing compatible development signer. It restores the disabled package in place and preserves owner records and credentials. See [current status and verification](project-status.md). Code-21 evidence below describes the preceding backend milestone.
 
+Current code-26 host/device validation and expanded UI acceptance are recorded in [pass 21](engineering-pass-21.md).
 The [code-25 native/background checkpoint](engineering-pass-20.md) records 207 host tests, eight focused device cases, actual Termux timeout/PID-death recovery, native Codex sign-in verification and the existing Dot catalog refreshed to 105 tools.
-The earlier code-24 checkpoint fixed observed private scrolling/capture and added phone transport timing. See [pass 19](engineering-pass-19.md) for that historical evidence; code 25 is the current installed checkpoint.
+The earlier code-24 checkpoint fixed observed private scrolling/capture and added phone transport timing. See [pass 19](engineering-pass-19.md) for that historical evidence; code 26 is the current installed checkpoint.
 Preceding backend milestone: **0.6.0-dev.13 / versionCode 21 / SQLite 11**. The [November 6 review](source-audit-2026-11-06.md) verified the existing signer before an in-place update, then checked exact original owner records, SQLite integrity and hosted native/privileged execution. No replacement signing key was generated. The minified artifact remains unsigned; no public production-signed distribution channel has been validated. Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
 
 ## Preserve the existing installation
@@ -20,7 +21,7 @@ The workflow refuses incomplete signing configuration, builds/tests/lints, verif
 
 ## Database continuity
 
-Schema 9 added request tombstones, schema 10 added a bounded health-alert ledger and schema 11 adds execution-retention/history projections. These migrations preserve existing tables and owner records. Retention remains disabled until locally chosen; legacy workflows receive a fresh retention interval. Never downgrade an installed schema-11 database to an older-schema APK or wipe data as recovery. Retain a compatible current APK and a private owner-controlled recovery point. APK signature continuity and database integrity are separate checks. See [pass 16](engineering-pass-16.md) for the current preservation checkpoint; older installation results below retain their historical versions.
+Schema 9 added request tombstones, schema 10 added a bounded health-alert ledger, schema 11 added execution-retention/history projections, and schema 12 adds indexed reminder/automation display metadata with streaming backfill. These migrations preserve existing tables and original owner JSON. Retention remains disabled until locally chosen; legacy workflows receive a fresh retention interval. Never downgrade an installed schema-12 database to an older-schema APK or wipe data as recovery. Retain a compatible current APK and a private owner-controlled recovery point. APK signature continuity and database integrity are separate checks. See [pass 21](engineering-pass-21.md) for the current preservation checkpoint; older installation results below retain their historical versions.
 
 ## Pass 12 local signed-preview validation
 

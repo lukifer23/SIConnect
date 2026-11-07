@@ -30,9 +30,25 @@ import dev.siconnect.app.automation.Automation
 import dev.siconnect.app.transport.ConnectionService
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.map
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import kotlinx.serialization.json.*
 
-@Composable private fun SettingsAccessItem(title:String,status:String,action:String,onAction:()->Unit,explanation:String?=null) {
+private data class SettingsWorkflowRow(val definition:SkillDefinition,val enabled:Boolean)
+
+/** Draft definitions and credentials survive rotation in memory, never in an Android state Bundle. */
+private class ManagementDrafts(initialUrl:String):ViewModel() {
+    val workflow=mutableStateOf("")
+    val credential=mutableStateOf("")
+    val url=mutableStateOf(initialUrl)
+    val message=mutableStateOf("")
+}
+
+@Composable private fun SettingsAccessItem(title:String,status:String,action:String,onAction:()->Unit,explanation:String?=null,actionEnabled:Boolean=true) {
     Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
@@ -40,7 +56,7 @@ import kotlinx.serialization.json.*
                     Text(title,style=MaterialTheme.typography.titleMedium)
                     Text(status,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick=onAction,modifier=Modifier.semantics {contentDescription="$action $title"}) {Text(action)}
+                TextButton(onClick=onAction,enabled=actionEnabled,modifier=Modifier.semantics {contentDescription="$action $title"}) {Text(action)}
             }
             explanation?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
         }
@@ -64,6 +80,11 @@ private fun MainActivity.openScreenControlSettings():Boolean {
 
 @Composable internal fun MainActivity.Management(initialTab:String="Settings",onSetup:()->Unit,onGateway:()->Unit,onAdvancedControl:()->Unit) {
         val g=graph; val scope=rememberCoroutineScope()
+        val drafts=remember {
+            ViewModelProvider(this,object:ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST") override fun <T:ViewModel> create(modelClass:Class<T>):T=ManagementDrafts(g.settings.gateway.value.baseUrl) as T
+            })[ManagementDrafts::class.java]
+        }
         val expanded=LocalExpandedLayout.current
         val health by g.health.collectAsState(); val shizuku by g.shizuku.status.collectAsState(); val direct by g.privileged.directStatus.collectAsState(); val connection by g.gateway.state.collectAsState()
         val controls by g.settings.controls.collectAsState()
@@ -83,7 +104,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
         val pageState=rememberSaveableStateHolder()
         LaunchedEffect(expanded) {if(expanded && settingsPage==null && tab=="Settings") settingsPage="Connections"}
         BackHandler(settingsPage!=null || tab!="Settings") {settingsPage=null;tab="Settings"}
-        var refresh by remember { mutableIntStateOf(0) }; var message by remember { mutableStateOf("") }
+        var refresh by remember { mutableIntStateOf(0) }; var message by drafts.message
         var restoringScreenControl by rememberSaveable {mutableStateOf(false)}
         LaunchedEffect(semanticConnected,restoringScreenControl) {
             if(restoringScreenControl && semanticConnected) {
@@ -91,25 +112,27 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                 restoringScreenControl=false
             }
         }
-        var events by remember { mutableStateOf(emptyList<Event>()) }
-        var skills by remember { mutableStateOf(emptyList<SkillDefinition>()) }
-        var roots by remember { mutableStateOf(emptyList<DocumentRoot>()) }
-        var capabilities by remember { mutableStateOf(emptyList<CapabilityStatus>()) }
+        var events by remember { mutableStateOf<List<Event>?>(null) }
+        var skills by remember { mutableStateOf<List<SettingsWorkflowRow>?>(null) }
+        var roots by remember { mutableStateOf<List<DocumentRoot>?>(null) }
+        var capabilities by remember { mutableStateOf<List<CapabilityStatus>?>(null) }
         var toolSearch by rememberSaveable {mutableStateOf("")}
         var readyToolsOnly by rememberSaveable {mutableStateOf(false)}
         var toolsNeedingSetup by rememberSaveable {mutableStateOf(false)}
-        var skillJson by remember { mutableStateOf("") }
-        var url by remember { mutableStateOf(g.settings.gateway.value.baseUrl) }
-        var gatewaySecret by remember { mutableStateOf("") }
+        var skillJson by drafts.workflow
+        var url by drafts.url
+        var gatewaySecret by drafts.credential
+        var approvalId by rememberSaveable {mutableStateOf<String?>(null)}
         var approve by remember { mutableStateOf<RequestRecord?>(null) }
+        var approvalError by remember {mutableStateOf<String?>(null)}
         var busy by remember {mutableStateOf(false)}
         var removeSkill by remember {mutableStateOf<SkillDefinition?>(null)}
         fun action(block: suspend ()->Unit) {
             if(busy) return
-            busy=true
+            busy=true;message=""
             scope.launch {
                 try {withContext(Dispatchers.IO) {g.ready.await();block()};refresh++}
-                catch(e:CancellationException) {throw e}
+                catch(e:CancellationException) {message="The action left this screen before its outcome was confirmed. Review current settings and Activity before repeating it.";throw e}
                 catch(e:Exception) {message=e.message ?: e.javaClass.simpleName}
                 finally {busy=false}
             }
@@ -127,20 +150,43 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                 message="Saved ${records.size} redacted diagnostic events to your selected file."
             }
         }
-        LaunchedEffect(refresh,tab,health,shizuku,permissionRevision) {
-            withContext(Dispatchers.IO) {
+        val loadTarget=when {tab=="Settings" && settingsPage=="Connected folders"->"Folders";tab in setOf("Capabilities","Skills","Diagnostics")->tab;else->null}
+        var pageLoading by remember {mutableStateOf(false)}
+        var loadError by remember {mutableStateOf<Pair<String,String>?>(null)}
+        val loadGeneration=remember {intArrayOf(0)}
+        val hasPageData=when(loadTarget) {"Folders"->roots!=null;"Skills"->skills!=null;"Capabilities"->capabilities!=null;"Diagnostics"->events!=null;else->true}
+        val pageReady=hasPageData && !pageLoading && loadError?.first!=loadTarget
+        LaunchedEffect(refresh,loadTarget,permissionRevision,if(loadTarget=="Capabilities") health else "",if(loadTarget=="Capabilities") direct else "",if(loadTarget=="Capabilities") shizuku else "",if(loadTarget=="Capabilities") controls else null) {
+            val generation=++loadGeneration[0]
+            pageLoading=loadTarget!=null;loadError=null
+            if(loadTarget==null) return@LaunchedEffect
+            try {
+                withContext(Dispatchers.IO) {g.ready.await()}
+                when(loadTarget) {
+                    "Folders"->roots=withContext(Dispatchers.IO) {DocumentRoots(g.context,g.db).all()}
+                    "Capabilities"->capabilities=withContext(Dispatchers.IO) {g.registry.statuses()}
+                    "Skills"->skills=withContext(Dispatchers.IO) {g.skills.rowsIncludingDisabled().map {(definition,enabled)->SettingsWorkflowRow(definition,enabled)}}
+                    "Diagnostics"->events=withContext(Dispatchers.IO) {g.events.query(limit=50)}
+                }
+            } catch(e:CancellationException) {throw e}
+            catch(_:Exception) {loadError=loadTarget to "Could not load this page. Your saved settings have not been changed."}
+            finally {if(loadGeneration[0]==generation) pageLoading=false}
+        }
+        LaunchedEffect(tab) {if(tab=="Diagnostics") g.engine.recordUpdates.conflate().collect {refresh++}}
+        LaunchedEffect(approvalId) {
+            approve=null;approvalError=null
+            val id=approvalId ?: return@LaunchedEffect
+            g.engine.recordUpdates.filter {it.requestId==id}.map {Unit}.onStart {emit(Unit)}.conflate().collect {
                 try {
-                    g.ready.await()
-                    when(tab) {
-                        "Settings"->roots=DocumentRoots(this@Management,g.db).all()
-                        "Capabilities"->capabilities=g.registry.statuses()
-                        "Skills"->skills=g.skills.all(includeDisabled=true)
-                        "Diagnostics"->events=g.events.query(limit=50)
+                    val current=withContext(Dispatchers.IO) {g.ready.await();g.requests.get(id)}
+                    if(approvalId==id) {
+                        approve=current
+                        approvalError=if(current==null) "This request is no longer available. Check its retained outcome in Activity before requesting another action." else null
                     }
-                } catch(e:CancellationException) {throw e} catch(e:Exception) {message="Could not refresh settings: ${e.javaClass.simpleName}"}
+                } catch(e:CancellationException) {throw e}
+                catch(_:Exception) {if(approvalId==id) {approve=null;approvalError="This review could not be loaded. Your existing request has not been resubmitted."}}
             }
         }
-        LaunchedEffect(tab) { if(tab=="Diagnostics") g.engine.recordUpdates.collect { refresh++ } }
         PageLayout {
             PageHeader(if(expanded) "Settings" else if(tab=="Settings") settingsPage ?: "Settings" else tab,
                 if(settingsPage==null && tab=="Settings") "Make this phone work the way you want." else "Your phone’s access and preferences.") {
@@ -150,6 +196,14 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                 listOf("Settings","Capabilities","Skills","Diagnostics").forEach {t->FilterChip(selected=tab==t,onClick={tab=t},label={Text(t)})}
             }
             if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(loadTarget!=null && (pageLoading || (!hasPageData && loadError==null))) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(if(hasPageData) "Refreshing saved information…" else "Loading saved information…",style=MaterialTheme.typography.bodySmall)
+            }
+            loadError?.takeIf {it.first==loadTarget}?.let {(_,error)->
+                Notice(if(hasPageData) "$error Showing the last loaded information." else error,true)
+                TextButton(onClick={refresh++},enabled=!pageLoading) {Text("Retry loading")}
+            }
             if(message.isNotBlank()) Row(verticalAlignment=Alignment.CenterVertically) {
                 Text(message,Modifier.weight(1f).semantics {liveRegion=LiveRegionMode.Polite},style=MaterialTheme.typography.bodyMedium)
                 TextButton(onClick={message=""}) {Text("Dismiss")}
@@ -177,9 +231,9 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             FilterChip(readyToolsOnly,{readyToolsOnly=true;toolsNeedingSetup=false},label={Text("Ready to use")})
                             FilterChip(toolsNeedingSetup,{toolsNeedingSetup=true;readyToolsOnly=false},label={Text("Needs setup")})
                         }
-                        val shown=capabilities.filter {(!readyToolsOnly || it.availability.isExecutable) && (!toolsNeedingSetup || !it.availability.isExecutable) &&
+                        val shown=capabilities.orEmpty().filter {(!readyToolsOnly || it.availability.isExecutable) && (!toolsNeedingSetup || !it.availability.isExecutable) &&
                             (it.descriptor.id+" "+it.descriptor.title+" "+it.descriptor.description).contains(toolSearch,true)}
-                        Text("${shown.size} matching tools · ${capabilities.count {it.availability.isExecutable}} ready on this phone",style=MaterialTheme.typography.labelMedium)
+                        if(capabilities!=null) Text("${shown.size} matching tools · ${capabilities.orEmpty().count {it.availability.isExecutable}} ready on this phone",style=MaterialTheme.typography.labelMedium)
                         shown.groupBy {it.descriptor.id.substringBefore('.')}.toSortedMap().forEach {(family,tools)->
                             val title=mapOf("ui" to "Shared-screen interaction","headless" to "Private app workspaces","shell" to "Privileged shell","device" to "Device diagnostics","documents" to "Selected documents","files" to "Managed files","termux" to "Termux background commands","system" to "System operations","requests" to "Request results")[family]
                                 ?: family.replace('_',' ').replaceFirstChar {it.uppercase()}
@@ -196,7 +250,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                                 }
                             }
                         }
-                        if(shown.isEmpty()) EmptyState("No matching tools","Try another search or select All tools.")
+                        if(pageReady && shown.isEmpty()) EmptyState("No matching tools","Try another search or select All tools.")
                     }
                     "Skills" -> {
                         ExpandablePanel("Install a workflow","Paste a definition, then validate it before installation") {
@@ -207,9 +261,8 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             },enabled=!busy && skillJson.isNotBlank()) {Text("Validate and install")}
                         }
                         SectionHeading("Installed workflows")
-                        if(skills.isEmpty()) EmptyState("No workflows installed","Install a validated definition to make it available for local automation.")
-                        skills.forEach {def->
-                            val enabled=g.skills.isEnabled(def.id)
+                        if(pageReady && skills.orEmpty().isEmpty()) EmptyState("No workflows installed","Install a validated definition to make it available for local automation.")
+                        skills.orEmpty().forEach {(def,enabled)->
                             Panel {
                                 Text(def.id.replace('.',' ').replace('_',' ').replaceFirstChar {it.uppercase()},style=MaterialTheme.typography.titleMedium)
                                 StatusPill(if(enabled) "Enabled" else "Disabled",if(enabled) StatusTone.GOOD else StatusTone.NEUTRAL)
@@ -220,9 +273,9 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                                         val id="skill:${java.util.UUID.randomUUID()}"
                                         val r=g.runner.start(def,JsonObject(emptyMap()),ExecutionContext(id,id,"local-owner",g.settings.deviceId),Origin.LOCAL_OWNER)
                                         message="${r.runId}: ${r.state}"
-                                    }},{message=it})},enabled=!busy && enabled) {Text("Run once")}
-                                    OutlinedButton(onClick={if(enabled) action {g.skills.enable(def.id,false)} else ownerAuthentication.authenticate("Enable workflow",{action {g.skills.enable(def.id,true)}},{message=it})},enabled=!busy) {Text(if(enabled) "Disable" else "Enable")}
-                                    TextButton(onClick={removeSkill=def},enabled=!busy) {Text("Remove",color=MaterialTheme.colorScheme.error)}
+                                    }},{message=it})},enabled=!busy && pageReady && enabled) {Text("Run once")}
+                                    OutlinedButton(onClick={if(enabled) action {g.skills.enable(def.id,false)} else ownerAuthentication.authenticate("Enable workflow",{action {g.skills.enable(def.id,true)}},{message=it})},enabled=!busy && pageReady) {Text(if(enabled) "Disable" else "Enable")}
+                                    TextButton(onClick={removeSkill=def},enabled=!busy && pageReady) {Text("Remove",color=MaterialTheme.colorScheme.error)}
                                 }
                             }
                         }
@@ -243,8 +296,8 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             Button(onClick={ownerAuthentication.authenticate("Save redacted diagnostics",{exportDiagnostics.launch("siconnect-diagnostics.jsonl")},{message=it})},enabled=!busy) {Text("Save redacted diagnostics")}
                         }
                         SectionHeading("Recent diagnostic events")
-                        if(events.isEmpty()) EmptyState("No retained events","New runtime and connection events will appear here.")
-                        events.forEach {event->Panel {
+                        if(pageReady && events.orEmpty().isEmpty()) EmptyState("No retained events","New runtime and connection events will appear here.")
+                        events.orEmpty().forEach {event->Panel {
                             Text(event.eventType.replace('.',' '),style=MaterialTheme.typography.titleSmall)
                             Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.MEDIUM).format(java.util.Date(event.timestampMs)),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                             event.capabilityId?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
@@ -293,7 +346,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                         OutlinedButton(onClick=onSetup) {Text("Guided setup and verification")}
 
                         }
-                        if(settingsPage=="Termux") {TermuxSettings(onReview={approve=it})}
+                        if(settingsPage=="Termux") {TermuxSettings(onReview={approvalId=it.requestId})}
                         if(settingsPage=="Android access") {
                             Text("Access belongs to this phone. Agent permissions are managed separately in Agents.",style=MaterialTheme.typography.bodySmall)
                         if(permissionStatus.isNotBlank()) Text(permissionStatus)
@@ -324,10 +377,10 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                         }
                         if(settingsPage=="Connected folders") {
                             Text("Connected folders",style=MaterialTheme.typography.titleMedium)
-                        Text(if(roots.isEmpty()) "No folders selected. Android lets you choose shared folders; protected app storage is excluded." else "${roots.size} selected. Android access and each agent’s document grant are required.",style=MaterialTheme.typography.bodySmall)
+                        if(roots!=null) Text(if(roots.orEmpty().isEmpty()) "No folders selected. Android lets you choose shared folders; protected app storage is excluded." else "${roots.orEmpty().size} selected. Android access and each agent’s document grant are required.",style=MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick={ownerAuthentication.authenticate("Connect document folder",{documentPicker.launch(null)},{documentStatus=it})}) {Text("Choose folder")}
                         if(documentStatus.isNotBlank()) Text(documentStatus)
-                        roots.forEach {root->SettingsAccessItem(root.label,"Selected folder","Disconnect",{action {DocumentRoots(this@Management,g.db).remove(root.id);g.gateway.refreshCatalog();documentStatus="";message="Folder access removed"}})}
+                        roots.orEmpty().forEach {root->SettingsAccessItem(root.label,"Selected folder","Disconnect",{action {DocumentRoots(this@Management,g.db).remove(root.id);g.gateway.refreshCatalog();documentStatus="";message="Folder access removed"}},actionEnabled=!busy && pageReady)}
 
                         }
                         if(settingsPage=="Background & timing") {
@@ -412,9 +465,14 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                 }},enabled=!busy) {Text("Remove workflow")}},
                 dismissButton={TextButton(onClick={removeSkill=null}) {Text("Keep workflow")}})
         }
-        approve?.let { r -> OwnerApprovalDialog(r,error=message,onClose={approve=null},onDeny={action {approve=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
+        approve?.let { r -> OwnerApprovalDialog(r,error=message,onClose={approvalId=null;approve=null},onDeny={action {g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
             ownerAuthentication.authenticate("Approve ${r.capabilityId}",{
-                if(approve?.requestId==r.requestId) action {approve=g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
+                if(approvalId==r.requestId) action {g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
             },{message=it})
         }) }
+        if(approvalId!=null && approve==null) AlertDialog(onDismissRequest={approvalId=null},title={Text("Saved owner review")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                if(approvalError==null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(approvalError ?: "Loading the original request and its current outcome…")
+            }},confirmButton={TextButton(onClick={approvalId=null}) {Text("Close")}})
     }

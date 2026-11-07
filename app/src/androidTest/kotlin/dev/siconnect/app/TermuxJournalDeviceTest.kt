@@ -3,6 +3,9 @@ package dev.siconnect.app
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.siconnect.app.termux.TermuxJournal
 import dev.siconnect.app.termux.TermuxContract
+import dev.siconnect.app.termux.awaitTermuxResult
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -10,6 +13,24 @@ import java.util.UUID
 
 /** Actual disposable Android SQLite journal; does not start Termux or touch its files. */
 class TermuxJournalDeviceTest {
+    @Test fun committedSqliteCallbackWinsWhenWaiterNotificationMissesTheDeadline()=runBlocking {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val name="termux-journal-test-${UUID.randomUUID()}.db"
+        val journal=TermuxJournal(context,name)
+        try {
+            journal.prepare("committed","owner-a","nonce",12345,118,1000,2000,2100,1024)
+            journal.markDispatch("committed",2001)
+            assertTrue(journal.receive("committed","nonce",buildJsonObject {
+                put("executionErrorCode",TermuxContract.RESULT_ERR_SUCCESS);put("exitCode",0);put("commandSucceeded",true)
+            },2002))
+            val signal=CompletableDeferred<Unit>()
+            val actual=awaitTermuxResult(10,signal) {journal.entry("committed")?.takeIf {it.result!=null}}
+            assertNotNull("Real committed SQLite result must not become a false pending outcome",actual)
+            assertEquals("RESULT_RECEIVED",actual?.phase)
+            assertEquals("COMPLETED",actual?.waitStatus)
+            assertFalse(signal.isCompleted)
+        } finally {journal.close();context.deleteDatabase(name)}
+    }
     @Test fun lateCallbacksSurviveReopenAreDeduplicatedAndRespectExplicitPayloadRetention() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val name="termux-journal-test-${UUID.randomUUID()}.db"

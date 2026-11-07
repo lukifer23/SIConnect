@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.siconnect.app.graph
 import dev.siconnect.app.termux.TermuxBridge
+import dev.siconnect.app.termux.TermuxOwnerChecks
 import dev.siconnect.app.termux.TermuxStatus
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
@@ -26,8 +27,6 @@ import java.util.UUID
 
 private const val OWNER_CHECKS="termux_owner_checks"
 private const val PREFIX="/data/data/com.termux/files/usr/bin/"
-// Suppress CLI authentication output before it can enter the durable execution journal.
-private const val CODEX_CHECK="command -v codex >/dev/null 2>&1 || exit 127; set -- \"$(command -v codex)\"; case \"$(readlink -f \"$1\")\" in *.js|*.mjs|*.cjs) node \"$1\" login status >/dev/null 2>&1 ;; *) \"$1\" login status >/dev/null 2>&1 ;; esac"
 private data class TermuxOwnerState(val status:TermuxStatus,val probe:RequestRecord?,val codex:RequestRecord?,val probeOutput:JsonObject?,val codexOutput:JsonObject?)
 
 /** Package checks, journal reads, and owner-check bookkeeping stay off the composition thread. */
@@ -80,7 +79,7 @@ private data class TermuxOwnerState(val status:TermuxStatus,val probe:RequestRec
                     check(g.context.getSharedPreferences(OWNER_CHECKS,Context.MODE_PRIVATE).edit().putString(if(codex) "codex" else "probe",id).commit()) {"The owner check could not be saved"}
                     g.engine.submit(InvocationRequest(requestId=id,agentId="local-owner",capabilityId="termux.execute",arguments=buildJsonObject {
                         put("executable",PREFIX+if(codex) "sh" else "id")
-                        putJsonArray("arguments") {if(codex) {add("-lc");add(CODEX_CHECK)} else add("-u")}
+                        put("arguments",JsonArray((if(codex) TermuxOwnerChecks.codexArguments() else listOf("-u")).map(::JsonPrimitive)))
                         put("timeoutMs",30_000);put("maxOutputBytes",1024)
                     }),Origin.LOCAL_OWNER)
                 }

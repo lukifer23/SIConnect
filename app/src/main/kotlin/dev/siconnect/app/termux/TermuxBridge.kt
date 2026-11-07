@@ -121,14 +121,14 @@ class TermuxBridge private constructor(private val context:Context) {
                 }
                 changed()
                 val remaining=(deadline-System.currentTimeMillis()).coerceAtLeast(1)
-                try {withTimeout(remaining) {completion.await()}}
-                catch(e:TimeoutCancellationException) {
+                val completed=awaitTermuxResult(remaining,completion) {journal.entry(ctx.requestId)?.takeIf {it.result!=null}}
+                if(completed==null) {
                     // The service API has no command cancellation contract. Keep the
                     // one-shot callback alive so actual late completion can be retained.
                     journal.waiterEnded(ctx.requestId,"TIMED_OUT");changed()
                     throw CapabilityException("TERMUX_OUTCOME_PENDING","Termux result was not received before the wait deadline; the command may still run. Read termux.result with the same execution ID; never replay automatically")
                 }
-                requireNotNull(journal.entry(ctx.requestId)).output()
+                completed.output()
             } catch(e:CancellationException) {
                 if(dispatchAttempted) journal.waiterEnded(ctx.requestId,"CANCELLED") else {journal.notDispatched(ctx.requestId);callback.cancel()}
                 changed();throw e

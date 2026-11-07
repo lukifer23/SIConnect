@@ -61,9 +61,26 @@ class ControlCenterDeviceTest {
         }} catch(e:TimeoutCancellationException) {throw AssertionError("Missing visible control: $value",e)}
         suspend fun click(value:String) {
             checkpoint("Click $value")
-            var n=text(value)
-            while(!n.isClickable) n=requireNotNull(n.parent)
-            assertTrue("Control rejected: $value",n.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            val target=withTimeout(10_000) {
+                while(true) {
+                    val snapshot=nodes()
+                    val action=snapshot.filter {it.text?.toString()==value}.firstNotNullOfOrNull {label->
+                        var parent:AccessibilityNodeInfo?=label
+                        while(parent!=null && !parent.isClickable) parent=parent.parent
+                        // Ignore a matching unclickable detail heading. Compose can also
+                        // flatten a trailing-button label away from its actionable parent.
+                        parent ?: Rect().also(label::getBoundsInScreen).let {bounds->
+                            snapshot.filter {node->node.isClickable && node.windowId==label.windowId &&
+                                Rect().also(node::getBoundsInScreen).contains(bounds.centerX(),bounds.centerY())}
+                                .minByOrNull {node->Rect().also(node::getBoundsInScreen).let {it.width().toLong()*it.height()}}
+                        }
+                    }
+                    if(action!=null) return@withTimeout action
+                    delay(50)
+                }
+                @Suppress("UNREACHABLE_CODE") error("No live action for $value")
+            }
+            assertTrue("Control rejected: $value",target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
         }
         suspend fun navigate(destination:String) {
             checkpoint("Navigate to $destination")
@@ -88,20 +105,40 @@ class ControlCenterDeviceTest {
             }
             @Suppress("UNREACHABLE_CODE") error("Missing detail control")
         }} catch(e:TimeoutCancellationException) {throw AssertionError("Missing detail control: $value",e)}
-        suspend fun revealRequestIdentity():String {
-            val anchor=Rect().also(text("Close")::getBoundsInScreen).centerX()
+        suspend fun revealRequestIdentity(expectedId:String?=null):String {
+            val close=text("Close")
+            val detailWindow=close.windowId
+            val anchor=Rect().also(close::getBoundsInScreen).centerX()
             var control=detailControl("Request details",anchor)
             while(!control.isClickable) control=requireNotNull(control.parent)
-            fun containsLabel(node:AccessibilityNodeInfo,label:String):Boolean {
-                if(node.text?.toString()==label) return true
-                return (0 until node.childCount).any {index->node.getChild(index)?.let {containsLabel(it,label)}==true}
+            val panelBounds=Rect().also(control::getBoundsInScreen)
+            val storedIds=expectedId?.let {setOf(it)} ?: g.requests.historyPage(limit=100).map {it.requestId}.toSet()
+            fun inResultPane(node:AccessibilityNodeInfo):Boolean {
+                if(node.isEditable || node.windowId!=detailWindow) return false
+                val bounds=Rect().also(node::getBoundsInScreen)
+                return bounds.centerX() in panelBounds.left until panelBounds.right
             }
-            if(containsLabel(control,"Show details")) assertTrue(control.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-            val storedIds=g.requests.historyPage(limit=100).map {it.requestId}.toSet()
             return withTimeout(10000) {
+                var expansions=0
                 while(true) {
-                    find {it.text?.toString() in storedIds}?.text?.toString()?.let {return@withTimeout it}
-                    val scroller=find {node->node.isScrollable && Rect().also(node::getBoundsInScreen).let {anchor in it.left until it.right}}
+                    val snapshot=nodes()
+                    snapshot.firstOrNull {it.text?.toString() in storedIds && inResultPane(it)}?.text?.toString()?.let {return@withTimeout it}
+                    var disclosure=snapshot.firstOrNull {it.text?.toString()=="Request details" && inResultPane(it)}
+                    while(disclosure!=null && !disclosure.isClickable) disclosure=disclosure.parent
+                    if(disclosure!=null) {
+                        val bounds=Rect().also(disclosure::getBoundsInScreen)
+                        val collapsed=snapshot.any {node->node.text?.toString()=="Show details" && node.windowId==detailWindow &&
+                            Rect().also(node::getBoundsInScreen).let {bounds.contains(it.centerX(),it.centerY())}}
+                        // The heading can be visible while its disclosure label is still
+                        // below the viewport. Re-evaluate after every scroll, and never
+                        // interpret an off-screen label as an already-open panel.
+                        if(collapsed && expansions<2) {
+                            checkpoint("Expand saved request identity")
+                            assertTrue(disclosure.performAction(AccessibilityNodeInfo.ACTION_CLICK));expansions++
+                            delay(350);continue
+                        }
+                    }
+                    val scroller=snapshot.firstOrNull {node->node.isScrollable && node.windowId==detailWindow && Rect().also(node::getBoundsInScreen).let {anchor in it.left until it.right}}
                     scroller?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
                     delay(150)
                 }
@@ -162,6 +199,25 @@ class ControlCenterDeviceTest {
                     } else i.sendStatus(0,Bundle().apply {
                         putString("activityPaneCoverage","No persisted request was available; selection coverage was not exercised")
                     })
+                }
+                // Search an actual old record across all pages, then recreate its exact
+                // selection and query. No synthetic request or personal send is created.
+                g.requests.historyPage(limit=1,newest=false).firstOrNull()?.let {oldest->
+                    checkpoint("Search all Activity history")
+                    val searchField=withTimeout(5000) {while(true) {
+                        find {it.isEditable}?.let {return@withTimeout it};delay(50)
+                    };error("Activity search missing")}
+                    assertTrue(searchField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,oldest.requestId)
+                    }))
+                    text("Page 1 · 1 of 1 requests")
+                    click(g.registry.get(oldest.capabilityId)?.descriptor?.title ?: oldest.capabilityId)
+                    assertEquals(oldest.requestId,revealRequestIdentity(oldest.requestId))
+                    scenario.recreate();text(oldest.requestId)
+                    assertEquals(oldest.requestId,revealRequestIdentity(oldest.requestId))
+                    if(!hasDetailPane) click("Close")
+                    click("Clear");text("Search all activity")
+                    inspectedExistingRequest=hasDetailPane
                 }
                 navigate("Automations");text("Unsaved disposable form")
                 if(inspectedExistingRequest) {

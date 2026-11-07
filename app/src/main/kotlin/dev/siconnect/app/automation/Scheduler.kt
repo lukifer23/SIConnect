@@ -53,6 +53,7 @@ class Scheduler(private val g: RuntimeGraph) {
     private fun values(a:Automation)=ContentValues().apply {
         put("automation_id",a.id);put("enabled",if(a.enabled) 1 else 0);put("next_run_at",a.nextAtMs)
         put("owner","local-automation");put("revision",a.revision);put("json",AppJson.encodeToString(Automation.serializer(),a))
+        putAll(ScheduleMetadata.automation(a))
     }
     fun put(a: Automation):Automation {
         require(!a.manualRun) {"Manual run snapshots cannot be saved as schedules"}

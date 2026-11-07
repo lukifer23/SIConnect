@@ -23,7 +23,7 @@ import kotlinx.serialization.json.JsonObject
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
     val paired=remote.filterNot {it.grant.revoked}
     val active=paired.filter {it.grant.expiresAtMs?.let {expiry->expiry>System.currentTimeMillis()} ?: true}
-    val failedSchedules=state.automations.filter {it.scheduleState in setOf("FAILED","BLOCKED","UNKNOWN_OUTCOME","MISSED")}
+    val failedSchedules=state.attentionAutomations
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
     val titles=state.capabilities.associate {it.descriptor.id to it.descriptor.title}
     val online=connection==ConnectionState.ONLINE
@@ -117,9 +117,9 @@ import kotlinx.serialization.json.JsonObject
             }
             @Composable fun updates() {
                 SectionHeading("Coming up","Automations",onAutomations)
-                if(state.reminders.isEmpty() && state.automations.none {it.enabled}) EmptyState("Make room for a routine","Schedule a reminder, health check, or commute forecast.",R.drawable.ic_nav_automations,"Create automation",onAutomations)
+                if(state.reminders.isEmpty() && state.automations.isEmpty()) EmptyState("Make room for a routine","Schedule a reminder, health check, or commute forecast.",R.drawable.ic_nav_automations,"Create automation",onAutomations)
                 state.reminders.take(3).forEach {r->NavigationCard(r.title,time(r.fireAtMs),{onReminder(r.id)},icon=R.drawable.ic_nav_automations)}
-                state.automations.filter {it.enabled}.sortedBy {it.nextAtMs}.take(3).forEach {a->NavigationCard(a.label.ifBlank {"Scheduled automation"},time(a.nextAtMs),onAutomations,icon=R.drawable.ic_nav_automations)}
+                state.automations.forEach {a->NavigationCard(a.label.ifBlank {"Scheduled automation"},a.nextAtMs?.let(::time) ?: "Timing unavailable",onAutomations,icon=R.drawable.ic_nav_automations)}
         }
         @Composable fun recentPanel() {
                 SectionHeading("Recent activity","View all",onActivity)

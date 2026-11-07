@@ -16,6 +16,7 @@ import dev.siconnect.app.data.RequestSummary
 import dev.siconnect.app.data.SqlRequestStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.conflate
 import dev.siconnect.core.RequestState
 import dev.siconnect.core.RequestRecord
 import dev.siconnect.core.Event
@@ -29,24 +30,39 @@ import kotlinx.serialization.json.*
     var newest by rememberSaveable { mutableStateOf(true) }
     var menu by remember { mutableStateOf(false) }
     var search by rememberSaveable {mutableStateOf("")}
+    val searchTerm=search.trim()
+    var query by remember {mutableStateOf(searchTerm)}
+    // Only typing is debounced. Live request updates must not keep restarting a
+    // search delay and starve the actual read while an agent is busy.
+    LaunchedEffect(searchTerm) {if(searchTerm.isNotEmpty()) kotlinx.coroutines.delay(250);query=searchTerm}
+    val searching=query!=searchTerm
     val attention=setOf(RequestState.DENIED,RequestState.AWAITING_APPROVAL,RequestState.FAILED,RequestState.EXPIRED,RequestState.UNKNOWN_OUTCOME)
-    var page by remember {mutableStateOf(emptyList<RequestSummary>())}
-    var cursors by remember {mutableStateOf(listOf<RequestSummary?>(null))}
+    var page by remember(filter,selectedAgent,newest,query) {mutableStateOf(emptyList<RequestSummary>())}
+    var cursors by remember(filter,selectedAgent,newest,query) {mutableStateOf(listOf<RequestSummary?>(null))}
     var more by remember {mutableStateOf(false)}
     var loading by remember {mutableStateOf(true)}
     var error by remember {mutableStateOf<String?>(null)}
-    LaunchedEffect(filter,selectedAgent,newest) {cursors=listOf(null)}
-    LaunchedEffect(filter,selectedAgent,newest,cursors,revision) {
+    var retry by remember {mutableIntStateOf(0)}
+    val currentRevision by rememberUpdatedState(revision)
+    LaunchedEffect(filter,selectedAgent,newest,query,cursors,retry,labels) {
+      snapshotFlow {currentRevision}.conflate().collect {
         loading=true;error=null
         try {
             val states=when(filter) {"Needs attention"->attention;"Completed"->setOf(RequestState.SUCCEEDED);"Running"->setOf(RequestState.EXECUTING,RequestState.VERIFYING);else->null}
-            val loaded=withContext(Dispatchers.IO) {store.historyPage(101,cursors.last(),selectedAgent,states,newest)}
+            val matchingAgents=labels.filterValues {it.contains(query,true)}.keys
+            // Titles and friendly outcome labels are display metadata; resolve them to
+            // exact IDs/states while SQLite applies the search before its page limit.
+            val matchingCapabilities=if(query.isEmpty()) emptySet() else withContext(Dispatchers.IO) {store.historyCapabilityIds()}.filter {title(it).contains(query,true)}.toSet()
+            val matchingStates=RequestState.entries.filter {actionStateLabel(it).contains(query,true)}.toSet()
+            val loaded=withContext(Dispatchers.IO) {store.historyPage(101,cursors.last(),selectedAgent,states,newest,query,matchingCapabilities,matchingAgents,
+                matchingStates)}
             more=loaded.size>100;page=loaded.take(100)
-        } catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {error="Could not load history: ${e.javaClass.simpleName}"} finally {loading=false}
+        } catch(e:kotlinx.coroutines.CancellationException) {throw e} catch(e:Exception) {page=emptyList();more=false;error="Could not load activity. Your saved records are unchanged."} finally {loading=false}
+      }
     }
     Column(modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text("Every request, its outcome, and what happened next.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(search,{search=it},label={Text("Filter this page by action or agent")},singleLine=true,modifier=Modifier.fillMaxWidth())
+        OutlinedTextField(search,{search=it.take(256)},label={Text("Search all activity")},supportingText={Text("Action, agent, outcome, or request ID")},singleLine=true,modifier=Modifier.fillMaxWidth(),trailingIcon={if(search.isNotEmpty()) TextButton(onClick={search=""}) {Text("Clear")}})
         FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
             listOf("All","Running","Needs attention","Completed").forEach { name -> FilterChip(selected=filter==name,onClick={filter=name},label={Text(name)}) }
         }
@@ -62,10 +78,10 @@ import kotlinx.serialization.json.*
             }
             TextButton(onClick={newest=!newest}) {Text(if(newest) "Newest first" else "Oldest first")}
         }
-        if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
-        val visible=page.filter {(title(it.capabilityId)+" "+(labels[it.agentId] ?: "")+" "+actionStateLabel(it.state)).contains(search,true)}
-        if(!loading && visible.isEmpty()) EmptyState("No matching activity","Try a different filter or look on another page.")
+        if(loading || searching) LinearProgressIndicator(Modifier.fillMaxWidth())
+        error?.let {Notice(it,true);TextButton(onClick={retry++},enabled=!loading) {Text("Retry loading activity")}}
+        val visible=if(searching) emptyList() else page
+        if(!loading && !searching && error==null && visible.isEmpty()) EmptyState("No matching activity","Try a different search or filter.")
         LazyColumn(Modifier.weight(1f,fill=false),verticalArrangement=Arrangement.spacedBy(4.dp)) {
             items(visible,key={it.requestId}) { r ->
                 Card(onClick={onOpen(r.requestId)},modifier=Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)) {
@@ -79,10 +95,10 @@ import kotlinx.serialization.json.*
                 }
             }
         }
-        Text("Page ${cursors.size} · ${visible.size} of ${page.size} requests",style=MaterialTheme.typography.labelSmall)
+        Text(if(searching) "Searching all activity…" else "Page ${cursors.size} · ${visible.size} of ${page.size} requests",style=MaterialTheme.typography.labelSmall)
         FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-            TextButton(onClick={cursors=cursors.dropLast(1)},enabled=!loading && cursors.size>1) {Text("Previous page")}
-            TextButton(onClick={page.lastOrNull()?.let {cursors=cursors+it}},enabled=!loading && more) {Text("Next page")}
+            TextButton(onClick={cursors=cursors.dropLast(1)},enabled=!loading && !searching && error==null && cursors.size>1) {Text("Previous page")}
+            TextButton(onClick={page.lastOrNull()?.let {cursors=cursors+it}},enabled=!loading && !searching && error==null && more) {Text("Next page")}
         }
     }
 }

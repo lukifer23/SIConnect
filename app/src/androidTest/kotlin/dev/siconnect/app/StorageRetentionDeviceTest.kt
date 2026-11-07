@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.siconnect.app.data.*
+import dev.siconnect.app.automation.Automation
+import dev.siconnect.app.capabilities.Reminder
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -104,7 +106,7 @@ class StorageRetentionDeviceTest {
         val r=record("reminder:fixture",RequestState.FAILED).copy(errorCode="ORIGINAL_FAILURE",errorMessage="Original evidence",
             createdAtMs=now-800*86_400_000L,updatedAtMs=now-799*86_400_000L)
         requests.insert(r)
-        db.writableDatabase.execSQL("INSERT INTO reminders VALUES('fixture',1,'FIRING','fixture','{}',0)")
+        db.writableDatabase.execSQL("INSERT INTO reminders(reminder_id,fire_at,state,created_by,json,revision) VALUES('fixture',1,'FIRING','fixture','{}',0)")
         db.writableDatabase.execSQL("INSERT INTO notification_dedup VALUES('fixture','key','reminder:fixture')")
         val maintenance=retention(db)
         assertEquals(0,maintenance.maintain(now+8*86_400_000L).requests)
@@ -162,17 +164,32 @@ class StorageRetentionDeviceTest {
 
     @Test fun versionTenUpgradePreservesOwnerRowsAndGivesLegacyRunsAFreshInterval() {
         val name="retention-v10-${UUID.randomUUID()}.db"
+        val schedule=Automation("legacy-schedule","fixture.workflow",now+60000,enabled=false,label="Original schedule",revision=3,
+            inputs=buildJsonObject {put("private","original action input")})
+        val reminder=Reminder("legacy-reminder",now+60000,"Original reminder","Original body","fixture-agent",state="SUCCEEDED",revision=4)
+        val scheduleJson=AppJson.encodeToString(Automation.serializer(),schedule)
+        val reminderJson=AppJson.encodeToString(Reminder.serializer(),reminder)
         try {
             SIConnectDb(context,name).use { db ->
                 SqlSkillRunStore(db).insert(workflow("legacy"))
                 SqlRequestStore(db).insert(record("legacy-tombstone"));SqlRequestStore(db).prune(now)
                 db.writableDatabase.execSQL("INSERT INTO agents VALUES('fixture','hash',1,NULL,'preserved')")
+                db.writableDatabase.execSQL("INSERT INTO automations(automation_id,enabled,next_run_at,owner,json,revision) VALUES(?,?,?,?,?,?)",
+                    arrayOf<Any?>(schedule.id,0,schedule.nextAtMs,"local-automation",scheduleJson,schedule.revision))
+                db.writableDatabase.execSQL("INSERT INTO reminders(reminder_id,fire_at,state,created_by,json,revision) VALUES(?,?,?,?,?,?)",
+                    arrayOf<Any?>(reminder.id,reminder.fireAtMs,reminder.state,reminder.agentId,reminderJson,reminder.revision))
                 db.writableDatabase.removeExecutionRetentionSchema();db.writableDatabase.version=10
+                assertFalse(db.readableDatabase.rawQuery("PRAGMA table_info(automations)",null).use {c->buildList {while(c.moveToNext()) add(c.getString(1))}}.contains("label"))
+                assertFalse(db.readableDatabase.rawQuery("PRAGMA table_info(reminders)",null).use {c->buildList {while(c.moveToNext()) add(c.getString(1))}}.contains("title"))
             }
             val before=now
             repeat(2) {SIConnectDb(context,name).use {db->
-                assertEquals(11,db.readableDatabase.version)
+                assertEquals(SIConnectDb.VERSION,db.readableDatabase.version)
                 assertEquals("preserved",db.readableDatabase.rawQuery("SELECT json FROM agents",null).use {it.moveToFirst();it.getString(0)})
+                assertEquals(scheduleJson,db.readableDatabase.rawQuery("SELECT json FROM automations WHERE automation_id=?",arrayOf(schedule.id)).use {it.moveToFirst();it.getString(0)})
+                assertEquals(reminderJson,db.readableDatabase.rawQuery("SELECT json FROM reminders WHERE reminder_id=?",arrayOf(reminder.id)).use {it.moveToFirst();it.getString(0)})
+                assertEquals(schedule.label,ScheduleProjectionStore(db).automationPage().single().label)
+                assertEquals(reminder.title,ScheduleProjectionStore(db).reminderPage(states=null).single().title)
                 assertTrue(db.readableDatabase.rawQuery("SELECT updated_at FROM skill_runs",null).use {it.moveToFirst();it.getLong(0)>=before})
                 assertEquals(0,retention(db).maintain(now).total)
                 assertFalse(SqlSkillRunStore(db).get("legacy")!!.payloadExpired)

@@ -25,6 +25,7 @@ class ReminderScheduler(private val g: RuntimeGraph) {
     private fun values(r: Reminder)=ContentValues().apply {
         put("reminder_id",r.id);put("fire_at",r.fireAtMs);put("state",r.state);put("created_by",r.agentId)
         put("json",AppJson.encodeToString(Reminder.serializer(),r));put("revision",r.revision)
+        putAll(ScheduleMetadata.reminder(r))
     }
     private fun pending(r: Reminder)=PendingIntent.getBroadcast(g.context,r.id.hashCode(),
         Intent(g.context,ReminderAlarmReceiver::class.java).setData(Uri.parse("siconnect:reminder/${r.id}")).putExtra("id",r.id),

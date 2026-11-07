@@ -188,8 +188,11 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var inspectedId by rememberSaveable {mutableStateOf<String?>(null)}
         var inspected by remember { mutableStateOf<RequestRecord?>(null) }
         var inspectedEvents by remember { mutableStateOf(emptyList<Event>()) }
-        fun closeInspection() {inspectedId=null;inspected=null;inspectedEvents=emptyList()}
-        fun inspectRequest(id:String) {inspected=null;inspectedEvents=emptyList();inspectedId=id}
+        var inspectionError by remember {mutableStateOf<String?>(null)}
+        var inspectionLoading by remember {mutableStateOf(false)}
+        var inspectionRetry by remember {mutableIntStateOf(0)}
+        fun closeInspection() {inspectedId=null;inspected=null;inspectedEvents=emptyList();inspectionError=null;inspectionLoading=false}
+        fun inspectRequest(id:String) {inspected=null;inspectedEvents=emptyList();inspectionError=null;inspectionLoading=true;inspectedId=id;inspectionRetry++}
         val bots=snapshot.agents.filterNot {it.grant.agentId.startsWith("local-")}
         val labels=snapshot.agents.associate {it.grant.agentId to botDisplayName(it,snapshot.agents)}
         val reminders=snapshot.reminders
@@ -218,11 +221,12 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 }
             }
         }
-        LaunchedEffect(inspectedId,lifecycle) {
+        LaunchedEffect(inspectedId,inspectionRetry,lifecycle) {
             val id=inspectedId
             if(id==null) {inspected=null;inspectedEvents=emptyList()}
             else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 coroutineScope {
+                    inspectionLoading=inspected==null
                     val refreshes=Channel<Unit>(Channel.CONFLATED)
                     val contentDirty=java.util.concurrent.atomic.AtomicBoolean(true)
                     // Register before the initial read. Collectors never wait for SQLite; an
@@ -247,11 +251,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                                 if(inspectedId==id) {
                                     if(reloadContent) inspected=loaded.first
                                     inspectedEvents=loaded.second
+                                    if(reloadContent || inspected!=null) inspectionError=if(reloadContent && loaded.first==null) "This action is not available in the saved history." else null
+                                    inspectionLoading=false
                                 }
                             } catch(e:CancellationException) {throw e}
                               catch(_:Exception) {
                                 if(reloadContent) contentDirty.set(true)
-                                if(inspectedId==id) note="Could not load this action. Its saved record is unchanged."
+                                if(inspectedId==id) {inspectionLoading=false;inspectionError="Could not load this action. Its saved record is unchanged."}
                               }
                         }
                     } finally {refreshes.close()}
@@ -297,6 +303,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                         }},{note=it})
                     }
                 })}
+        }
+        @Composable fun inspectionContent() {
+            Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                if(inspectionLoading) {LinearProgressIndicator(Modifier.fillMaxWidth());Text("Loading saved action…")}
+                inspectionError?.let {Notice(it,true);OutlinedButton(onClick={inspectionRetry++},enabled=!inspectionLoading) {Text("Retry loading action")}}
+                inspected?.let {r->Box(Modifier.weight(1f,fill=false)) {resultDetails(r)}}
+            }
         }
         ControlCenterNavigation(destination,{next->
             if(destination==Destination.ACTIVITY && activityUsesPane) closeInspection()
@@ -344,10 +357,10 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     },busy=busy,onInitialAgentConsumed={selectedAgentId=null})
                 Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier)
                 Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id},detail={
-                    inspected?.let {r->
-                        SectionHeading(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId,"Close",{closeInspection()})
-                        resultDetails(r)
-                    } ?: EmptyState("Select an action","Keep your activity list in view while you inspect a result and its audit trail.")
+                    if(inspectedId!=null) {
+                        SectionHeading(inspected?.let {g.registry.get(it.capabilityId)?.descriptor?.title ?: it.capabilityId} ?: "Saved action","Close",{closeInspection()})
+                        inspectionContent()
+                    } else EmptyState("Select an action","Keep your activity list in view while you inspect a result and its audit trail.")
                 }) {id->inspectRequest(id)}
                 Destination.SETTINGS -> Management("Settings",onSetup={nativeSetup=true},onGateway={setup=true},onAdvancedControl={controlHelp=true})
             }
@@ -460,9 +473,9 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 if(reviewId==r.requestId) work {review=g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
             },{note=it})
         }) }
-        if(destination!=Destination.ACTIVITY || !activityUsesPane) inspected?.let {r->
-            AlertDialog(onDismissRequest={closeInspection()},title={Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId)},
-                text={Box(Modifier.heightIn(max=480.dp)) {resultDetails(r)}},confirmButton={TextButton(onClick={closeInspection()}) {Text("Close")}})
+        if((destination!=Destination.ACTIVITY || !activityUsesPane) && inspectedId!=null) {
+            AlertDialog(onDismissRequest={closeInspection()},title={Text(inspected?.let {g.registry.get(it.capabilityId)?.descriptor?.title ?: it.capabilityId} ?: "Saved action")},
+                text={Box(Modifier.heightIn(max=480.dp)) {inspectionContent()}},confirmButton={TextButton(onClick={closeInspection()}) {Text("Close")}})
         }
         allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,error=note,onClose={allowBot=null},onReduce={work {g.setShellPermissionFromOwner(a.grant.agentId,false);allowBot=g.agents.get(a.grant.agentId)}},onAllow={
             ownerAuthentication.authenticate("Always allow device control",{

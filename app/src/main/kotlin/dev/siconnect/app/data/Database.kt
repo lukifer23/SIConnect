@@ -148,9 +148,10 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE INDEX automation_runs_retention ON automation_runs(payload_expired,finished_at,run_id)")
             db.execSQL("CREATE INDEX notification_dedup_request ON notification_dedup(request_id)")
         }
+        if(old < 12 && new >= 12) ScheduleMetadata.migrate(db)
     }
 
-    companion object { const val VERSION = 11 }
+    companion object { const val VERSION = 12 }
 }
 
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
@@ -216,9 +217,16 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
 
     fun recentSummaries(limit:Int=100):List<RequestSummary> = historyPage(limit=limit)
 
+    /** Distinct metadata only, for resolving owner-facing action titles during search. */
+    fun historyCapabilityIds():Set<String> = db.readableDatabase.rawQuery(
+        "SELECT capability_id FROM requests UNION SELECT capability_id FROM request_tombstones",null)
+        .mapAll {it.getString(0)}.toSet()
+
     /** Stable keyset pagination; no OFFSET scans and no full result JSON in history queries. */
     fun historyPage(limit:Int=100,cursor:RequestSummary?=null,agentId:String?=null,
-                    states:Set<RequestState>?=null,newest:Boolean=true):List<RequestSummary> {
+                    states:Set<RequestState>?=null,newest:Boolean=true,search:String="",
+                    matchingCapabilities:Set<String> = emptySet(),matchingAgents:Set<String> = emptySet(),
+                    matchingStates:Set<RequestState> = emptySet()):List<RequestSummary> {
         val where=mutableListOf<String>();val args=mutableListOf<String>()
         if(cursor!=null) {
             val comparison=if(newest) "<" else ">"
@@ -229,6 +237,20 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
         states?.let {
             if(it.isEmpty()) return emptyList()
             where+="state IN (${it.joinToString(",") { "?" }})";args+=it.map {state->state.name}
+        }
+        val term=search.trim().take(256)
+        if(term.isNotEmpty()) {
+            // Search metadata across every page, including compacted outcomes. instr keeps
+            // %, _ and SQL-looking input literal, without reading private result JSON.
+            val matches=mutableListOf<String>()
+            for(field in listOf("request_id","agent_id","capability_id","state")) {
+                matches+="instr(lower($field),lower(?))>0";args+=term
+            }
+            for((field,ids) in listOf("capability_id" to matchingCapabilities,"agent_id" to matchingAgents)) {
+                if(ids.isNotEmpty()) {matches+="$field IN (${ids.joinToString(",") {"?"}})";args+=ids}
+            }
+            if(matchingStates.isNotEmpty()) {matches+="state IN (${matchingStates.joinToString(",") {"?"}})";args+=matchingStates.map {it.name}}
+            where+="(${matches.joinToString(" OR ")})"
         }
         val direction=if(newest) "DESC" else "ASC"
         val fields="request_id,agent_id,capability_id,state,created_at,updated_at"
