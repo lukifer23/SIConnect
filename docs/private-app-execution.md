@@ -67,3 +67,6 @@ These are future backend candidates requiring legitimate provisioning and real a
 ## Background bridge recovery
 
 The bridge uses the owner’s saved enabled preference. Code 20 can request `system.restore_bridge` through the engine after Android rejects normal startup: local-owner identity and origin, advanced controls and the selected backend are required. Its fixed ten-second startup allowance applies only to SIConnect and does not persist a battery exemption. A paused gateway stays paused. Native process-death, cold-service restoration and owner-enabled phone-local daemon recovery have real locked-phone evidence in pass 18; they do not guarantee every Doze/network/reboot condition.
+
+
+Code 25 private inspection supports bounded AND selectors for text/description, exact IDs/classes and node states, with explicit scan budget, duration, bytes and incomplete-search reporting. A filtered reference remains bound to the same owned session/window/path/fingerprint. This reduces returned tree content while preserving target validation. For tasks that can use Termux’s native command API, the [background Termux channel](termux-integration.md) avoids opening a private display entirely.

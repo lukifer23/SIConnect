@@ -38,6 +38,7 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
         merge(refreshes,g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},g.proposals.updates,
             discoveryUpdates(g.gateway.state),discoveryUpdates(g.privileged.directStatus),discoveryUpdates(g.shizuku.status),
             discoveryUpdates(dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState),
+            discoveryUpdates(dev.siconnect.app.termux.TermuxBridge.get(g.context).updates),
             discoveryUpdates(dev.siconnect.app.notifications.NotificationCaptureService.connectionState))
             .onStart {g.registry.invalidateDiscovery();emit(Unit)}.debounce(100).collect {
                 try {mutable.value=ControlCenterSnapshot(mutable.value.revision+1,g.agents.all(),g.requests.recentSummaries(50),

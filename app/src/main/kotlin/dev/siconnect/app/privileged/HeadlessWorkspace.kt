@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import dev.siconnect.app.capabilities.HeadlessRules
+import dev.siconnect.app.capabilities.HeadlessSelection
 import dev.siconnect.app.backend.ShellRequest
 import dev.siconnect.app.backend.ShellRunner
 import dev.siconnect.core.Canonical
@@ -325,12 +326,18 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
         return Canonical.sha256Hex(JsonArray(fields.map {if(it==null) JsonNull else JsonPrimitive(it.toString())}).toString())
     }
     private fun inspect(s:Session,a:JsonObject):JsonObject {
+        val selection=try {HeadlessSelection.parse(a["selector"])} catch(_:IllegalArgumentException) {
+            fail("INVALID_ARGUMENT","Supply a valid private inspection selector with at least one predicate")
+        }
+        val started=SystemClock.elapsedRealtime()
         val root=root(s);val id=UUID.randomUUID().toString()
         val refs=linkedMapOf<String,Reference>();val rows=mutableListOf<JsonElement>()
         val queue=ArrayDeque<Pair<AccessibilityNodeInfo,List<Int>>>()
-        queue.add(root to emptyList());var visited=0;var returnedBytes=0;var truncated=false
+        queue.add(root to emptyList());var visited=0;var returnedBytes=0;var truncated=false;var traversalOmitted=false
         val limit=(a["limit"]?.jsonPrimitive?.int ?: 200).coerceIn(1,500)
-        while(queue.isNotEmpty() && visited++<2000 && rows.size<limit) {
+        val scanLimit=(a["maxScanNodes"]?.jsonPrimitive?.int ?: 2000).coerceIn(1,2000)
+        while(queue.isNotEmpty() && visited<scanLimit && rows.size<limit && SystemClock.elapsedRealtime()-started<2000) {
+            visited++
             val (n,path)=queue.removeFirst()
             if(n.isPassword || n.packageName?.toString()!=s.target) continue
             if(n.isVisibleToUser) {
@@ -345,19 +352,27 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
                     put("scrollable",n.isScrollable);put("focused",n.isFocused);put("enabled",n.isEnabled);put("selected",n.isSelected)
                     put("bounds",buildJsonObject {put("left",b.left);put("top",b.top);put("right",b.right);put("bottom",b.bottom)})
                 }
-                val bytes=row.toString().toByteArray(Charsets.UTF_8).size
-                if(returnedBytes+bytes>192*1024) {truncated=true;break}
-                rows+=row;returnedBytes+=bytes;refs[ref]=Reference(path,fingerprint(n))
+                if(selection==null || selection.matches(row)) {
+                    val bytes=row.toString().toByteArray(Charsets.UTF_8).size
+                    if(returnedBytes+bytes>192*1024) {truncated=true;break}
+                    rows+=row;returnedBytes+=bytes;refs[ref]=Reference(path,fingerprint(n))
+                }
             }
-            if(path.size<32) for(index in 0 until minOf(n.childCount,128,2000-visited-queue.size))
+            val children=if(path.size<32) minOf(n.childCount,128,(scanLimit-visited-queue.size).coerceAtLeast(0)) else 0
+            if(children<n.childCount) traversalOmitted=true
+            for(index in 0 until children) {
+                if(SystemClock.elapsedRealtime()-started>=2000) {traversalOmitted=true;break}
                 n.getChild(index)?.let {queue.add(it to path+index)}
+            }
         }
         s.snapshot=Snapshot(id,root.windowId,SystemClock.elapsedRealtime(),refs)
         return buildJsonObject {
             metadata(s).forEach {(k,v)->put(k,v)};put("snapshotId",id);put("windowId",root.windowId);put("nodes",JsonArray(rows))
             put("targetWindowVerified",true)
             put("scannedNodes",visited);put("returnedNodes",rows.size);put("requestedLimit",limit)
-            put("scanIncomplete",truncated || queue.isNotEmpty());put("passwordContentIncluded",false)
+            put("selectorApplied",selection!=null);put("scanNodeLimit",scanLimit);put("returnedBytes",returnedBytes)
+            put("scanDurationMs",SystemClock.elapsedRealtime()-started)
+            put("scanIncomplete",truncated || traversalOmitted || queue.isNotEmpty());put("passwordContentIncluded",false)
         }
     }
     private fun injectOwnedEvent(s:Session,event:android.view.InputEvent):Boolean {

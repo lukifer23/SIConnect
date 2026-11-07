@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Granted explicitly by the owner; Termux also requires allow-external-apps. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <!-- Reminders and owned schedules -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -26,6 +28,8 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+
+    <queries><package android:name="com.termux" /></queries>
 
     <application
         android:name=".SIConnectApp"
@@ -87,6 +91,7 @@
             android:name=".automation.AlarmReceiver"
             android:exported="false" />
         <receiver android:name=".automation.ReminderAlarmReceiver" android:exported="false" />
+        <receiver android:name=".termux.TermuxResultReceiver" android:exported="false" />
 
         <receiver
             android:name=".BootReceiver"

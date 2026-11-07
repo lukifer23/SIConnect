@@ -149,3 +149,8 @@ A simultaneous duplicate reports `REQUEST_IN_FLIGHT` with original-request looku
 Code 14 measures related document readiness once per catalog refresh and passes measured availability into detail generation. The owner projection may reuse metadata for five seconds, with invalidation on relevant owner/backend/service changes; ordinary engine policy/availability checks stay fresh. Registry provider IO runs outside its monitor, and an invalidated in-flight measurement cannot republish its stale cache.
 
 The gateway loop owns a validated-default-network callback and releases it when stopped. A coalesced generation signal wakes timed reconnect backoff without replaying invocations or overriding an owner pause. Observer registration failure records a diagnostic and preserves timed retry. See [pass 14](engineering-pass-14.md) for measured results and limits.
+
+
+## Native Termux command channel
+
+Code 25 adds an independent Termux app-UID RUN_COMMAND channel with explicit Android permission and owner external-app setup. It uses canonical shell approval, rechecks live policy before IPC, and persists nonce-authenticated one-shot callbacks separately from core request outcomes. Late results never replay work or rewrite a terminal UNKNOWN_OUTCOME. See [the integration contract](termux-integration.md) and [physical recovery evidence](engineering-pass-20.md).

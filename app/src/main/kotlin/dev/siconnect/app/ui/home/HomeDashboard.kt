@@ -21,7 +21,9 @@ import kotlinx.serialization.json.JsonObject
     onActivity:()->Unit,onHealth:()->Unit,onStop:()->Unit,onResume:()->Unit,
     onInbox:()->Unit,onSetup:()->Unit,onReminder:(String)->Unit) {
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
-    val active=remote.filterNot {it.grant.revoked}
+    val paired=remote.filterNot {it.grant.revoked}
+    val active=paired.filter {it.grant.expiresAtMs?.let {expiry->expiry>System.currentTimeMillis()} ?: true}
+    val failedSchedules=state.automations.filter {it.scheduleState in setOf("FAILED","BLOCKED","UNKNOWN_OUTCOME","MISSED")}
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
     val titles=state.capabilities.associate {it.descriptor.id to it.descriptor.title}
     val online=connection==ConnectionState.ONLINE
@@ -49,20 +51,39 @@ import kotlinx.serialization.json.JsonObject
             Panel {
                 SectionHeading("Phone readiness")
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {Text("Android access",style=MaterialTheme.typography.titleSmall);Text(if(nativeReady) "Native features ready" else "Starting…",style=MaterialTheme.typography.bodySmall)}
+                    Column(Modifier.weight(1f)) {Text("Local runtime",style=MaterialTheme.typography.titleSmall);Text(if(nativeReady) "Ready for native background tools" else "Starting…",style=MaterialTheme.typography.bodySmall)}
                     TextButton(onClick=onSetup) {Text("Review")}
                 }
                 HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {Text("Device control",style=MaterialTheme.typography.titleSmall);Text(if(privilegedReady) "Available" else "Optional setup",style=MaterialTheme.typography.bodySmall)}
+                    Column(Modifier.weight(1f)) {Text("Advanced device control",style=MaterialTheme.typography.titleSmall);Text(if(privilegedReady) "Selected backend available" else "Optional setup or recovery",style=MaterialTheme.typography.bodySmall)}
                     TextButton(onClick=onRestore) {Text(if(privilegedReady) "Manage" else "Set up")}
                 }
-                if(state.capabilities.any {it.descriptor.id in setOf("ui.inspect","notifications.actions") && !it.availability.isExecutable}) Text("Screen or notification tools need attention in Android access.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
+                HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
+                listOf("ui.inspect" to "Shared-screen access","notifications.actions" to "Notification actions").forEach {(id,label)->
+                    val capability=state.capabilities.firstOrNull {it.descriptor.id==id}
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                            Text(label,style=MaterialTheme.typography.titleSmall)
+                            Text(when {
+                                capability==null->"Checking availability…"
+                                capability.availability.isExecutable->"Available"
+                                capability.availability==Availability.PERMISSION_REQUIRED->"Enable this access in Android settings."
+                                capability.availability==Availability.TEMPORARILY_UNAVAILABLE->if(id=="ui.inspect" && state.semanticEnabledInSettings) "Permission retained · service disconnected. Restore in Android settings." else "Service unavailable · review Android access."
+                                capability.availability==Availability.UNSUPPORTED->"Not supported on this phone."
+                                else->"Review Android access."
+                            },
+                                style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if(capability!=null && !capability.availability.isExecutable) TextButton(onClick=onSetup) {Text("Review")}
+                    }
+                }
+                Text("Availability is separate from each agent’s saved permissions. Native background tools can work without screen access.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
             @Composable fun review() {
                 SectionHeading("Needs your attention",if(state.pendingProposalCount>0) "Open inbox" else null,onInbox)
-                if(state.pending.isEmpty() && state.pendingProposalCount==0) {
+                if(state.pending.isEmpty() && state.pendingProposalCount==0 && failedSchedules.isEmpty()) {
                     if(wide) Panel {StatusPill("All caught up",StatusTone.GOOD);Text("No approvals or suggestions waiting.",style=MaterialTheme.typography.bodySmall)}
                     else EmptyState("You’re all caught up","Requests that need approval and agent suggestions will appear here.",R.drawable.ic_nav_activity)
                 }
@@ -74,16 +95,25 @@ import kotlinx.serialization.json.JsonObject
                     Text("Expires ${time(r.approvalExpiresAtMs ?: r.expiresAtMs)}",style=MaterialTheme.typography.bodySmall)
                     Button(onClick={onReview(r)}) {Text("Review action")}
                 }}
-                state.automations.filter {it.scheduleState in setOf("FAILED","BLOCKED","UNKNOWN_OUTCOME","MISSED")}.take(3).forEach {a->
+                failedSchedules.take(3).forEach {a->
                     NavigationCard(a.label.ifBlank {"Automation needs attention"},a.scheduleState.lowercase().replace('_',' '),onAutomations,icon=R.drawable.ic_nav_automations)
                 }
         }
         @Composable fun agentsPanel() {
-                SectionHeading("Your agents · ${active.size}","Manage",onAgents)
-                if(active.isEmpty()) EmptyState("Connect your first agent","Pair an AI agent, then choose what it can do on this phone.",R.drawable.ic_nav_agents,"Pair an agent",onAgents)
-                active.take(3).forEach {a->NavigationCard(labels[a.grant.agentId] ?: a.grant.label,
-                    state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"${actionStateLabel(it.state)} · ${time(it.updatedAtMs)}"} ?: "Paired · waiting for its first request",
-                    {onAgent(a.grant.agentId)},icon=R.drawable.ic_nav_agents)}
+                SectionHeading("Your agents · ${paired.size}","Manage",onAgents)
+                if(paired.isEmpty()) EmptyState("Connect your first agent","Pair an AI agent, then choose what it can do on this phone.",R.drawable.ic_nav_agents,"Pair an agent",onAgents)
+                paired.take(3).forEach {a->Card(onClick={onAgent(a.grant.agentId)},modifier=Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)) {
+                    Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Text(labels[a.grant.agentId] ?: a.grant.label,style=MaterialTheme.typography.titleMedium)
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                            StatusPill(if(a in active) "Access active" else "Access expired",if(a in active) StatusTone.GOOD else StatusTone.ATTENTION)
+                            StatusPill(if(a.grant.fullControl) "Full control" else "Custom permissions")
+                        }
+                        if(a.grant.fullControl && a.grant.expiresAtMs==null) Text("Saved · no expiry · automatic SIConnect actions",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"${actionStateLabel(it.state)} · ${time(it.updatedAtMs)}"} ?: "Paired · waiting for its first request",style=MaterialTheme.typography.bodySmall)
+                    }
+                }}
+                if(paired.isNotEmpty()) Text("${active.size} with active access. Pairing and saved permissions do not indicate a live client connection.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             @Composable fun updates() {
                 SectionHeading("Coming up","Automations",onAutomations)

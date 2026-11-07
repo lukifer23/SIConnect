@@ -97,6 +97,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
         var capabilities by remember { mutableStateOf(emptyList<CapabilityStatus>()) }
         var toolSearch by rememberSaveable {mutableStateOf("")}
         var readyToolsOnly by rememberSaveable {mutableStateOf(false)}
+        var toolsNeedingSetup by rememberSaveable {mutableStateOf(false)}
         var skillJson by remember { mutableStateOf("") }
         var url by remember { mutableStateOf(g.settings.gateway.value.baseUrl) }
         var gatewaySecret by remember { mutableStateOf("") }
@@ -156,7 +157,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
             Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
                 if(expanded) Column(Modifier.width(190.dp).fillMaxHeight().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                     Text("PREFERENCES",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(12.dp))
-                    listOf("Connections","Android access","Connected folders","Background & timing","Appearance","Commute & weather","Storage & history","Private workspaces","Advanced connection","Developer tools").forEach {name->
+                    listOf("Connections","Termux","Android access","Connected folders","Background & timing","Appearance","Commute & weather","Storage & history","Private workspaces","Advanced connection","Developer tools").forEach {name->
                         Surface(onClick={if(name=="Developer tools") {tab="Capabilities";settingsPage=null} else {tab="Settings";settingsPage=name}},
                             shape=MaterialTheme.shapes.medium,color=if(settingsPage==name || (name=="Developer tools" && tab!="Settings")) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
                             Text(name,Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=14.dp),style=MaterialTheme.typography.titleSmall)
@@ -168,18 +169,34 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                 if(expanded) SectionHeading(if(tab=="Settings") settingsPage ?: "All settings" else tab)
                 when(tab) {
                     "Capabilities" -> {
+                        Text("Tool availability",style=MaterialTheme.typography.titleMedium)
+                        Text("Browse by purpose. Availability reflects this phone; each agent’s access is managed separately in Agents.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(toolSearch,{toolSearch=it},label={Text("Search tools")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                        FilterChip(readyToolsOnly,{readyToolsOnly=!readyToolsOnly},label={Text("Ready to use")})
-                        val shown=capabilities.filter {(!readyToolsOnly || it.availability.isExecutable) &&
+                        FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                            FilterChip(!readyToolsOnly && !toolsNeedingSetup,{readyToolsOnly=false;toolsNeedingSetup=false},label={Text("All tools")})
+                            FilterChip(readyToolsOnly,{readyToolsOnly=true;toolsNeedingSetup=false},label={Text("Ready to use")})
+                            FilterChip(toolsNeedingSetup,{toolsNeedingSetup=true;readyToolsOnly=false},label={Text("Needs setup")})
+                        }
+                        val shown=capabilities.filter {(!readyToolsOnly || it.availability.isExecutable) && (!toolsNeedingSetup || !it.availability.isExecutable) &&
                             (it.descriptor.id+" "+it.descriptor.title+" "+it.descriptor.description).contains(toolSearch,true)}
-                        Text("${shown.size} of ${capabilities.size} tools",style=MaterialTheme.typography.labelMedium)
-                        shown.forEach {cap->Panel {
-                            Text(cap.descriptor.title,style=MaterialTheme.typography.titleMedium)
-                            StatusPill(if(cap.availability.isExecutable) "Ready" else cap.availability.name.lowercase().replace('_',' '),if(cap.availability.isExecutable) StatusTone.GOOD else StatusTone.ATTENTION)
-                            Text(cap.detail ?: cap.descriptor.description,style=MaterialTheme.typography.bodyMedium)
-                            Text(cap.descriptor.id,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        }}
-                        if(shown.isEmpty()) EmptyState("No matching tools","Try another search or turn off the ready filter.")
+                        Text("${shown.size} matching tools · ${capabilities.count {it.availability.isExecutable}} ready on this phone",style=MaterialTheme.typography.labelMedium)
+                        shown.groupBy {it.descriptor.id.substringBefore('.')}.toSortedMap().forEach {(family,tools)->
+                            val title=mapOf("ui" to "Shared-screen interaction","headless" to "Private app workspaces","shell" to "Privileged shell","device" to "Device diagnostics","documents" to "Selected documents","files" to "Managed files","termux" to "Termux background commands","system" to "System operations","requests" to "Request results")[family]
+                                ?: family.replace('_',' ').replaceFirstChar {it.uppercase()}
+                            key(family,toolSearch.isNotBlank()) {
+                                ExpandablePanel(title,"${tools.count {it.availability.isExecutable}} of ${tools.size} ready",initiallyExpanded=toolSearch.isNotBlank()) {
+                                    tools.sortedWith(compareBy<CapabilityStatus> {it.availability.isExecutable}.thenBy {it.descriptor.title}).forEachIndexed {index,cap->
+                                        if(index>0) HorizontalDivider()
+                                        Text(cap.descriptor.title,style=MaterialTheme.typography.titleSmall)
+                                        StatusPill(if(cap.availability.isExecutable) "Ready" else cap.availability.name.lowercase().replace('_',' '),if(cap.availability.isExecutable) StatusTone.GOOD else StatusTone.ATTENTION)
+                                        Text(cap.detail ?: cap.descriptor.description,style=MaterialTheme.typography.bodySmall)
+                                        if(cap.descriptor.ownerOnly) Text("Local owner only",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(cap.descriptor.id,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                        if(shown.isEmpty()) EmptyState("No matching tools","Try another search or select All tools.")
                     }
                     "Skills" -> {
                         ExpandablePanel("Install a workflow","Paste a definition, then validate it before installation") {
@@ -240,6 +257,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             OutlinedTextField(settingsSearch,{settingsSearch=it},label={Text("Find a setting")},singleLine=true,modifier=Modifier.fillMaxWidth())
                             val categories=listOf(
                                 Triple("Connections","Gateway, agents, and advanced device control",R.drawable.ic_nav_agents),
+                                Triple("Termux","Native background commands and CLI sign-in checks",R.drawable.ic_nav_settings),
                                 Triple("Android access","Screen, notifications, and calendar",R.drawable.ic_nav_settings),
                                 Triple("Connected folders","Choose documents your agents can use",R.drawable.ic_nav_home),
                                 Triple("Background & timing","Battery access and precise reminders",R.drawable.ic_nav_automations),
@@ -267,11 +285,15 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             OutlinedButton(onClick=onSetup) {Text("Guided setup & verification")}
                         }
                         if(settingsPage=="Connections") {
+                            Text("Connections carry requests to this phone. Each agent keeps its saved access mode separately; Full control remains saved until you disable it or revoke the agent.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            StatusPill(if(controls.remoteExecutionEnabled) "Remote actions enabled" else "Remote actions paused",if(controls.remoteExecutionEnabled) StatusTone.GOOD else StatusTone.ATTENTION)
                             SettingsAccessItem("Gateway",if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected" else connectionDetail,"Manage",onGateway)
                         SettingsAccessItem("Advanced device control",if(g.privileged.available()) "Available · ${if(g.settings.privilegeBackend=="direct") "bundled service" else "Shizuku"}" else "Optional · setup or recovery needed","Open",onAdvancedControl)
+                        NavigationCard("Termux background commands","Set up the native Termux command bridge and verify its own app identity.",{settingsPage="Termux"},icon=R.drawable.ic_nav_settings)
                         OutlinedButton(onClick=onSetup) {Text("Guided setup and verification")}
 
                         }
+                        if(settingsPage=="Termux") {TermuxSettings(onReview={approve=it})}
                         if(settingsPage=="Android access") {
                             Text("Access belongs to this phone. Agent permissions are managed separately in Agents.",style=MaterialTheme.typography.bodySmall)
                         if(permissionStatus.isNotBlank()) Text(permissionStatus)

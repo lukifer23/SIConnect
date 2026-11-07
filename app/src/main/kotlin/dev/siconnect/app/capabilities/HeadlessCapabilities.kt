@@ -76,7 +76,9 @@ fun registerHeadlessCapabilities(g:RuntimeGraph) {
     register("inspect","Inspect your private app window",objectSchema {
         string("sessionId","Exact owned private workspace",true,maxLength=100);string("packageName","Exact bound package",true,maxLength=200)
         integer("limit","Maximum returned nodes; default 200, up to 500 for larger or split-pane windows. Check scanIncomplete and refine the window size or limit when truncated.",min=1,max=500)
-    },RiskClass.READ_ONLY,"inspect",description="Read bounded fresh semantic nodes from this display only. Password subtrees are excluded; each snapshot replaces the previous one. Returned className and supportedScrollDirections help select the actual scrolling container.")
+        integer("maxScanNodes","Maximum visited nodes, default 2000. Use selector to reduce returned content without stopping at unrelated rows.",min=1,max=2000)
+        prop("selector",false,HeadlessSelection.schema)
+    },RiskClass.READ_ONLY,"inspect",description="Read bounded fresh semantic nodes from this display only. Optional selector matches all supplied predicates and returns actionable references only for matching nodes; text/description match their bounded visible prefixes. Check scanIncomplete before concluding no match exists. Password subtrees are excluded; each snapshot replaces the previous one. Returned className and supportedScrollDirections help select the actual scrolling container.")
     register("capture","Capture your private app display",boundSchema(),RiskClass.READ_ONLY,"capture",description="Bounded JPEG of this session's own rendered surface; never captures the physical display.")
     register("click","Click a private app control",boundSchema(nodes=true,touch=true),RiskClass.HIGH_IMPACT,"click",description="Uses semantic click by default. Explicit PRIVATE_TOUCH targets the verified node center on this owned display; no caller coordinates or default-display input.")
     register("set_text","Enter text in a private app",boundSchema(nodes=true,text=true),RiskClass.HIGH_IMPACT,"set_text")

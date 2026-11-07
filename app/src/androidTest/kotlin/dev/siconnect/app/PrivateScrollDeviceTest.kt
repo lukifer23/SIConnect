@@ -106,6 +106,24 @@ class PrivateScrollDeviceTest {
                 assertNotEquals("$method must change actual row content/bounds",before,visibleRows(snapshot))
                 assertEquals("$method changed physical focus",originalFocus,physicalFocus())
             }
+            val beforeFiltered=visibleRows(stableInspect())
+            val filtered=call("inspect",bound(buildJsonObject {
+                put("limit",1);put("selector",buildJsonObject {put("description","Fixture scroll region");put("scrollable",true)})
+            }))
+            assertEquals(true,filtered["selectorApplied"]?.jsonPrimitive?.booleanOrNull)
+            assertEquals(1,rows(filtered).size)
+            assertEquals("Fixture scroll region",rows(filtered).single().getValue("description").jsonPrimitive.content)
+            assertTrue(call("scroll",bound(buildJsonObject {
+                put("snapshotId",filtered.getValue("snapshotId"));put("nodeRef",rows(filtered).single().getValue("nodeRef"))
+                put("direction","BACKWARD")
+            })).getValue("actionAccepted").jsonPrimitive.boolean)
+            assertNotEquals("Filtered references must operate the real container",beforeFiltered,visibleRows(stableInspect()))
+            val bounded=call("inspect",bound(buildJsonObject {
+                put("maxScanNodes",1);put("selector",buildJsonObject {put("description","No such fixture node")})
+            }))
+            assertEquals(1,bounded.getValue("scannedNodes").jsonPrimitive.int)
+            assertTrue(bounded.getValue("scanIncomplete").jsonPrimitive.boolean)
+            assertTrue(rows(bounded).isEmpty())
             val capture=call("capture",bound())
             val bytes=android.util.Base64.decode(capture.getValue("data").jsonPrimitive.content,android.util.Base64.DEFAULT)
             assertEquals(capture.getValue("bytes").jsonPrimitive.int,bytes.size)

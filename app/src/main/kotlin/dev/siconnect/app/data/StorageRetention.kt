@@ -11,8 +11,8 @@ data class RetentionPolicy(val days: Int? = null) {
     companion object { val OPTIONS = listOf(7, 30, 90, 365) }
 }
 
-data class RetentionBatch(val workflows: Int = 0, val requests: Int = 0, val automationRuns: Int = 0) {
-    val total: Int get() = workflows + requests + automationRuns
+data class RetentionBatch(val workflows: Int = 0, val requests: Int = 0, val automationRuns: Int = 0, val termuxExecutions:Int=0) {
+    val total: Int get() = workflows + requests + automationRuns + termuxExecutions
 }
 
 data class StorageSummary(val allocatedBytes: Long, val reusableBytes: Long, val fullRequests: Long,
@@ -22,7 +22,8 @@ data class StorageSummary(val allocatedBytes: Long, val reusableBytes: Long, val
 /** Each pass owns a bounded number of rows. No VACUUM, replay-identity expiry or owner-row deletion.
  * The same monitor serializes owner changes and scheduled passes, including disabling retention. */
 class StorageRetention(private val db: SIConnectDb, private val readPolicy: () -> RetentionPolicy,
-                       private val writePolicy: (RetentionPolicy) -> Unit) {
+                       private val writePolicy: (RetentionPolicy) -> Unit,
+                       private val compactTermuxPayloads:(Long,Int)->Int={_,_->0}) {
     private var workflowCursor: Pair<Long, String>? = null
     @Synchronized fun configure(policy: RetentionPolicy) { writePolicy(policy); workflowCursor=null }
 
@@ -32,7 +33,8 @@ class StorageRetention(private val db: SIConnectDb, private val readPolicy: () -
         val workflows = compactWorkflows(cutoff, batchSize)
         val requests = SqlRequestStore(db).prune(cutoff, batchSize)
         val automations = compactAutomations(cutoff, batchSize)
-        return RetentionBatch(workflows, requests, automations)
+        val termux=compactTermuxPayloads(cutoff,batchSize)
+        return RetentionBatch(workflows, requests, automations,termux)
     }
 
     fun summary(): StorageSummary {

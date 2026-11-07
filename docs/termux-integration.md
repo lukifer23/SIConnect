@@ -1,0 +1,17 @@
+# Native Termux commands
+
+The bridge uses Termux's official `RUN_COMMAND` service with a direct executable, argument array, optional working directory and stdin, always in background mode. It opens no terminal UI and assumes no Codex installation or login. Termux 0.109 or newer, the owner's Android `com.termux.permission.RUN_COMMAND` grant, and `allow-external-apps=true` in Termux's own configuration are required. SIConnect never edits that private configuration. [Official setup and API](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent).
+
+`termux.status` reports actual package identity and permissions. External-app policy and successful commands are timestamped callback observations bound to the current UID, version and first-install time. Remote diagnostics/results are scoped to the requesting agent. The owner setup panel can run explicit harmless identity and Codex sign-in checks through normal owner approval.
+
+`termux.execute` takes an absolute `executable`, exact `arguments`, optional absolute `cwd` and `stdin`, `timeoutMs` up to 120,000 and `maxOutputBytes` up to 32,768 per stream. The existing arbitrary-shell approval policy applies to the canonical argv/cwd/stdin. Execution uses the Termux Android app UID, distinct from SIConnect and privileged shell. Timeout limits waiting; the API provides no verified command termination contract.
+
+Before IPC, a separate SQLite journal records the original engine request ID and a random callback nonce. The explicit, package-bound, nonexported receiver uses a one-shot mutable PendingIntent: Termux supplies results through its fill-in Intent, which an immutable token would discard. No routing fill-in flags are allowed. Callback fields are validated and output is bounded before commit; the waiter is resumed only after that commit. [Termux result sender](https://github.com/termux/termux-app/blob/master/termux-shared/src/main/java/com/termux/shared/shell/command/result/ResultSender.java), [Android PendingIntent mutability](https://developer.android.com/reference/android/app/PendingIntent#FLAG_IMMUTABLE).
+
+`termux.result(executionId)` reads only the caller's durable journal. `termux.recent` discovers own execution IDs in pages of up to 50 metadata rows, optionally unresolved only; it exposes no command text, output or nonces. Late callbacks survive SIConnect process death, cancellation and wait expiry without replaying commands or rewriting terminal core request history. At most four requests wait concurrently and 64 unresolved dispatches are admitted. Unresolved evidence is never aged out. Owner-enabled payload retention may remove stdout/stderr/raw error text only when the original core request is known terminal and is not `UNKNOWN_OUTCOME`; callback identity, exit/error codes, success metadata and explicit `payloadExpired` remain. Metadata is not automatically deleted.
+
+## Codex npm launchers
+
+A background Termux process may lack the interactive termux-exec path shim. A launcher whose shebang names /usr/bin/env can fail with exit 126 even though Codex works in the terminal. For npm JavaScript entrypoints, use Termux's node executable with the script path as its first argument; the owner saved-sign-in check handles that route. Standalone/custom native launchers remain supported. Saved sign-in is not a verified model request, and TLS/DNS configuration belongs to the owner's existing Termux environment. Authentication output is never printed by the owner check.
+
+[Code-25 physical acceptance and remaining limits](engineering-pass-20.md).

@@ -107,3 +107,6 @@ Advanced control offers Android 17’s NSD system service picker as a permission
 ## Background scans and remote pause
 
 Health scan notifications are opt-in. A read-only scan does not request notification or broad local-network access. Upgrading the original snapshot requires owner authentication and preserves the workflow ID, existing schedules and grants. Remote pause restricts the bridge without revoking agents; resuming a saved paused connection requires owner authentication. See [background operations](background-operations.md).
+
+
+Termux commands additionally require Android’s `com.termux.permission.RUN_COMMAND` and Termux’s owner-controlled external-app setting. The per-agent `termux.*` scope and existing arbitrary-shell policy apply. Full control covers that scope automatically but does not manufacture the platform permission or another app’s setting. Execution uses Termux’s own UID and file/network access; it is independent of privileged shell. Result/history queries remain agent-bound. [Details](termux-integration.md).

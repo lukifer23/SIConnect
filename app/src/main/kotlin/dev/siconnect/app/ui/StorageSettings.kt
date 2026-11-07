@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalLocale
             StatusPill(if(days==null) "Automatic expiry off" else "Expire payloads after $days days",if(days==null) StatusTone.NEUTRAL else StatusTone.GOOD)
             Text(if (days == null) "Keep execution payloads until you choose an expiry period." else "Expire completed execution payloads after $days days.",style=MaterialTheme.typography.bodyMedium)
             Text("Active work, uncertain outcomes, reminder and automation settings stay available. Compact outcomes and retry identities are kept to prevent repeated actions.", style = MaterialTheme.typography.bodySmall)
+            Text("Completed Termux command output follows the same expiry period. Late results for uncertain commands stay available.",style=MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = days == null, onClick = { applyPolicy(RetentionPolicy()) }, enabled = !busy && days != null, label = { Text("Keep payloads") })
                 RetentionPolicy.OPTIONS.forEach { option ->

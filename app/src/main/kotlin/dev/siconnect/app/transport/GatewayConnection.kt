@@ -8,7 +8,12 @@ import dev.siconnect.app.graph
 import dev.siconnect.app.data.AppJson
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,9 +32,24 @@ class GatewayConnection(private val g: RuntimeGraph) {
     val state=MutableStateFlow(ConnectionState.DISABLED)
     val detail=MutableStateFlow("Remote connection disabled")
     val historyRevision=MutableStateFlow(0L)
+    private data class ResultObserver(val requestId:String,val changed:()->Unit)
+    private val resultObservers=java.util.concurrent.CopyOnWriteArrayList<ResultObserver>()
+    /** Only active detail views retain observers. Conflate after matching the request identity:
+     * unrelated results cannot replace a selected request's pending refresh. SQLite is authoritative. */
+    fun requestResultUpdates(requestId:String):Flow<Unit> = callbackFlow {
+        val observer=ResultObserver(requestId) {trySend(Unit)}
+        resultObservers.add(observer)
+        trySend(Unit)
+        awaitClose {resultObservers.remove(observer)}
+    }.buffer(Channel.CONFLATED)
     private fun recordEvent(event:Event) {
         g.events.emit(event)
-        historyRevision.update {it+1}
+        if(event.eventType.startsWith("gateway.")) historyRevision.update {it+1}
+        // Delivery-failure audits may be appended after the queue outcome; keep an open
+        // request's trail current for every matching persisted event, without reloading its result.
+        if(event.requestId!=null) {
+            resultObservers.forEach {if(it.requestId==event.requestId) it.changed()}
+        }
     }
     private val client=OkHttpClient.Builder().pingInterval(90,TimeUnit.SECONDS).build()
     private val pairingAcks=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<Unit>>()

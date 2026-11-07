@@ -14,6 +14,8 @@ import dev.siconnect.app.transport.GatewayConnection
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.serialization.json.*
 import java.io.File
 import java.security.MessageDigest
@@ -39,7 +41,11 @@ class RuntimeGraph(val context: Context) {
     val db = SIConnectDb(context)
     val requests = SqlRequestStore(db)
     val events = SqlEventLog(db)
-    val retention = StorageRetention(db, { settings.executionRetention }, { settings.executionRetention = it })
+    val retention = StorageRetention(db, { settings.executionRetention }, { settings.executionRetention = it }) {cutoff,limit->
+        dev.siconnect.app.termux.TermuxBridge.get(context).compactPayloads(cutoff,limit) {id->
+            requests.get(id)?.state?.let {it.isTerminal && it!=RequestState.UNKNOWN_OUTCOME}==true
+        }
+    }
     internal val healthAlerts = HealthAlertStore(db)
     val agents = AgentStore(db)
     val registry = CapabilityRegistry()
@@ -153,6 +159,11 @@ class RuntimeGraph(val context: Context) {
             }
         }
         scope.launch {ready.await();privileged.directStatus.collect {gateway.refreshCatalog()}}
+        scope.launch {
+            ready.await()
+            val bridge=dev.siconnect.app.termux.TermuxBridge.get(context)
+            bridge.updates.map {bridge.availability()}.distinctUntilChanged().collect {gateway.refreshCatalog()}
+        }
         scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}
         ready.invokeOnCompletion { e -> if (e != null) health.value = "Startup failed: ${e.javaClass.simpleName}" }
     }

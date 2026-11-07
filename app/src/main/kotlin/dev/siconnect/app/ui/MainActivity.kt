@@ -31,6 +31,7 @@ import dev.siconnect.app.automation.Automation
 import dev.siconnect.app.transport.ConnectionService
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.*
 
 open class MainActivity: androidx.fragment.app.FragmentActivity() {
@@ -217,14 +218,45 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 }
             }
         }
-        LaunchedEffect(inspectedId,snapshot.revision,connectionHistoryRevision) {
+        LaunchedEffect(inspectedId,lifecycle) {
             val id=inspectedId
             if(id==null) {inspected=null;inspectedEvents=emptyList()}
-            else try {
-                val loaded=withContext(Dispatchers.IO) {g.ready.await();g.requests.get(id) to g.events.query(requestId=id,limit=30)}
-                if(inspectedId==id) {inspected=loaded.first;inspectedEvents=loaded.second}
-            } catch(e:CancellationException) {throw e}
-              catch(_:Exception) {if(inspectedId==id) note="Could not load this action. Its saved record is unchanged."}
+            else lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                coroutineScope {
+                    val refreshes=Channel<Unit>(Channel.CONFLATED)
+                    val contentDirty=java.util.concurrent.atomic.AtomicBoolean(true)
+                    // Register before the initial read. Collectors never wait for SQLite; an
+                    // update during a load leaves both a dirty flag and a pending wake-up.
+                    launch(start=CoroutineStart.UNDISPATCHED) {
+                        g.engine.recordUpdates.collect {record->if(record.requestId==id) {
+                            contentDirty.set(true);refreshes.trySend(Unit)
+                        }}
+                    }
+                    launch(start=CoroutineStart.UNDISPATCHED) {
+                        g.gateway.requestResultUpdates(id).collect {refreshes.trySend(Unit)}
+                    }
+                    refreshes.trySend(Unit)
+                    try {
+                        for(wake in refreshes) {
+                            val reloadContent=contentDirty.getAndSet(false)
+                            try {
+                                val loaded=withContext(Dispatchers.IO) {
+                                    g.ready.await()
+                                    (if(reloadContent) g.requests.get(id) else null) to g.events.query(requestId=id,limit=30)
+                                }
+                                if(inspectedId==id) {
+                                    if(reloadContent) inspected=loaded.first
+                                    inspectedEvents=loaded.second
+                                }
+                            } catch(e:CancellationException) {throw e}
+                              catch(_:Exception) {
+                                if(reloadContent) contentDirty.set(true)
+                                if(inspectedId==id) note="Could not load this action. Its saved record is unchanged."
+                              }
+                        }
+                    } finally {refreshes.close()}
+                }
+            }
         }
         LaunchedEffect(pairDialog) { if(pairDialog) withContext(Dispatchers.IO) {
             g.ready.await();pairCode=g.settings.pendingPairing();pairCode?.let {pairName=it.label}

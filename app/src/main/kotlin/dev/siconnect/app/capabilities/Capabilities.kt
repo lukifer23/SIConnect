@@ -34,6 +34,7 @@ fun JsonObject.long(key: String, default: Long): Long = (get(key) as? JsonPrimit
 private fun native(out: JsonElement) = CapabilityResult(out, BackendKind.NATIVE, "uid=${Process.myUid()}")
 
 fun registerCapabilities(g: RuntimeGraph) {
+    registerTermuxCapabilities(g)
     registerCommuteCapabilities(g)
     registerFileCapabilities(g)
     registerDocumentCapabilities(g)
@@ -86,6 +87,7 @@ fun registerCapabilities(g: RuntimeGraph) {
     }) { args, _ ->
         val memory=Debug.MemoryInfo().also(Debug::getMemoryInfo)
         val dbFile=c.getDatabasePath("siconnect.db")
+        val termuxDbFile=c.getDatabasePath("termux.db")
         buildJsonObject {
             put("appVersion",dev.siconnect.app.BuildConfig.VERSION_NAME);put("appVersionCode",dev.siconnect.app.BuildConfig.VERSION_CODE)
             put("observedAtMs",System.currentTimeMillis());put("elapsedRealtimeMs",SystemClock.elapsedRealtime())
@@ -94,6 +96,7 @@ fun registerCapabilities(g: RuntimeGraph) {
             put("appUidRxBytes",android.net.TrafficStats.getUidRxBytes(Process.myUid()))
             put("appUidTxBytes",android.net.TrafficStats.getUidTxBytes(Process.myUid()))
             put("databaseBytes",dbFile.length());put("databaseWalBytes",java.io.File(dbFile.path+"-wal").length())
+            put("termuxDatabaseBytes",termuxDbFile.length());put("termuxDatabaseWalBytes",java.io.File(termuxDbFile.path+"-wal").length())
             if(args["checkDatabase"]?.jsonPrimitive?.booleanOrNull==true) {
                 val healthy=g.db.readableDatabase.rawQuery("PRAGMA quick_check(1)",null).use {it.moveToFirst() && it.getString(0)=="ok"}
                 put("databaseIntegrity",if(healthy) "OK" else "CHECK_FAILED")
