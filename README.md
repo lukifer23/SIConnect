@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Current source: Android 0.6.0-dev.18 (versionCode 26), SQLite schema 12, 104 phone capabilities plus one gateway status tool.** The installed code-26 build adds whole-history Activity search, bounded schedule views, clearer Settings recovery and native Termux deadline/output fixes while preserving enrollment and owner records. Both Dot and Grok retain indefinite Full control; the preceding Grok timer start/native-cancel test succeeded without repeated approval. See [current reliability and owner-screen evidence](docs/engineering-pass-21.md), [native Termux/background acceptance](docs/engineering-pass-20.md) and [project status](docs/project-status.md).
+> **Current installed source: Android 0.6.0-dev.19 (versionCode 27), main SQLite schema 12, 112 observed phone capabilities.** The build adds managed native timers, bounded private Google Messages reading, a recovery center, editable agent names and noninteractive Codex execution through native Termux. All 234 host tests, 31 distinct physical cases, three normal-process recovery scenarios and real Messages/Codex command workflows pass. Existing enrollment and Full-control profiles are preserved. Dedicated Codex phone-MCP pairing and fresh client catalog refresh remain separate. See [current validation and limits](docs/engineering-pass-22.md), [Termux/Codex setup](docs/termux-integration.md) and [project status](docs/project-status.md).
 
 The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
 
@@ -73,6 +73,8 @@ cd SIConnect
 Device setup, gateway deployment and agent pairing are covered in [docs/development-setup.md](docs/development-setup.md) .
 
 ## Documentation
+
+- [Pass 22: typed phone workflows, recovery UI and real Codex execution](docs/engineering-pass-22.md)
 
 - [November 6 project review, implemented fixes and verification](docs/source-audit-2026-11-06.md)
 - [Current scope, completed foundation, gaps and build order](docs/build-plan.md)
