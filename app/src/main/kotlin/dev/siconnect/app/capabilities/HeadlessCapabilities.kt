@@ -56,7 +56,8 @@ fun registerHeadlessCapabilities(g:RuntimeGraph) {
             override fun assess(args:JsonObject)=RiskAssessment(risk,title,target=args["packageName"]?.jsonPrimitive?.content,sideEffects=descriptor.sideEffects)
             override suspend fun execute(args:JsonObject,ctx:ExecutionContext):CapabilityResult {
                 if(operation=="close_all" && ctx.agentId!="local-owner") throw CapabilityException("POLICY_DENIED","Only the local owner may stop all private workspaces",noSideEffects=true)
-                val selected=g.privileged.kind
+                val selected=g.requests.get(ctx.requestId)?.selectedBackend ?: g.privileged.kind
+                if(g.privileged.kind!=selected) throw CapabilityException("CAPABILITY_CHANGED","Selected private workspace backend changed before dispatch",noSideEffects=true)
                 val result=HeadlessClient(g,ctx,selected).call(operation,args)
                 return CapabilityResult(result,selected,result["executionIdentity"]?.jsonPrimitive?.content,
                     if(operation in setOf("inspect","capture","status","close","close_all")) VerificationStatus.VERIFIED else VerificationStatus.NOT_VERIFIED,

@@ -13,12 +13,13 @@ import androidx.compose.ui.semantics.*
 import dev.siconnect.app.R
 import dev.siconnect.app.ui.*
 import dev.siconnect.app.data.AgentRecord
+import dev.siconnect.app.data.AgentStore
 import dev.siconnect.core.*
 
 @Composable fun AgentsScreen(state:ControlCenterSnapshot,wide:Boolean,initialAgentId:String?,onPair:()->Unit,
     onFamily:(String,String,Boolean)->Unit,onShell:(AgentRecord)->Unit,onReconnect:(AgentRecord)->Unit,
     onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit,onHeadlessApp:(String,String,Boolean)->Unit,onSharedScreen:(String,Boolean)->Unit,
-    onFullControl:(AgentRecord,Boolean)->Unit,busy:Boolean=false,onInitialAgentConsumed:()->Unit={}) {
+    onFullControl:(AgentRecord,Boolean)->Unit,onRename:(AgentRecord,String)->Unit,busy:Boolean=false,onInitialAgentConsumed:()->Unit={}) {
     var selected by rememberSaveable {mutableStateOf(initialAgentId)}
     var query by rememberSaveable {mutableStateOf("")}
     LaunchedEffect(initialAgentId) {if(initialAgentId!=null) {selected=initialAgentId;onInitialAgentConsumed()}}
@@ -27,7 +28,7 @@ import dev.siconnect.core.*
     BackHandler(current!=null) {selected=null}
     @Composable fun list() {
         OutlinedTextField(query,{query=it},label={Text("Find an agent")},singleLine=true,modifier=Modifier.fillMaxWidth())
-        val filtered=agents.filter {botDisplayName(it,agents).contains(query,true)}
+        val filtered=agents.filter {"${botDisplayName(it,agents)} ${it.grant.agentId} ${credentialType(it)}".contains(query,true)}
         if(filtered.isEmpty()) EmptyState(if(agents.isEmpty()) "Your agents belong here" else "No matching agents",
             if(agents.isEmpty()) "Pair a bot and give it access to the tools you choose." else "Try a different name.",R.drawable.ic_nav_agents)
         filtered.forEach {a->Card(onClick={selected=a.grant.agentId},modifier=Modifier.fillMaxWidth(),
@@ -38,29 +39,30 @@ import dev.siconnect.core.*
                     Column(Modifier.weight(1f)) {
                         Text(botDisplayName(a,agents),style=MaterialTheme.typography.titleMedium)
                         Text("Identity …${a.grant.agentId.takeLast(6)}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(credentialType(a),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                    StatusPill(agentState(a),if(agentState(a)=="Active") StatusTone.GOOD else StatusTone.NEUTRAL)
+                    StatusPill("Grant ${agentState(a).lowercase()}",if(agentState(a)=="Active") StatusTone.GOOD else StatusTone.NEUTRAL)
                     StatusPill(if(a.grant.fullControl) "Full control" else "Custom access",if(a.grant.fullControl) StatusTone.ATTENTION else StatusTone.NEUTRAL)
                 }
-                Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"Last request: ${actionStateLabel(it.state)}"} ?: "Paired · no recent request",style=MaterialTheme.typography.bodySmall)
+                Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"Last request: ${actionStateLabel(it.state)}"} ?: "Saved identity · no recent request",style=MaterialTheme.typography.bodySmall)
             }
         }}
-        Text("Paired identities retain their permissions. A paired identity is separate from a currently connected client.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Saved identities retain their permissions. A credential identity is separate from a currently connected client.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
     }
     PageLayout {
         PageHeader("Agents","One place for your bots and their permissions.") {Button(onClick=onPair,enabled=!busy) {Text("Pair agent")}}
         if(wide) Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
             Column(Modifier.weight(.36f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {list()}
             Column(Modifier.weight(.64f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-                current?.let {key(it.grant.agentId) {AgentDetail(it,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp,onHeadlessApp,onSharedScreen,onFullControl,busy)}}
+                current?.let {key(it.grant.agentId) {AgentDetail(it,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp,onHeadlessApp,onSharedScreen,onFullControl,onRename,busy)}}
                     ?: EmptyState("Choose an agent","Review its tools, app access, connection, and recent work.",R.drawable.ic_nav_agents)
             }
         } else Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             if(current==null) list() else {
                 TextButton(onClick={selected=null}) {Text("‹ All agents")}
-                key(current.grant.agentId) {AgentDetail(current,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp,onHeadlessApp,onSharedScreen,onFullControl,busy)}
+                key(current.grant.agentId) {AgentDetail(current,state,onFamily,onShell,onReconnect,onRevoke,onRequest,onSemanticApp,onHeadlessApp,onSharedScreen,onFullControl,onRename,busy)}
             }
         }
     }
@@ -68,16 +70,21 @@ import dev.siconnect.core.*
 
 @Composable private fun AgentDetail(a:AgentRecord,state:ControlCenterSnapshot,onFamily:(String,String,Boolean)->Unit,
     onShell:(AgentRecord)->Unit,onReconnect:(AgentRecord)->Unit,onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit,onHeadlessApp:(String,String,Boolean)->Unit,onSharedScreen:(String,Boolean)->Unit,
-    onFullControl:(AgentRecord,Boolean)->Unit,busy:Boolean) {
+    onFullControl:(AgentRecord,Boolean)->Unit,onRename:(AgentRecord,String)->Unit,busy:Boolean) {
     var tab by rememberSaveable(a.grant.agentId) {mutableStateOf("Permissions")}
     var query by rememberSaveable(a.grant.agentId) {mutableStateOf("")}
     var revoke by remember {mutableStateOf(false)}
+    var rename by rememberSaveable(a.grant.agentId) {mutableStateOf(false)}
+    var renameDraft by rememberSaveable(a.grant.agentId) {mutableStateOf(a.grant.label)}
+    var originalLabel by rememberSaveable(a.grant.agentId) {mutableStateOf(a.grant.label)}
     val usable=agentState(a)=="Active"
     val fullControl=a.grant.fullControl
     val editable=usable && !busy && !fullControl && a.fullAccessPreviousGrant==null
     Panel {
         Text(botDisplayName(a,state.agents),style=MaterialTheme.typography.headlineSmall)
-        StatusPill(agentState(a),if(usable) StatusTone.GOOD else StatusTone.NEUTRAL)
+        TextButton(onClick={renameDraft=a.grant.label;originalLabel=a.grant.label;rename=true},enabled=!busy) {Text("Rename agent")}
+        StatusPill("Grant ${agentState(a).lowercase()}",if(usable) StatusTone.GOOD else StatusTone.NEUTRAL)
+        Text(credentialType(a),style=MaterialTheme.typography.titleSmall)
         Text("Identity …${a.grant.agentId.takeLast(8)}",style=MaterialTheme.typography.bodySmall)
     }
     FullControlCard(a,botDisplayName(a,state.agents),usable,fullControl,busy,
@@ -182,11 +189,24 @@ import dev.siconnect.core.*
         }
         "Connection" -> {
             Panel {
-                Text("Keep this identity",style=MaterialTheme.typography.titleMedium)
-                Text("Reconnect the existing client to retain this agent’s permissions. Create a separate identity for a different bot.")
-                Text("Grant expiry: ${a.grant.expiresAtMs?.let {java.util.Date(it).toString()} ?: "No expiry configured"}",style=MaterialTheme.typography.bodySmall)
+                Text("Identity and credential",style=MaterialTheme.typography.titleMedium)
+                Text(credentialType(a),style=MaterialTheme.typography.titleSmall)
+                androidx.compose.foundation.text.selection.SelectionContainer {Text(a.grant.agentId,style=MaterialTheme.typography.bodySmall)}
+                if(isLegacyShared(a)) {
+                    Text("This legacy credential can be shared by more than one bot. Those clients share this identity’s permissions and history. A display name does not separate them. Pair each bot separately when you want independent access.",style=MaterialTheme.typography.bodyMedium)
+                    Text("SIConnect records this credential identity, not which client application used it.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if(isOAuthPaired(a)) {
+                    Text("This saved identity was created through OAuth pairing. Reconnect this exact identity to keep its existing access.",style=MaterialTheme.typography.bodyMedium)
+                } else Text("The original pairing type was not recorded for this saved credential. Its identity and permissions are retained.",style=MaterialTheme.typography.bodyMedium)
+                Text("A saved credential does not prove that a client is connected now.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 if(usable && a.grant.agentId.startsWith("bot_")) Button(onClick={onReconnect(a)},enabled=!busy) {Text("Reconnect this agent")}
-                else if(usable) Text("This identity uses its saved private credential. Connection details are available from Home.",style=MaterialTheme.typography.bodySmall)
+                else if(usable) Text("Use this identity’s existing saved credential. Gateway connection details are available from Home.",style=MaterialTheme.typography.bodySmall)
+            }
+            Panel {
+                Text("Current grant",style=MaterialTheme.typography.titleMedium)
+                StatusPill(agentState(a),if(usable) StatusTone.GOOD else StatusTone.NEUTRAL)
+                Text(if(fullControl) "Full control · automatic SIConnect actions" else "Custom permissions and approval policy",style=MaterialTheme.typography.bodyMedium)
+                Text("Grant expiry: ${a.grant.expiresAtMs?.let {java.util.Date(it).toString()} ?: "No expiry configured"}",style=MaterialTheme.typography.bodySmall)
             }
             if(!a.grant.revoked) Panel {
                 Text("Revoke access",style=MaterialTheme.typography.titleMedium)
@@ -198,6 +218,19 @@ import dev.siconnect.core.*
     if(revoke) AlertDialog(onDismissRequest={revoke=false},title={Text("Revoke ${botDisplayName(a,state.agents)}?")},
         text={Text("This identity will no longer be allowed to request actions. Already running work must be reviewed separately in Activity.")},
         confirmButton={TextButton(onClick={revoke=false;onRevoke(a)},enabled=!busy) {Text("Revoke access")}},dismissButton={TextButton(onClick={revoke=false}) {Text("Keep agent")}})
+    if(rename) {
+        val validated=runCatching {AgentStore.validatedLabel(renameDraft)}
+        val nameChanged=originalLabel!=a.grant.label
+        AlertDialog(onDismissRequest={if(!busy) rename=false},title={Text("Rename agent")},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.55f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            Text("Choose the saved display name for this identity. Its credential, permissions and Full control choice stay with the same identity.",style=MaterialTheme.typography.bodyMedium)
+            Text("Identity …${a.grant.agentId.takeLast(8)} · ${credentialType(a)}",style=MaterialTheme.typography.bodySmall)
+            OutlinedTextField(renameDraft,{renameDraft=it.take(120)},label={Text("Agent name")},singleLine=true,isError=validated.isFailure,
+                supportingText={Text(validated.exceptionOrNull()?.message ?: "${renameDraft.trim().length}/60 characters")},modifier=Modifier.fillMaxWidth(),enabled=!busy)
+            if(nameChanged) Text("This agent’s name changed while you were editing. Close and reopen Rename to use the latest name.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+            if(isLegacyShared(a)) Text("This remains one shared credential identity after renaming.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }},confirmButton={Button(onClick={validated.getOrNull()?.let {label->rename=false;onRename(a,label)}},enabled=!busy && !nameChanged && validated.isSuccess && validated.getOrNull()!=a.grant.label) {Text("Save name")}},
+            dismissButton={TextButton(onClick={rename=false},enabled=!busy) {Text("Cancel")}})
+    }
 }
 /** The checked state comes only from the saved AgentRecord, never an optimistic local toggle. */
 @Composable private fun FullControlCard(a:AgentRecord,label:String,usable:Boolean,enabled:Boolean,busy:Boolean,
@@ -255,4 +288,7 @@ import dev.siconnect.core.*
 }
 private fun agentState(a:AgentRecord)=when {a.grant.revoked->"Revoked";a.grant.expiresAtMs?.let {it<=System.currentTimeMillis()}==true->"Expired";else->"Active"}
 private fun allowed(a:AgentRecord,id:String)=!a.grant.revoked && (a.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true) && a.grant.scopes.any {PolicyEngine.globMatches(it,id)} && a.grant.denied.none {PolicyEngine.globMatches(it,id)}
-private fun familyLabel(f:String)=mapOf("device" to "Device diagnostics","apps" to "Apps","notifications" to "Notifications","messages" to "Messaging","calendar" to "Calendar","reminders" to "Reminders","weather" to "Weather","location" to "Phone location","commute" to "Maps commute","files" to "Managed files","documents" to "Selected documents","ui" to "UI interaction","headless" to "Private app workspaces","termux" to "Termux commands","requests" to "Request results","system" to "System commands","settings" to "System settings","alarms" to "Clock information")[f] ?: f.replaceFirstChar {it.uppercase()}
+private fun isLegacyShared(a:AgentRecord)=a.grant.agentId=="development-client"
+private fun isOAuthPaired(a:AgentRecord)=a.grant.agentId.startsWith("bot_") && a.tokenHint=="OAuth pairing"
+private fun credentialType(a:AgentRecord)=when {isLegacyShared(a)->"Legacy shared credential";isOAuthPaired(a)->"OAuth-paired identity";else->"Saved credential · pairing type unrecorded"}
+private fun familyLabel(f:String)=mapOf("device" to "Device diagnostics","apps" to "Apps","notifications" to "Notifications","messages" to "Messaging","calendar" to "Calendar","reminders" to "Reminders","weather" to "Weather","location" to "Phone location","commute" to "Maps commute","files" to "Managed files","documents" to "Selected documents","ui" to "UI interaction","headless" to "Private app workspaces","termux" to "Termux commands","requests" to "Request results","system" to "System commands","settings" to "System settings","alarms" to "Clock information","clock" to "Clock controls")[f] ?: f.replaceFirstChar {it.uppercase()}

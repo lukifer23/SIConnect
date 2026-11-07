@@ -68,6 +68,25 @@ class RuntimeGraph(val context: Context) {
     val health = MutableStateFlow("Starting")
     val ready: Deferred<Unit>
     private var local: LocalEndpoint? = null
+    val startup=RuntimeStartup(listOf(
+        StartupStep("database","Check saved database",true) {
+            check(db.readableDatabase.rawQuery("PRAGMA quick_check",null).use {it.moveToFirst() && it.getString(0)=="ok"}) {"SQLite integrity check failed; database preserved for recovery"}
+        },
+        StartupStep("local_principals","Restore local owner identities",true) {
+            if(agents.get("local-owner")==null) agents.put(AgentRecord(AgentGrant("local-owner","Device owner",scopes=listOf("*"),autoApproveUpTo=RiskClass.LOW_IMPACT),"",System.currentTimeMillis(),tokenHint="local only"))
+            if(agents.get("local-automation")==null) agents.put(AgentRecord(AgentGrant("local-automation","Local automations",scopes=listOf("device.*","alarms.next","weather.forecast","notifications.post"),autoApproveUpTo=RiskClass.LOW_IMPACT),"",System.currentTimeMillis(),tokenHint="scheduler only"))
+        },
+        StartupStep("screen_ownership","Recover screen ownership",true) {ui.recover()},
+        StartupStep("backend","Observe selected device control",false) {privileged.refresh()},
+        StartupStep("executions","Reconcile interrupted executions",true) {engine.recover();runner.prepareRecovery()},
+        StartupStep("workflow_defaults","Check built-in workflows",false) {
+            if(!skills.exists(dev.siconnect.app.automation.AutomationTemplates.HEALTH_SKILL)) skills.install(dev.siconnect.app.automation.AutomationTemplates.health())
+            if(!skills.exists("weather.commute_check")) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
+        },
+        StartupStep("audit_history","Maintain diagnostic history",false) {events.trim(System.currentTimeMillis()-settings.eventRetentionDays*86_400_000L)},
+        StartupStep("saved_automations","Restore saved automation dispatch",false) {scheduler.restore()},
+        StartupStep("saved_reminders","Restore saved reminder dispatch",false) {reminders.restore()},
+    ))
     private val recovery = RuntimeRecovery { stage, error ->
         android.util.Log.e("SIConnect", "$stage deferred: ${error.javaClass.simpleName}")
     }
@@ -88,20 +107,14 @@ class RuntimeGraph(val context: Context) {
         dev.siconnect.app.capabilities.registerHeadlessCapabilities(this)
         dev.siconnect.app.capabilities.registerBridgeMaintenance(this)
         dev.siconnect.app.capabilities.registerProposalCapabilities(this)
+        dev.siconnect.app.capabilities.registerRecoveryCapabilities(this)
+        dev.siconnect.app.capabilities.registerClockCapabilities(this)
+        dev.siconnect.app.capabilities.registerMessagesCapabilities(this)
+        dev.siconnect.app.capabilities.registerCodexCapabilities(this)
         ready = scope.async {
-            check(db.readableDatabase.rawQuery("PRAGMA quick_check", null).use { it.moveToFirst() && it.getString(0) == "ok" }) { "SQLite integrity check failed; database preserved for recovery" }
-            if (agents.get("local-owner") == null) agents.put(AgentRecord(AgentGrant("local-owner", "Device owner", scopes=listOf("*"), autoApproveUpTo=RiskClass.LOW_IMPACT), "", System.currentTimeMillis(), tokenHint="local only"))
-            if (agents.get("local-automation") == null) agents.put(AgentRecord(AgentGrant("local-automation", "Local automations", scopes=listOf("device.*", "alarms.next", "weather.forecast", "notifications.post"), autoApproveUpTo=RiskClass.LOW_IMPACT), "", System.currentTimeMillis(), tokenHint="scheduler only"))
-            ui.recover()
-            privileged.refresh()
-            engine.recover(); runner.prepareRecovery()
-            if (!skills.exists(dev.siconnect.app.automation.AutomationTemplates.HEALTH_SKILL)) skills.install(dev.siconnect.app.automation.AutomationTemplates.health())
-            if(!skills.exists("weather.commute_check")) skills.install(dev.siconnect.app.capabilities.WeatherCommute.skill())
-            events.trim(System.currentTimeMillis() - settings.eventRetentionDays * 86_400_000L)
-            scheduler.restore()
-            reminders.restore()
+            startup.start()
             if (BuildConfig.DEBUG) { local = LocalEndpoint(this@RuntimeGraph).also { it.start() } }
-            health.value = "Ready — SQLite schema ${SIConnectDb.VERSION}"
+            updateStartupHealth()
             bootstrap.recoverIfEnabled()
         }
         scope.launch {
@@ -167,11 +180,21 @@ class RuntimeGraph(val context: Context) {
         scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}
         ready.invokeOnCompletion { e -> if (e != null) health.value = "Startup failed: ${e.javaClass.simpleName}" }
     }
+    internal fun updateStartupHealth() {
+        val failed=startup.stages.value.count {it.state in setOf("FAILED","INTERRUPTED")}
+        health.value="Ready — SQLite schema ${SIConnectDb.VERSION}"+if(failed>0) " · $failed startup tasks need attention" else ""
+    }
+    fun renameAgentFromOwner(agentId:String,label:String,expectedLabel:String) {
+        require(!agentId.startsWith("local-")) {"Local runtime identities are not editable"}
+        agents.rename(agentId,label,expectedLabel)
+        events.emit(Event(System.currentTimeMillis(),eventType="agent.label.updated",agentId=agentId,deviceId=settings.deviceId,
+            detail="Owner changed display name; identity, credential and permissions preserved"))
+    }
     /** Owner-only creation/rotation. Existing owner-selected access and profile snapshots stay unchanged. */
     fun createDevelopmentAgent(): String {
         val token = Settings.randomToken("sia_")
         val id = DEVELOPMENT_AGENT_ID
-        agents.put(developmentAgentWithCredential(agents.get(id),Settings.sha256Hex(token),token.take(8),System.currentTimeMillis()))
+        requests.atomic {agents.put(developmentAgentWithCredential(agents.get(id),Settings.sha256Hex(token),token.take(8),System.currentTimeMillis()))}
         settings.setBotToken(token)
         if (BuildConfig.DEBUG) File(context.noBackupFilesDir, "development-client.json").apply {
             writeText(buildJsonObject { put("agentId", id); put("token", token); put("port", 8765) }.toString())

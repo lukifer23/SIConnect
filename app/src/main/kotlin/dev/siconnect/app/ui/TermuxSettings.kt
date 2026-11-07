@@ -145,6 +145,7 @@ private data class TermuxOwnerState(val status:TermuxStatus,val probe:RequestRec
             Text("3. Return here and verify background execution. Installing Termux or opening its screen does not verify command access or account sign-in.",style=MaterialTheme.typography.bodyMedium)
         }
         ExpandablePanel("Codex in Termux","Explicitly check the CLI’s own sign-in status") {
+            Text("Connected agents can use codex.execute for a background task with your saved Codex account. This requires permission for both Codex and Termux commands. Giving Codex itself access to phone tools requires a separate SIConnect connection.",style=MaterialTheme.typography.bodyMedium)
             Text("This runs codex login status in a background Termux shell. It does not start login, change credentials, or display authentication output.",style=MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick={runCheck(true)},enabled=canCheck) {Text("Check Codex sign-in")}
             current.codex?.let {record->

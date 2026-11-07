@@ -59,6 +59,6 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
 }
 
 internal fun botDisplayName(bot:AgentRecord,bots:List<AgentRecord>):String {
-    val label=if(bot.grant.label=="ADB development client") "Personal bot" else bot.grant.label
+    val label=bot.grant.label
     return if(bots.count {it.grant.label==bot.grant.label}>1) "$label · ${bot.grant.agentId.takeLast(6)}" else label
 }

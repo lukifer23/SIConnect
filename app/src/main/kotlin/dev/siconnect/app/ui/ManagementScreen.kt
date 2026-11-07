@@ -64,7 +64,7 @@ private class ManagementDrafts(initialUrl:String):ViewModel() {
 }
 
 /** The service-details action is optional and permission protected on some Android releases. */
-private fun MainActivity.openScreenControlSettings():Boolean {
+internal fun MainActivity.openScreenControlSettings():Boolean {
     val details=Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
         .putExtra(Intent.EXTRA_COMPONENT_NAME,ComponentName(this,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java).flattenToString())
     val handler=packageManager.resolveActivity(details,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY or android.content.pm.PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo
@@ -176,7 +176,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
         LaunchedEffect(approvalId) {
             approve=null;approvalError=null
             val id=approvalId ?: return@LaunchedEffect
-            g.engine.recordUpdates.filter {it.requestId==id}.map {Unit}.onStart {emit(Unit)}.conflate().collect {
+            g.engine.recordUpdates.refreshesFor(id).collect {
                 try {
                     val current=withContext(Dispatchers.IO) {g.ready.await();g.requests.get(id)}
                     if(approvalId==id) {
@@ -211,7 +211,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
             Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
                 if(expanded) Column(Modifier.width(190.dp).fillMaxHeight().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                     Text("PREFERENCES",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(12.dp))
-                    listOf("Connections","Termux","Android access","Connected folders","Background & timing","Appearance","Commute & weather","Storage & history","Private workspaces","Advanced connection","Developer tools").forEach {name->
+                    listOf("Connections","Recovery","Termux","Android access","Connected folders","Background & timing","Appearance","Commute & weather","Storage & history","Private workspaces","Advanced connection","Developer tools").forEach {name->
                         Surface(onClick={if(name=="Developer tools") {tab="Capabilities";settingsPage=null} else {tab="Settings";settingsPage=name}},
                             shape=MaterialTheme.shapes.medium,color=if(settingsPage==name || (name=="Developer tools" && tab!="Settings")) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
                             Text(name,Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=14.dp),style=MaterialTheme.typography.titleSmall)
@@ -310,6 +310,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             OutlinedTextField(settingsSearch,{settingsSearch=it},label={Text("Find a setting")},singleLine=true,modifier=Modifier.fillMaxWidth())
                             val categories=listOf(
                                 Triple("Connections","Gateway, agents, and advanced device control",R.drawable.ic_nav_agents),
+                                Triple("Recovery","Live connection, Android access, and startup blockers",R.drawable.ic_nav_settings),
                                 Triple("Termux","Native background commands and CLI sign-in checks",R.drawable.ic_nav_settings),
                                 Triple("Android access","Screen, notifications, and calendar",R.drawable.ic_nav_settings),
                                 Triple("Connected folders","Choose documents your agents can use",R.drawable.ic_nav_home),
@@ -417,6 +418,7 @@ private fun MainActivity.openScreenControlSettings():Boolean {
                             PrivateWorkspaceSettings()
 
                         }
+                        if(settingsPage=="Recovery") RecoverySettings(onGateway,onAdvancedControl,{settingsPage="Termux"})
                         if(settingsPage=="Advanced connection") {
                             TextButton(onClick={showConnectionDetails=!showConnectionDetails}) {Text(if(showConnectionDetails) "Hide advanced connection settings" else "Advanced connection settings")}
                         if(showConnectionDetails) {

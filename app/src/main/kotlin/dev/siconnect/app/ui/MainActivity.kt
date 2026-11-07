@@ -104,6 +104,10 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                             Text("Starting the local runtime…")
                         } else {
                             Text("Local runtime could not start", style = MaterialTheme.typography.titleLarge)
+                            val stages by graph.startup.stages.collectAsState()
+                            stages.filter {it.state in setOf("FAILED","INTERRUPTED")}.forEach {stage->
+                                Text("${stage.title}: ${stage.state.lowercase()} · ${stage.errorType ?: "Outcome unavailable"}",style=MaterialTheme.typography.bodyMedium)
+                            }
                             Text("Saved data and permissions have not been reset. Restart SIConnect from Android app settings, then open it again. Keep its stored data; if this continues, it is needed for diagnosis.")
                             OutlinedButton(onClick = {
                                 startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$packageName".toUri()))
@@ -354,7 +358,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                             } else note="Previous custom permissions restored."
                         }}
                         if(enabled) ownerAuthentication.authenticate("Enable full control for ${botDisplayName(agent,bots)}",apply,{note=it}) else apply()
-                    },busy=busy,onInitialAgentConsumed={selectedAgentId=null})
+                    },onRename={agent,label->work {g.renameAgentFromOwner(agent.grant.agentId,label,agent.grant.label);note="Agent name saved. Connection and permissions are unchanged."}},busy=busy,onInitialAgentConsumed={selectedAgentId=null})
                 Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier)
                 Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id},detail={
                     if(inspectedId!=null) {

@@ -56,7 +56,7 @@ import kotlinx.serialization.json.*
     }
     LaunchedEffect(requestId,lookupRevision) {
         val id=requestId ?: return@LaunchedEffect
-        graph.engine.recordUpdates.filter {it.requestId==id}.map {Unit}.onStart {emit(Unit)}.conflate().collect {
+        graph.engine.recordUpdates.refreshesFor(id).collect {
             loading=true
             try {
                 val result=withContext(Dispatchers.IO) {graph.ready.await();graph.requests.get(id)}

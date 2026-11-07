@@ -161,6 +161,17 @@ class ControlCenterDeviceTest {
                     click(botDisplayName(a,existingAgents));text("Pair agent")
                     text("Identity …${a.grant.agentId.takeLast(8)}")
                     click(botDisplayName(b,existingAgents));text("Identity …${b.grant.agentId.takeLast(8)}")
+                    click("Rename agent")
+                    val nameField=withTimeout(5000) {while(true) {
+                        find {it.isEditable && it.text?.toString()==b.grant.label}?.let {return@withTimeout it};delay(50)
+                    };error("Agent name field unavailable")}
+                    assertTrue(nameField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Unsaved agent display name")
+                    }))
+                    scenario.recreate();text("Unsaved agent display name");click("Cancel")
+                    val unchanged=requireNotNull(g.agents.get(b.grant.agentId))
+                    assertEquals("Cancelling rename must preserve the saved name and access",b.grant,unchanged.grant)
+                    assertEquals(b.fullAccessPreviousGrant,unchanged.fullAccessPreviousGrant)
                     navigate("Activity");text("Needs attention")
                     navigate("Agents");text("Identity …${b.grant.agentId.takeLast(8)}")
                     assertNull("The consumed Home deep link must not override the later agent selection",find {it.text?.toString()=="Identity …${a.grant.agentId.takeLast(8)}"})
@@ -229,6 +240,8 @@ class ControlCenterDeviceTest {
                 scenario.recreate();text("Unsaved disposable form")
                 click("Back");text("Discard unsaved changes?");click("Discard changes")
                 navigate("Settings");text("Android access")
+                click("Recovery");text("Recovery center");click("Refresh recovery status")
+                scenario.recreate();text("Recovery center");text("Refresh recovery status")
                 assertEquals(before,g.scheduler.all().map {it.id}.toSet())
                 assertEquals("Navigation and result inspection must not change agent grants",beforeGrants,g.agents.all().associate {it.grant.agentId to it.grant})
             } catch(e:Throwable) {

@@ -14,6 +14,9 @@ import dev.siconnect.core.RequestRecord
 import dev.siconnect.core.RequestState
 import dev.siconnect.core.RequestStore
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 val AppJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
 
@@ -272,10 +275,40 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     fun prune(olderThanMs: Long, limit: Int = 25): Int = atomic {
         val w=db.writableDatabase
         val terminal = RequestState.TERMINAL.joinToString(",") { "'${it.name}'" }
+        // Ordinary recipes also own child requests. Compact their safe leaves first, while
+        // checking metadata ancestry; missing, cyclic or over-depth links fail closed.
         val ids=w.rawQuery("""SELECT r.request_id FROM requests r WHERE r.updated_at < ? AND r.state IN ($terminal) AND r.state!='UNKNOWN_OUTCOME'
             AND (r.parent_request_id IS NULL
-                OR EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id=r.parent_request_id AND s.payload_expired=1)
-                OR EXISTS (SELECT 1 FROM request_tombstones p WHERE p.request_id=r.parent_request_id))
+                OR EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id=r.parent_request_id AND s.payload_expired=1
+                    AND s.state IN ('SUCCEEDED','PARTIALLY_SUCCEEDED','FAILED','CANCELLED'))
+                OR EXISTS (SELECT 1 FROM request_tombstones p WHERE p.request_id=r.parent_request_id
+                    AND p.state IN ($terminal) AND p.state!='UNKNOWN_OUTCOME')
+                OR EXISTS (SELECT 1 FROM requests p WHERE p.request_id=r.parent_request_id
+                    AND p.state IN ($terminal) AND p.state!='UNKNOWN_OUTCOME'))
+            AND NOT EXISTS (
+                WITH RECURSIVE ancestry(request_id,parent_request_id,state,depth) AS (
+                    SELECT r.request_id,r.parent_request_id,r.state,0
+                    UNION ALL
+                    SELECT p.request_id,p.parent_request_id,p.state,a.depth+1 FROM requests p
+                        JOIN ancestry a ON p.request_id=a.parent_request_id WHERE a.depth<31
+                )
+                SELECT 1 FROM ancestry a WHERE a.state NOT IN ($terminal) OR a.state='UNKNOWN_OUTCOME'
+                    OR (a.depth=31 AND a.parent_request_id IS NOT NULL)
+                    OR EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id IN (a.request_id,a.parent_request_id)
+                        AND (s.payload_expired=0 OR s.state NOT IN ('SUCCEEDED','PARTIALLY_SUCCEEDED','FAILED','CANCELLED')))
+                    OR EXISTS (SELECT 1 FROM proposals p WHERE p.request_id IN (a.request_id,a.parent_request_id)
+                        AND p.state IN ('ACCEPTED','EXECUTING'))
+                    OR EXISTS (SELECT 1 FROM reminders m WHERE 'reminder:' || m.reminder_id IN (a.request_id,a.parent_request_id)
+                        AND m.state NOT IN ('SUCCEEDED','FAILED','CANCELLED','DENIED','EXPIRED','MISSED'))
+                    OR EXISTS (SELECT 1 FROM automation_runs ar WHERE ar.run_id IN (a.request_id,a.parent_request_id)
+                        AND ar.state NOT IN ('SUCCEEDED','PARTIALLY_SUCCEEDED','FAILED','BLOCKED','CANCELLED','MISSED'))
+                    OR (a.parent_request_id IS NOT NULL
+                        AND NOT EXISTS (SELECT 1 FROM requests p WHERE p.request_id=a.parent_request_id)
+                        AND NOT EXISTS (SELECT 1 FROM request_tombstones p WHERE p.request_id=a.parent_request_id
+                            AND p.state IN ($terminal) AND p.state!='UNKNOWN_OUTCOME')
+                        AND NOT EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id=a.parent_request_id AND s.payload_expired=1
+                            AND s.state IN ('SUCCEEDED','PARTIALLY_SUCCEEDED','FAILED','CANCELLED')))
+            )
             AND NOT EXISTS (SELECT 1 FROM requests child WHERE child.parent_request_id=r.request_id)
             AND NOT EXISTS (SELECT 1 FROM skill_runs s WHERE s.run_id=r.request_id AND s.payload_expired=0)
             AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.request_id=r.request_id AND p.state IN ('ACCEPTED','EXECUTING'))
@@ -400,7 +433,46 @@ class AgentStore(private val db: SIConnectDb) : AgentDirectory {
 
     fun delete(agentId: String) { db.writableDatabase.delete("agents", "agent_id = ?", arrayOf(agentId)) }
 
-    fun touch(agentId: String, now: Long) { get(agentId)?.let { put(it.copy(lastSeenAtMs = now)) } }
+    /** A display name is metadata, never a credential lookup or replacement permission grant. */
+    fun rename(agentId:String,requestedLabel:String,expectedLabel:String):AgentRecord {
+        require(!agentId.startsWith("local-")) {"Local runtime identities cannot be renamed"}
+        val label=validatedLabel(requestedLabel)
+        return updateAtomically {w->
+            val original=w.storedJson("agents","agent_id",agentId) ?: error("This agent no longer exists")
+            val current=decode(original)
+            check(current.grant.label==expectedLabel) {"This agent’s name changed. Reopen it before renaming."}
+            if(current.grant.label==label) return@updateAtomically current
+            val raw=AppJson.parseToJsonElement(original).jsonObject
+            val grant=raw.getValue("grant").jsonObject
+            val changed=JsonObject(raw.toMutableMap().apply {
+                put("grant",JsonObject(grant.toMutableMap().apply {put("label",JsonPrimitive(label))}))
+            }).toString()
+            check(w.update("agents",ContentValues().apply {put("json",changed)},"agent_id=? AND json=?",arrayOf(agentId,original))==1) {"Agent name could not be saved"}
+            decode(changed)
+        }
+    }
+
+    /** Patch the latest row so authentication metadata cannot restore an older label or grant. */
+    fun touch(agentId:String,now:Long) {updateAtomically {w->
+        val original=w.storedJson("agents","agent_id",agentId) ?: return@updateAtomically
+        val raw=AppJson.parseToJsonElement(original).jsonObject
+        val changed=JsonObject(raw.toMutableMap().apply {put("lastSeenAtMs",JsonPrimitive(now))}).toString()
+        check(w.update("agents",ContentValues().apply {put("last_seen_at",now);put("json",changed)},"agent_id=? AND json=?",arrayOf(agentId,original))==1) {"Agent activity could not be saved"}
+    }}
+
+    private fun <T> updateAtomically(block:(SQLiteDatabase)->T):T {
+        val w=db.writableDatabase
+        w.beginTransactionNonExclusive()
+        try {val result=block(w);w.setTransactionSuccessful();return result}
+        finally {w.endTransaction()}
+    }
+
+    companion object {
+        fun validatedLabel(value:String):String=value.trim().also {
+            require(it.length in 1..60) {"Enter a name between 1 and 60 characters"}
+            require(it.none(Char::isISOControl)) {"Agent names must fit on one line without control characters"}
+        }
+    }
 
     private fun decode(s: String) = AppJson.decodeFromString(AgentRecord.serializer(), s)
 }

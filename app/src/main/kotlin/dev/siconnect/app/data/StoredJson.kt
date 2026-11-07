@@ -7,8 +7,10 @@ import java.io.ByteArrayOutputStream
  * Chunk bytes rather than UTF-16 characters so boundaries cannot corrupt supplementary Unicode.
  * Identifiers are internal constants, never caller SQL. */
 internal fun SQLiteDatabase.storedJson(table: String, keyColumn: String, key: String): String? {
-    require(table in setOf("requests", "request_tombstones", "skill_runs"))
-    require(keyColumn in setOf("request_id", "run_id"))
+    require((table to keyColumn) in setOf(
+        "requests" to "request_id", "request_tombstones" to "request_id",
+        "skill_runs" to "run_id", "agents" to "agent_id",
+    ))
     val bytes = ByteArrayOutputStream()
     var found = false
     rawQuery("""WITH RECURSIVE payload(bytes) AS (

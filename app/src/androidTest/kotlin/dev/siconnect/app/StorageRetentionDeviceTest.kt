@@ -101,6 +101,53 @@ class StorageRetentionDeviceTest {
         assertFalse(runs.get("a-missing")!!.payloadExpired);assertTrue(runs.get("b-safe")!!.payloadExpired)
     }
 
+    @Test fun ordinaryCompletedRecipeCompactsLeavesBeforeParentsWithoutLosingRetryIdentities() = isolated {db->
+        val requests=SqlRequestStore(db)
+        val original=listOf(record("recipe"),record("recipe:open",parent="recipe"),record("recipe:inspect",parent="recipe:open"))
+        original.forEach {assertTrue(requests.insert(it))}
+        assertEquals(1,requests.prune(now,1))
+        assertTrue(requests.get("recipe:inspect")!!.payloadExpired)
+        assertFalse(requests.get("recipe:open")!!.payloadExpired);assertFalse(requests.get("recipe")!!.payloadExpired)
+        assertEquals(1,requests.prune(now,1));assertTrue(requests.get("recipe:open")!!.payloadExpired)
+        assertFalse(requests.get("recipe")!!.payloadExpired)
+        assertEquals(1,requests.prune(now,1));assertEquals(0,requests.prune(now,1))
+        original.forEach {old->
+            val retained=requireNotNull(requests.get(old.requestId))
+            assertTrue(retained.payloadExpired);assertNull(retained.result)
+            assertEquals(old.state,retained.state);assertEquals(old.argsHash,retained.argsHash)
+            assertEquals(old.operationFingerprint,retained.operationFingerprint);assertEquals(old.parentRequestId,retained.parentRequestId)
+            assertEquals(retained,requests.findByIdempotencyKey(old.agentId,requireNotNull(old.idempotencyKey)))
+            assertFalse(requests.insert(old));assertFalse(requests.insert(old.copy(requestId="different-${old.requestId}")))
+        }
+    }
+
+    @Test fun completedChildCannotExpireThroughActiveUnknownProposalOrUnresolvedAncestry() = isolated {db->
+        val requests=SqlRequestStore(db)
+        fun chain(root:String,state:RequestState) {
+            assertTrue(requests.insert(record(root,state)))
+            assertTrue(requests.insert(record("$root:middle",parent=root)))
+            assertTrue(requests.insert(record("$root:leaf",parent="$root:middle")))
+        }
+        chain("active-root",RequestState.EXECUTING);chain("unknown-root",RequestState.UNKNOWN_OUTCOME)
+        chain("proposal-root",RequestState.SUCCEEDED)
+        SqlProposalStore(db).insert(ActionProposal(proposalId="active-ancestor-proposal",agentId="fixture-agent",deviceId="fixture-device",
+            createdAtMs=now-1000,expiresAtMs=now+60000,title="Ancestry fixture",summary="Protect active link",reason="Fixture",
+            sourceType="fixture",sourceReference=null,capabilityId="device.status",capabilityVersion=1,arguments=buildJsonObject {},
+            assessment=RiskAssessment(RiskClass.READ_ONLY,"Fixture"),actionHash="fixture",idempotencyKey="ancestor-key",
+            state=ProposalState.ACCEPTED,linkedRequestId="proposal-root"))
+        assertTrue(requests.insert(record("missing-middle",parent="missing-parent")))
+        assertTrue(requests.insert(record("missing-leaf",parent="missing-middle")))
+        SqlSkillRunStore(db).insert(workflow("unexpired-workflow"))
+        assertTrue(requests.insert(record("workflow-middle",parent="unexpired-workflow")))
+        assertTrue(requests.insert(record("workflow-leaf",parent="workflow-middle")))
+        assertEquals(0,requests.prune(now,100))
+        for(id in listOf("active-root:leaf","unknown-root:leaf","proposal-root:leaf","missing-leaf","workflow-leaf"))
+            assertFalse(id,requests.get(id)!!.payloadExpired)
+        // A protected old leaf cannot prevent an unrelated, proven completed recipe expiring.
+        assertTrue(requests.insert(record("safe-parent")));assertTrue(requests.insert(record("safe-leaf",parent="safe-parent")))
+        assertEquals(1,requests.prune(now,1));assertTrue(requests.get("safe-leaf")!!.payloadExpired)
+    }
+
     @Test fun reminderReconciliationProtectsDeliveryAndOldIdentitiesNeverExpire() = isolated { db ->
         val requests=SqlRequestStore(db)
         val r=record("reminder:fixture",RequestState.FAILED).copy(errorCode="ORIGINAL_FAILURE",errorMessage="Original evidence",

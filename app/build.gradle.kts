@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 26
-        versionName = "0.6.0-dev.18"
+        versionCode = 27
+        versionName = "0.6.0-dev.19"
         testInstrumentationRunner = if (providers.gradleProperty("installationCheckpoint").orNull == "true")
             "dev.siconnect.app.InstallationCheckpointInstrumentation" else "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,6 +47,8 @@ android {
         aidl = true
         buildConfig = true
     }
+    // Ship the reviewed launcher used by explicit Termux setup; updates never execute it.
+    sourceSets.getByName("main").assets.srcDir(rootProject.file("tools/termux"))
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
