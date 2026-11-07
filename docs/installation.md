@@ -2,7 +2,7 @@
 
 The current control-center refresh is **0.6.0-dev.16 / code 24 / SQLite 11** with the existing compatible development signer. It restores the disabled package in place and preserves owner records and credentials. See [current status and verification](project-status.md). Code-21 evidence below describes the preceding backend milestone.
 
-Code 24 source addresses observed private scrolling/capture and adds phone transport timing; the device remains on code 23 while its live Dot test continues. See [pass 19](engineering-pass-19.md) for evidence and pending acceptance.
+Code 24 source addresses observed private scrolling/capture and adds phone transport timing; code 24 is installed and normal-process readiness plus private scroll/capture acceptance passed. See [pass 19](engineering-pass-19.md) for evidence and pending acceptance.
 Preceding backend milestone: **0.6.0-dev.13 / versionCode 21 / SQLite 11**. The [November 6 review](source-audit-2026-11-06.md) verified the existing signer before an in-place update, then checked exact original owner records, SQLite integrity and hosted native/privileged execution. No replacement signing key was generated. The minified artifact remains unsigned; no public production-signed distribution channel has been validated. Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
 
 ## Preserve the existing installation

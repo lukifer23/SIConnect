@@ -2,7 +2,7 @@
 
 The current control-center refresh is **0.6.0-dev.16 / code 24 / SQLite 11** with the existing compatible development signer. It restores the disabled package in place and preserves owner records and credentials. See [current status and verification](project-status.md). Code-21 evidence below describes the preceding backend milestone.
 
-Code 24 source addresses observed private scrolling/capture and adds phone transport timing; the device remains on code 23 while its live Dot test continues. See [pass 19](engineering-pass-19.md) for evidence and pending acceptance.
+Code 24 source addresses observed private scrolling/capture and adds phone transport timing; code 24 is installed and normal-process readiness plus private scroll/capture acceptance passed. See [pass 19](engineering-pass-19.md) for evidence and pending acceptance.
 The preceding source and installed compatible debug milestone was **code 21 / schema 11**; see [the November 6 review](source-audit-2026-11-06.md) for current preservation, private-display/recovery and hosted readiness checks. Private checkpoints and device evidence stay outside Git. Earlier pass-14 optimized artifacts are historical and cannot downgrade the schema-11 database. The inventory/cleanup below records the earlier pass-13 cleanup; retain active incremental build caches.
 
 October 26, 2026. This checkpoint covers SIConnect source, its generated local artifacts and its development processes. Other projects, owner applications and shared system caches are outside the cleanup scope.

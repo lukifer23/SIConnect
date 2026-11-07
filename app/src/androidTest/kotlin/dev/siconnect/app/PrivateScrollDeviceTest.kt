@@ -55,23 +55,52 @@ class PrivateScrollDeviceTest {
         fun rows(snapshot:JsonObject)=snapshot.getValue("nodes").jsonArray.map {it.jsonObject}
         fun visibleRows(snapshot:JsonObject)=rows(snapshot).filter {it["text"]?.jsonPrimitive?.content.orEmpty().startsWith("Disposable fixture row ")}
             .map {it["text"] to it["bounds"]}
+        suspend fun stableInspect():JsonObject=withTimeout(6000) {
+            var previous:JsonObject?=null;var stableSamples=0
+            while(true) {
+                val fresh=inspect()
+                // Window-entry and ScrollView smooth-scroll animations can change
+                // bounds/actions after the first changed frame. Keep production's
+                // full stale-reference guard and wait for three matching samples.
+                val comparable=buildJsonObject {
+                    put("windowId",fresh.getValue("windowId"))
+                    put("nodes",JsonArray(rows(fresh).map {JsonObject(it.filterKeys {key->key!="nodeRef"})}))
+                }
+                stableSamples=if(comparable==previous) stableSamples+1 else 0
+                if(stableSamples>=2) return@withTimeout fresh
+                previous=comparable;delay(120)
+            }
+            @Suppress("UNREACHABLE_CODE") error("Fixture never settled")
+        }
         try {
             val opened=call("open",buildJsonObject {put("packageName",pkg);put("uri","https://siconnect-fixture.invalid/semantic");put("ttlMs",120_000)})
             session=opened.getValue("sessionId").jsonPrimitive.content
             assertTrue(opened.getValue("displayId").jsonPrimitive.int>0)
-            var snapshot=inspect()
+            var snapshot=stableInspect()
             for(method in listOf("SEMANTIC","PRIVATE_TOUCH")) {
-                val before=visibleRows(snapshot)
-                assertTrue("Fixture must expose actual visible rows",before.isNotEmpty())
-                val node=rows(snapshot).single {it["description"]?.jsonPrimitive?.content=="Fixture scroll region"}
-                val result=call("scroll",bound(buildJsonObject {
-                    put("snapshotId",snapshot.getValue("snapshotId"));put("nodeRef",node.getValue("nodeRef"))
-                    put("direction","FORWARD");put("inputMethod",method)
-                }))
+                var before=visibleRows(snapshot)
+                var acceptedResult:JsonObject?=null
+                for(attempt in 1..3) {
+                    snapshot=stableInspect();before=visibleRows(snapshot)
+                    assertTrue("Fixture must expose actual visible rows",before.isNotEmpty())
+                    val node=rows(snapshot).single {it["description"]?.jsonPrimitive?.content=="Fixture scroll region"}
+                    val request=g.engine.submit(InvocationRequest(agentId=id,capabilityId="headless.scroll",arguments=bound(buildJsonObject {
+                        put("snapshotId",snapshot.getValue("snapshotId"));put("nodeRef",node.getValue("nodeRef"))
+                        put("direction","FORWARD");put("inputMethod",method)
+                    })),Origin.REMOTE)
+                    if(request.state==RequestState.SUCCEEDED) {
+                        acceptedResult=requireNotNull(request.result).output.jsonObject;break
+                    }
+                    // A stale-reference FAILED result is the backend's explicit
+                    // pre-input refusal. Never retry an uncertain or accepted input.
+                    assertTrue("$method: ${request.state} ${request.errorCode}: ${request.errorMessage}",
+                        request.state==RequestState.FAILED && request.errorCode=="STALE_NODE_REFERENCE")
+                }
+                val result=requireNotNull(acceptedResult) {"$method did not obtain a fresh actionable fixture node"}
                 assertEquals(true,result["actionAccepted"]?.jsonPrimitive?.booleanOrNull)
                 snapshot=withTimeout(5000) {
-                    var fresh=inspect()
-                    while(visibleRows(fresh)==before) {delay(100);fresh=inspect()}
+                    var fresh=stableInspect()
+                    while(visibleRows(fresh)==before) {delay(100);fresh=stableInspect()}
                     fresh
                 }
                 assertNotEquals("$method must change actual row content/bounds",before,visibleRows(snapshot))
