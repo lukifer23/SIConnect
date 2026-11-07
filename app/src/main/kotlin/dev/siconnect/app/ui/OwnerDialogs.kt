@@ -32,7 +32,12 @@ import kotlinx.serialization.json.*
 @Composable internal fun OwnerApprovalDialog(r: RequestRecord,busy:Boolean=false,error:String="",onClose:()->Unit,onDeny:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
     val critical=r.assessment?.risk==RiskClass.CRITICAL
     val pending=r.state==RequestState.AWAITING_APPROVAL
-    val expired=System.currentTimeMillis()>=(r.approvalExpiresAtMs ?: r.expiresAtMs)
+    val deadline=r.approvalExpiresAtMs ?: r.expiresAtMs
+    var expired by remember(r.requestId,deadline) {mutableStateOf(System.currentTimeMillis()>=deadline)}
+    LaunchedEffect(r.requestId,deadline,pending) {
+        expired=System.currentTimeMillis()>=deadline
+        if(pending && !expired) {delay((deadline-System.currentTimeMillis()).coerceAtLeast(1));expired=true}
+    }
     val canDecide=pending && !busy && !expired
     BasicAlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false)) {
         Surface(shape=RoundedCornerShape(28.dp),tonalElevation=6.dp) {

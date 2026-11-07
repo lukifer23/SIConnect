@@ -27,6 +27,7 @@ import kotlinx.coroutines.*
 /** Optional access is requested per workflow; native readiness never depends on shell authority. */
 @Composable internal fun MainActivity.NativeSetup(onClose:()->Unit,onGateway:()->Unit,onAgents:()->Unit,onAdvanced:()->Unit) {
     var stage by rememberSaveable {mutableIntStateOf(0)}
+    var chooseStage by remember {mutableStateOf(false)}
     var result by remember {mutableStateOf("")}
     var roots by remember {mutableIntStateOf(0)}
     val scope=rememberCoroutineScope()
@@ -46,10 +47,15 @@ import kotlinx.coroutines.*
     Dialog(onDismissRequest=onClose,properties=DialogProperties(usePlatformDefaultWidth=false)) {
         Surface(Modifier.widthIn(max=720.dp).fillMaxWidth().fillMaxHeight(.96f).safeDrawingPadding().imePadding(),shape=MaterialTheme.shapes.large) {
             Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                Text("Set up SIConnect",style=MaterialTheme.typography.headlineSmall)
-                Text("${stage+1} of 8 · ${stages[stage]}",style=MaterialTheme.typography.titleMedium)
+                PageHeader("Set up SIConnect","Connect the access you need, one step at a time.")
+                Box {
+                    OutlinedButton(onClick={chooseStage=true}) {Text("Step ${stage+1} of 8 · ${stages[stage]} ▾")}
+                    DropdownMenu(chooseStage,{chooseStage=false}) {
+                        stages.forEachIndexed {index,label->DropdownMenuItem(text={Text("${index+1}. $label")},onClick={stage=index;result="";chooseStage=false})}
+                    }
+                }
                 LinearProgressIndicator(progress={(stage+1)/8f},modifier=Modifier.fillMaxWidth())
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f).verticalScroll(rememberSaveable(stage,saver=ScrollState.Saver) {ScrollState(0)}),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     when(stage) {
                         0 -> {
                             Text("Native tools are useful immediately. Connect your existing gateway and authorized AI agents when ready. Advanced device control is optional and uses Android Wireless debugging authorization.")

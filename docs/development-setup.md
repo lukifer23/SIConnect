@@ -1,6 +1,6 @@
 # Development setup
 
-Current source and installed debug build: Android **0.6.0-dev.13 / code 21**, SQLite **11**, **100** phone tools plus gateway status. See [the November 6 review](source-audit-2026-11-06.md) for host and focused physical verification, [project status](project-status.md) and [the build plan](build-plan.md). Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
+Current source: Android **0.6.0-dev.16 / code 24**, SQLite **11**, **100** phone tools plus gateway status. See [the November 6 review](source-audit-2026-11-06.md) for host and focused physical verification, [project status](project-status.md) and [the build plan](build-plan.md). The installed debug checkpoint remains code 23 during the live Dot test. [Pass 19](engineering-pass-19.md) tracks new fixes and pending acceptance. Historical code-20 evidence remains in [pass 18](engineering-pass-18.md).
 
 ## Host toolchain (macOS, Apple silicon)
 
@@ -94,7 +94,7 @@ Build outputs and `gateway/node_modules` are regenerable. Keep `local.properties
 
 ## Optimized installation checkpoint
 
-Historical code 14 used a minified development-signed APK with the existing compatible signer; debug fixtures and LocalEndpoint were absent. The current code-21 installation is a compatible debug build; its separately built minified release remains unsigned and uninstalled. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
+Historical code 14 used a minified development-signed APK with the existing compatible signer; debug fixtures and LocalEndpoint were absent. The current code-23 installation is a compatible debug build; its separately built minified release remains unsigned and uninstalled. The normal AndroidX test runner targets the debug build; it cannot assume unminified Kotlin symbols remain in an optimized target. For private upgrade continuity, build the framework-only verifier explicitly:
 
 ```sh
 ./gradlew :app:assembleDebugAndroidTest -PinstallationCheckpoint=true

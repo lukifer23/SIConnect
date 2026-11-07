@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
 import dev.siconnect.app.R
+import dev.siconnect.app.ui.LocalExpandedLayout
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -31,8 +32,8 @@ enum class Destination(val label:String,val icon:Int) {
             label={Text(label,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.semantics {contentDescription=d.label})})
     }}) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val wide=maxWidth>=720.dp
-            saved.SaveableStateProvider(selected.name) {content(wide)}
+            val wide=maxWidth>=600.dp && LocalDensity.current.fontScale<1.5f
+            saved.SaveableStateProvider(selected.name) {CompositionLocalProvider(LocalExpandedLayout provides wide) {content(wide)}}
             SnackbarHost(snackbarHostState,Modifier.align(Alignment.BottomCenter).padding(16.dp))
         }
     }

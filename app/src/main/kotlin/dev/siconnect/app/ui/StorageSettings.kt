@@ -9,9 +9,10 @@ import androidx.compose.ui.unit.dp
 import dev.siconnect.app.data.*
 import dev.siconnect.app.graph
 import kotlinx.coroutines.*
-import java.util.Locale
+import androidx.compose.ui.platform.LocalLocale
 
 @Composable internal fun MainActivity.StorageSettings() {
+    val locale=LocalLocale.current.platformLocale
     val scope = rememberCoroutineScope()
     var days by remember { mutableStateOf(graph.settings.executionRetention.days) }
     var proposedDays by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -25,6 +26,7 @@ import java.util.Locale
         catch (_: Exception) { message = "Storage information is unavailable. Try again." }
     }
     fun applyPolicy(policy: RetentionPolicy) {
+        if(busy) return
         busy = true
         scope.launch {
             try {
@@ -37,10 +39,10 @@ import java.util.Locale
             finally { busy = false }
         }
     }
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Panel {
             Text("Execution history", style = MaterialTheme.typography.titleMedium)
-            Text(if (days == null) "Keep execution payloads until you choose an expiry period." else "Expire completed execution payloads after $days days.")
+            StatusPill(if(days==null) "Automatic expiry off" else "Expire payloads after $days days",if(days==null) StatusTone.NEUTRAL else StatusTone.GOOD)
+            Text(if (days == null) "Keep execution payloads until you choose an expiry period." else "Expire completed execution payloads after $days days.",style=MaterialTheme.typography.bodyMedium)
             Text("Active work, uncertain outcomes, reminder and automation settings stay available. Compact outcomes and retry identities are kept to prevent repeated actions.", style = MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = days == null, onClick = { applyPolicy(RetentionPolicy()) }, enabled = !busy && days != null, label = { Text("Keep payloads") })
@@ -49,9 +51,15 @@ import java.util.Locale
                 }
             }
             summary?.let { s ->
-                fun mb(bytes: Long) = String.format(Locale.getDefault(), "%.1f", bytes / 1_048_576.0)
-                Text("${mb(s.allocatedBytes)} MB database · ${mb(s.reusableBytes)} MB reusable", style = MaterialTheme.typography.bodySmall)
-                Text("${s.fullRequests} full requests · ${s.compactRequests} compact outcomes · ${s.fullWorkflows} full workflows", style = MaterialTheme.typography.bodySmall)
+                fun mb(bytes: Long) = String.format(locale, "%.1f", bytes / 1_048_576.0)
+                HorizontalDivider()
+                Text("Database storage",style=MaterialTheme.typography.titleSmall)
+                Text("${mb(s.allocatedBytes)} MB allocated",style=MaterialTheme.typography.headlineSmall)
+                if(s.allocatedBytes>0) LinearProgressIndicator(progress={((s.allocatedBytes-s.reusableBytes).toDouble()/s.allocatedBytes).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())
+                Text("${mb(s.reusableBytes)} MB can be reused within the database. Expiring records does not immediately shrink the database file.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${s.fullRequests} full requests · ${s.compactRequests} compact outcomes",style=MaterialTheme.typography.bodySmall)
+                Text("${s.fullWorkflows} full workflows · ${s.compactWorkflows} compact workflows",style=MaterialTheme.typography.bodySmall)
+                TextButton(onClick={revision++},enabled=!busy) {Text("Refresh storage details")}
             }
             if (days != null) OutlinedButton(enabled = !busy, onClick = {
                 busy = true
@@ -65,8 +73,8 @@ import java.util.Locale
                     finally { busy = false }
                 }
             }) { Text(if (busy) "Working…" else "Clean up one batch") }
-            if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
-        }
+            if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (message.isNotBlank()) Notice(message)
     }
     proposedDays?.let { selected ->
         AlertDialog(onDismissRequest = { if (!busy) proposedDays = null }, title = { Text("Expire payloads after $selected days?") },

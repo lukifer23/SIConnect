@@ -1,7 +1,8 @@
 # Current scope, gaps and build plan
 
-Updated November 6, 2026. Current implementation checkpoint: **0.6.0-dev.13 / code 21 / SQLite 11 / 100 phone tools plus gateway status**. The pass began with source/docs/GitHub/host review, then installed code 21 and ran focused physical checks after a test phone became available. Read [the current audit and evidence](source-audit-2026-11-06.md), [project status](project-status.md) and historical [pass 18](engineering-pass-18.md).
+Updated November 6, 2026. Current implementation checkpoint: **0.6.0-dev.16 / code 24 / SQLite 11 / 100 phone tools plus gateway status**. The current control-center refresh adds dedicated unfolded layouts, persistent focused settings and result inspection, and verified existing Grok/Dots catalogs. The preceding source/host/backend review installed code 21 and ran focused physical checks. Read [the current audit and evidence](source-audit-2026-11-06.md), [project status](project-status.md) and historical [pass 18](engineering-pass-18.md).
 
+Code 24 source addresses observed private scrolling/capture and adds phone transport timing; the device remains on code 23 while its live Dot test continues. See [pass 19](engineering-pass-19.md) for evidence and pending acceptance.
 ## What we are building
 
 SIConnect lets an authorized external agent do useful work on the owner's Android phone. The phone owns permissions, approvals, execution, verification and durable history. Its outbound gateway connection lets it work without the development computer. Native APIs handle background jobs. Private app displays let supported installed apps operate while the owner uses the shared screen; this device still requires the phone awake and unlocked. Existing semantic controls/leases cover explicitly allowed shared-screen work. The selected privileged backend supplies real shell/display authority without switching identities automatically.

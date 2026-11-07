@@ -46,6 +46,8 @@ data class AgentGrant(
     val expiresAtMs: Long? = null,
     /** Owner choice: reject shared-screen, possible-screen and unspecified interactions. */
     val allowSharedScreen: Boolean = true,
+    /** Explicit durable local-owner full-control profile; normal eligibility checks still apply. */
+    val fullControl: Boolean = false,
 )
 
 @Serializable
@@ -96,7 +98,8 @@ class PolicyEngine {
         val risk = maxOf(descriptor.risk, assessment.risk)
         if (descriptor.id == "shell.execute" && assessment.shellCommand.isNullOrBlank())
             return deny("Shell command assessment is required", "shell_assessment_missing")
-        if (risk == RiskClass.CRITICAL) return approval("CRITICAL operations always require approval", "critical")
+        if (risk == RiskClass.CRITICAL && !agent.fullControl)
+            return approval("CRITICAL operations require approval outside the owner-enabled full-control profile", "critical")
 
         agent.standing.firstOrNull {
             (assessment.shellCommand == null || it.actionHash != null) && matchesStanding(it, descriptor, args, risk, nowMs)

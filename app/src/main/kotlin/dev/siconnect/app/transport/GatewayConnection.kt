@@ -128,6 +128,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                         }
                     }
                     override fun onMessage(ws: WebSocket,text: String) {
+                        val receivedAt=android.os.SystemClock.elapsedRealtimeNanos()
                         if(generation.get()!=epoch) return
                         if(text.toByteArray(Charsets.UTF_8).size>131072) { ws.close(1009,"Envelope too large"); return }
                         g.scope.launch {
@@ -146,10 +147,28 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     g.pairing.consumed(msg.getValue("agentId").jsonPrimitive.content)
                                     msg["hash"]?.jsonPrimitive?.content?.let { pairingAcks[it]?.completeExceptionally(IllegalStateException("This code was already used. Create a new pairing code.")) }
                                 } else if(type=="invoke") {
+                                    val dispatchedAt=android.os.SystemClock.elapsedRealtimeNanos()
                                     val correlation=msg.getValue("id").jsonPrimitive.content
                                     val token=msg.getValue("agentToken").jsonPrimitive.content
                                     val result=g.remoteInvoke(msg.getValue("request").jsonObject,token)
-                                    if(!ws.send(ResultEnvelope.result(correlation,result))) {
+                                    val completedAt=android.os.SystemClock.elapsedRealtimeNanos()
+                                    val envelope=ResultEnvelope.result(correlation,result)
+                                    val encodedAt=android.os.SystemClock.elapsedRealtimeNanos()
+                                    val queued=ws.send(envelope)
+                                    val queuedAt=android.os.SystemClock.elapsedRealtimeNanos()
+                                    // send() confirms local WebSocket enqueue only, never remote receipt.
+                                    // Monotonic durations contain no arguments, credentials or result bodies.
+                                    runCatching {recordEvent(Event(System.currentTimeMillis(),eventType=if(queued) "transport.result_queued" else "transport.result_queue_rejected",
+                                        requestId=result.requestId,traceId=result.traceId,agentId=result.agentId,deviceId=g.settings.deviceId,
+                                        capabilityId=result.capabilityId,executionStatus=result.state.name,
+                                        durationMs=TimeUnit.NANOSECONDS.toMillis(queuedAt-receivedAt),detail=buildJsonObject {
+                                            put("dispatchWaitMs",TimeUnit.NANOSECONDS.toMillis(dispatchedAt-receivedAt))
+                                            put("invocationMs",TimeUnit.NANOSECONDS.toMillis(completedAt-dispatchedAt))
+                                            put("serializationMs",TimeUnit.NANOSECONDS.toMillis(encodedAt-completedAt))
+                                            put("socketEnqueueMs",TimeUnit.NANOSECONDS.toMillis(queuedAt-encodedAt))
+                                            put("remoteReceiptConfirmed",false)
+                                        }.toString()))}
+                                    if(!queued) {
                                         runCatching {recordEvent(Event(System.currentTimeMillis(),eventType="gateway.result_delivery_failed",requestId=result.requestId,traceId=result.traceId,agentId=result.agentId,deviceId=g.settings.deviceId,capabilityId=result.capabilityId,errorCode="RESULT_NOT_DELIVERED",executionStatus=result.state.name,detail="Stored request remains authoritative; retrieve the original request ID"))}
                                         ws.cancel();done.complete(Unit)
                                     }

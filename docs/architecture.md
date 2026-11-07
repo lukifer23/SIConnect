@@ -1,6 +1,8 @@
 # Architecture
 
-Current source: **code 21 / SQLite 11**, with [November 6 host and focused physical verification](source-audit-2026-11-06.md). Execution rechecks policy at actual coroutine dispatch, finalizes pre-dispatch cancellation and inherits caller workflow deadlines. Owner commute actions use the durable engine; deferred startup failures have an error screen; private launch uses bounded process supervision. Code-21 storage/native/private-display and caller/backend-death checks pass; wider lifecycle and owner authentication success remain open. Historical [pass 18](engineering-pass-18.md) covers caller-process lifetime, owner-only policy and locked native recovery; [pass 17](engineering-pass-17.md) covers private displays and [pass 16](engineering-pass-16.md) retention. See [the execution contract](private-app-execution.md) and [build plan](build-plan.md).
+Current source and installed development build: **code 23 / 0.6.0-dev.15 / SQLite 11**. The owner interface has dedicated expanded Fold panes and a persistent per-agent Full control profile. Full control is an explicit authenticated policy choice, with same-ID continuation of eligible waiting requests; it does not replace the execution engine or Android authorization. See [permissions](permissions.md) and [the security model](security-model.md).
+
+The earlier [November 6 code-21 review](source-audit-2026-11-06.md) verified actual-dispatch policy revalidation, pre-dispatch cancellation, caller workflow deadlines, durable owner commute execution and bounded private launch. Its storage/native/private-display and caller/backend-death evidence remains historical. Wider lifecycle and reboot acceptance is not implied by the saved Full control grant. Historical [pass 18](engineering-pass-18.md) covers caller-process lifetime, owner-only policy and locked native recovery; [pass 17](engineering-pass-17.md) covers private displays and [pass 16](engineering-pass-16.md) retention. See [the execution contract](private-app-execution.md) and [build plan](build-plan.md).
 
 ## Pass 9 checkpoint — October 21, 2026
 
@@ -43,17 +45,25 @@ States: `RECEIVED, VALIDATED, AWAITING_APPROVAL, APPROVED, DENIED, EXPIRED, EXEC
 The first matching rule wins:
 
 1. Emergency stop for remote origin: **DENY**.
-2. Unknown, revoked or expired agent: **DENY**.
-3. Agent denylist, then scope globs: **DENY**.
-4. Capability availability not executable: **UNAVAILABLE**.
-5. Privileged backend while privileged execution is disabled: **UNAVAILABLE**.
-6. Missing shell assessment for `shell.execute`: **DENY**.
-7. Effective risk (maximum of descriptor and argument assessment) is `CRITICAL`: **REQUIRE_APPROVAL**.
-8. Matching standing grant (exact action hash or explicit package constraints, backend, risk cap, expiry): **ALLOW**. Shell cannot use a generic unconstrained grant here.
-9. Arbitrary shell assessment: explicit `BROAD` grants **ALLOW**; an exact configured standing command **ALLOWS**; otherwise **REQUIRE_APPROVAL**.
-10. Risk at or below `autoApproveUpTo`: **ALLOW**; otherwise **REQUIRE_APPROVAL**.
+2. Unknown, revoked or expired agent: **DENY**. Canonical Full control removes its agent-grant expiry when the owner enables it; request and transport deadlines are independent.
+3. Agent denylist, then scope globs: **DENY**. Canonical Full control uses an empty denylist and wildcard scope.
+4. Local-owner-only capability without the local-owner principal and origin: **DENY**.
+5. Interaction outside the agent’s shared-screen choice: **DENY**. Canonical Full control enables shared-screen actions.
+6. Capability availability not executable: **UNAVAILABLE**.
+7. Privileged backend while privileged execution is disabled: **UNAVAILABLE**, except the existing local-owner private-workspace cleanup path.
+8. Missing shell assessment for `shell.execute`: **DENY**.
+9. Effective risk (maximum of descriptor and argument assessment) is `CRITICAL` **and the grant is not explicit Full control**: **REQUIRE_APPROVAL**.
+10. Matching standing grant (exact action hash or explicit package constraints, backend, risk cap, expiry): **ALLOW**. Shell cannot use a generic unconstrained grant here.
+11. Arbitrary shell assessment: explicit `BROAD` grants **ALLOW**; an exact configured standing command **ALLOWS**; otherwise **REQUIRE_APPROVAL**.
+12. Risk at or below `autoApproveUpTo`: **ALLOW**; otherwise **REQUIRE_APPROVAL**. Canonical Full control has `CRITICAL` automatic approval, so all available SIConnect actions pass without per-action approval once the earlier eligibility checks pass.
 
 Acceptance of an exact owner approval revalidates eligibility/deny checks without asking for the same risk approval again. Approval cannot revive a revoked or expired grant.
+
+### Persistent Full control and explicit pending continuation
+
+`AgentGrant.fullControl` defaults to false. `AgentRecord.fullAccessPreviousGrant` stores the previous custom grant alongside the active full grant in the existing serialized agent row; no database schema, credential or device identity replacement is required. One authenticated local-owner decision sets canonical wildcard/no-deny scope, `CRITICAL` automatic approval, broad shell, shared-screen access and no expiry. The mode persists across app/process restarts until the owner disables it or revokes the identity. OFF restores the saved custom permissions and prior expiry while preserving current identity, label, revocation and any later explicit expiry. Individual family/shell/app setters reject edits while the full profile is active. Android privileges and daemon reboot recovery are separate concerns.
+
+The enable UI discloses waiting actions, then invokes a local-owner-only continuation helper after the full-profile commit. It examines a bounded batch of that agent’s existing `AWAITING_APPROVAL` records and requires the same device/agent, live request and approval deadlines, stored action hash, capability version/backend, schema and current `ALLOW` policy/availability. It passes the same request ID and hash to the existing engine approval-resolution path, which repeats execution admission and dispatch checks. No new invocation, origin substitution, retry identity or terminal-state reset is created. Denied/completed/cancelled/expired/unknown outcomes are not candidates; skipped or additional waiting work stays in the existing request store for explicit review.
 
 ## Execution backends
 
@@ -83,7 +93,7 @@ Owner-requested Run now creates a separate durable one-shot run without advancin
 
 Device IDs are randomly generated app identities, not hardware identifiers. Each Durable Object routes an authenticated principal to its bound phone and stores that phone's capability catalog. OAuth pairing binds the same device and a local agent credential. The current MCP surface does not offer arbitrary `device_id` selection or a tested multi-device chooser. Each phone independently enforces its current grant. Existing same-name OAuth clients remain distinct principals; the owner UI and request-linked permission review distinguish them.
 
-SQLiteOpenHelper v6 stores requests, transitions, events, agents, skills, skill runs, step results, automations, scheduler runs, reminders, document-root grants, cooperative screen ownership and notification deduplication metadata. Keystore-wrapped private preferences hold credentials and pending pairing data; ordinary settings use preferences. Startup checks database integrity, recovers uncertain in-flight work without replay, restores pending approvals/schedules and starts the owner-enabled outbound connection. ONLINE requires protocol-2 acknowledgement. Pairing publication also requires acknowledgement.
+SQLiteOpenHelper v11 stores requests, transitions, events, agents, skills, skill runs, step results, automations, scheduler runs, reminders, document-root grants, cooperative screen ownership and notification deduplication metadata. Keystore-wrapped private preferences hold credentials and pending pairing data; ordinary settings use preferences. Startup checks database integrity, recovers uncertain in-flight work without replay, restores pending approvals/schedules and starts the owner-enabled outbound connection. ONLINE requires protocol-2 acknowledgement. Pairing publication also requires acknowledgement.
 
 ## Module boundaries
 
@@ -111,7 +121,7 @@ Calendar Provider, managed files and SAF documents are distinct backend surfaces
 
 The native AccessibilityService exposes bounded semantic snapshots and explicit selectors through the same registry. Snapshots bind agent, service generation, foreground package/window, event epoch and a short monotonic lifetime. Mutations require a matching current node and an existing agent-owned screen lease. Accessibility events invalidate references without retaining their text. Password nodes and descendants, SIConnect owner controls, Android permission/lock/biometric surfaces are excluded. A narrow debug fixture is isolated from normal management; it is not an owner-control bypass.
 
-Capability-family scope permits policy evaluation. A separate owner-authenticated package allowance can authorize `ui.click` and `ui.set_text` within a chosen nonprotected app under the existing standing-grant model. It does not authorize another app or arbitrary shell. Generic click acceptance is not a verified send, install or other business outcome.
+In Custom access, capability-family scope permits policy evaluation and a separate owner-authenticated package allowance can authorize `ui.click` and `ui.set_text` within one nonprotected app under the standing-grant model. That allowance does not authorize another app or arbitrary shell. Explicit Full control instead authorizes available UI/private operations across supported apps automatically while retaining protected native UI, fresh-node and lease checks; its broad shell authority remains separate from those cooperative checks. Generic click acceptance is not a verified send, install or other business outcome.
 
 NotificationListenerService exposes exact current-user notification/action references, bounded to 16 actions and eight text inputs. Updates, removal, process/listener restart invalidate references. Actions revalidate package/creator UID, version and PendingIntent before dispatch. Own-app and authentication-required actions are refused. Supported RemoteInput replies use a mutable broadcast/service intent, run under the same high-impact policy and cooperative lease, and report dispatch with recipient/delivery unverified. No notification bodies or suggested replies enter routine discovery; opt-in action labels may contain app-supplied sensitive text.
 

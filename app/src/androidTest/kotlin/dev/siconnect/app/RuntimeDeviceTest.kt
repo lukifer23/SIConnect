@@ -45,10 +45,12 @@ class RuntimeDeviceTest {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         fun intent()=Intent(g.context,dev.siconnect.app.approvals.ApprovalActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("requestId",r.requestId)
-        val automation=instrumentation.uiAutomation
+        // Keep the owner's enabled AccessibilityService running during this UI regression.
+        val automation=instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
         automation.serviceInfo=automation.serviceInfo.apply {flags=flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS}
         // Compose virtual nodes are exposed through children, not framework find-by-text.
         fun node(text:String):AccessibilityNodeInfo? {
+            if(android.os.Build.VERSION.SDK_INT>=34) automation.clearCache()
             val todo=java.util.ArrayDeque<AccessibilityNodeInfo>()
             automation.windows.mapNotNull {it.root}.forEach(todo::add)
             var visited=0
@@ -62,10 +64,10 @@ class RuntimeDeviceTest {
         suspend fun waitFor(text:String,present:Boolean,phase:String) {
             try {withTimeout(10000) {while((node(text)!=null)!=present) delay(50)}}
             catch(e:TimeoutCancellationException) {
-                instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                automation.takeScreenshot()?.let { bitmap ->
                     java.io.File(g.context.noBackupFilesDir,"review-test-failure.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
                 }
-                val root=instrumentation.uiAutomation.rootInActiveWindow
+                val root=automation.rootInActiveWindow
                 val matches=root?.findAccessibilityNodeInfosByText(text).orEmpty()
                 throw AssertionError("Review stage $phase timed out; root=${root?.packageName}; matches=${matches.map {it.text?.toString()+"@"+it.packageName}}",e)
             }

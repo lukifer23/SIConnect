@@ -349,6 +349,8 @@ data class AgentRecord(
     val lastSeenAtMs: Long? = null,
     /** Short token prefix for display only (never the token itself). */
     val tokenHint: String,
+    /** Non-null only while the owner-selected full-control profile is enabled. */
+    val fullAccessPreviousGrant: AgentGrant? = null,
 )
 
 class AgentStore(private val db: SIConnectDb) : AgentDirectory {
@@ -364,11 +366,14 @@ class AgentStore(private val db: SIConnectDb) : AgentDirectory {
         arrayOf(hash),null,null,null,"2").mapAll {decode(it.getString(0))}.singleOrNull()
 
     fun put(record: AgentRecord) {
-        db.writableDatabase.insertWithOnConflict("agents", null, ContentValues().apply {
+        val rowId=db.writableDatabase.insertWithOnConflict("agents", null, ContentValues().apply {
             put("agent_id", record.grant.agentId); put("token_sha256", record.tokenSha256)
             put("created_at", record.createdAtMs); put("last_seen_at", record.lastSeenAtMs)
             put("json", AppJson.encodeToString(AgentRecord.serializer(), record))
         }, SQLiteDatabase.CONFLICT_REPLACE)
+        // Android can catch a SQLite write error and return -1. Propagate it so
+        // owner grant transactions cannot commit an audit or only half an update.
+        check(rowId!=-1L) {"Agent permission record could not be saved"}
     }
 
     fun delete(agentId: String) { db.writableDatabase.delete("agents", "agent_id = ?", arrayOf(agentId)) }

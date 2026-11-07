@@ -38,10 +38,10 @@ fun registerHeadlessCapabilities(g:RuntimeGraph) {
         string("sessionId","Exact private workspace returned by headless.open",true,maxLength=100)
         string("packageName","Exact app bound to this workspace; also binds standing app permission",true,maxLength=200)
         if(nodes) {string("snapshotId","Fresh headless.inspect snapshot",true,maxLength=100);string("nodeRef","Exact node reference from that snapshot",true,maxLength=100)}
-        if(touch) string("inputMethod","SEMANTIC (default), or PRIVATE_TOUCH at the verified node center on its owned display only",enum=listOf("SEMANTIC","PRIVATE_TOUCH"))
+        if(touch) string("inputMethod","SEMANTIC (default), or PRIVATE_TOUCH within the fresh verified node on its owned display only. Private scroll gestures are vertical and never accept caller coordinates.",enum=listOf("SEMANTIC","PRIVATE_TOUCH"))
         if(text) string("text","Exact text to enter after verified semantic focus; password nodes are excluded",true,maxLength=4000)
         if(text) boolean("commit","Send a Tab key only to this owned display after verified text entry to commit a widget and verify focus release")
-        if(scroll) string("direction","Semantic scroll direction",true,enum=listOf("FORWARD","BACKWARD"))
+        if(scroll) string("direction","FORWARD scrolls down; BACKWARD scrolls up. Inspect supportedScrollDirections first; accepted dispatch alone does not prove movement.",true,enum=listOf("FORWARD","BACKWARD"))
     }
     fun register(id:String,title:String,schema:JsonObject,risk:RiskClass,operation:String,
                  interaction:InteractionMode=InteractionMode.ISOLATED_SCREEN,description:String="") {
@@ -75,12 +75,13 @@ fun registerHeadlessCapabilities(g:RuntimeGraph) {
     register("status","List your private app workspaces",objectSchema(),RiskClass.READ_ONLY,"status",InteractionMode.BACKGROUND)
     register("inspect","Inspect your private app window",objectSchema {
         string("sessionId","Exact owned private workspace",true,maxLength=100);string("packageName","Exact bound package",true,maxLength=200)
-        integer("limit","Maximum returned nodes; default 200",min=1,max=200)
-    },RiskClass.READ_ONLY,"inspect",description="Read bounded real semantic nodes from this display only. Password subtrees are excluded; each snapshot replaces the previous one.")
+        integer("limit","Maximum returned nodes; default 200, up to 500 for larger or split-pane windows. Check scanIncomplete and refine the window size or limit when truncated.",min=1,max=500)
+    },RiskClass.READ_ONLY,"inspect",description="Read bounded fresh semantic nodes from this display only. Password subtrees are excluded; each snapshot replaces the previous one. Returned className and supportedScrollDirections help select the actual scrolling container.")
     register("capture","Capture your private app display",boundSchema(),RiskClass.READ_ONLY,"capture",description="Bounded JPEG of this session's own rendered surface; never captures the physical display.")
     register("click","Click a private app control",boundSchema(nodes=true,touch=true),RiskClass.HIGH_IMPACT,"click",description="Uses semantic click by default. Explicit PRIVATE_TOUCH targets the verified node center on this owned display; no caller coordinates or default-display input.")
     register("set_text","Enter text in a private app",boundSchema(nodes=true,text=true),RiskClass.HIGH_IMPACT,"set_text")
-    register("scroll","Scroll your private app window",boundSchema(nodes=true,scroll=true),RiskClass.HIGH_IMPACT,"scroll")
+    register("scroll","Scroll your private app window",boundSchema(nodes=true,scroll=true,touch=true),RiskClass.HIGH_IMPACT,"scroll",
+        description="SEMANTIC uses an advertised directional scroll action. Explicit PRIVATE_TOUCH sends a bounded vertical gesture inside the fresh node's visible private-display bounds. Inspect afterward; actionAccepted is dispatch acceptance, while scrollVerification and visibleContentChanged report bounded movement observations.")
     register("close","Close your private app workspace",boundSchema(),RiskClass.LOW_IMPACT,"close",InteractionMode.BACKGROUND)
     register("stop_all","Owner: stop every private workspace",objectSchema(),RiskClass.LOW_IMPACT,"close_all",InteractionMode.BACKGROUND,
         "Local-owner-only emergency resource cleanup. Remote agents cannot invoke this operation.")

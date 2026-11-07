@@ -1,13 +1,14 @@
 package dev.siconnect.app.ui.home
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.siconnect.app.R
 import dev.siconnect.app.ui.*
 import dev.siconnect.app.transport.ConnectionState
 import dev.siconnect.core.*
@@ -20,78 +21,102 @@ import kotlinx.serialization.json.JsonObject
     onActivity:()->Unit,onHealth:()->Unit,onStop:()->Unit,onResume:()->Unit,
     onInbox:()->Unit,onSetup:()->Unit,onReminder:(String)->Unit) {
     val remote=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
+    val active=remote.filterNot {it.grant.revoked}
     val labels=state.agents.associate {it.grant.agentId to botDisplayName(it,state.agents)}
-    val status=when { !controls.remoteExecutionEnabled->"New remote actions blocked";!nativeReady->"Starting…";connection==ConnectionState.ONLINE->"Connected";else->"Native features ready"}
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-        Text("SIConnect",style=MaterialTheme.typography.headlineLarge)
-        Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Text(status,style=MaterialTheme.typography.headlineSmall)
-            Text(if(!controls.remoteExecutionEnabled) "New remote actions and pending remote approvals are blocked. Active work continues until cancelled; local schedules stay enabled." else if(connection==ConnectionState.ONLINE) "Your phone can receive authorized agent requests." else detail)
-            Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-                Text("Native features: ${if(nativeReady) "ready" else "starting"}",Modifier.weight(1f))
-                TextButton(onClick=onSetup) {Text("Access")}
+    val titles=state.capabilities.associate {it.descriptor.id to it.descriptor.title}
+    val online=connection==ConnectionState.ONLINE
+    val paused=!controls.remoteExecutionEnabled
+    PageLayout {
+        PageHeader(if(wide) "Overview" else "Your phone, connected.",if(wide) "Your phone, on your terms." else "Manage your agents, review their work, and stay in control.","SIConnect")
+        @Composable fun connectionPanel() {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.fillMaxWidth().padding(if(wide) 20.dp else 24.dp),verticalArrangement=Arrangement.spacedBy(if(wide) 12.dp else 16.dp)) {
+                    FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        StatusPill(if(paused) "Actions paused" else if(online) "Gateway connected" else "Gateway offline",if(paused) StatusTone.ATTENTION else if(online) StatusTone.GOOD else StatusTone.NEUTRAL)
+                        if(state.activeRequests.isNotEmpty()) StatusPill("${state.activeRequests.size} running")
+                    }
+                    Text(when {paused->"You’re in control.";!nativeReady->"Getting things ready…";online->"Ready when you are.";else->"Your local tools are ready."},style=MaterialTheme.typography.headlineMedium)
+                    Text(if(paused) "New remote actions are paused. Local schedules and work already running continue." else if(online) if(wide) "Your agents can reach this phone securely." else "Your agents can securely reach this phone with the permissions you’ve chosen." else detail,
+                        style=MaterialTheme.typography.bodyMedium)
+                    FlowRow(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                        Button(onClick=onConnect) {Text(if(online) "Connection details" else "Connect gateway")}
+                        TextButton(onClick=if(paused) onResume else onStop) {Text(if(paused) "Resume agent actions" else "Pause agent actions")}
+                    }
+                }
             }
-            Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-                Text("Device control: ${if(privilegedReady) "available" else "optional setup needed"}",Modifier.weight(1f))
-                TextButton(onClick=onRestore) {Text(if(privilegedReady) "Manage" else "Set up")}
-            }
-            state.recent.firstOrNull {r->r.state==RequestState.SUCCEEDED && remote.any {it.grant.agentId==r.agentId}}?.let {
-                Text("Last successful bot action: ${time(it.updatedAtMs)}",style=MaterialTheme.typography.labelMedium)
-            }
-            FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick=onConnect) {Text("Gateway")}
-                OutlinedButton(onClick=onAgents) {Text("Connect AI agent")}
-            }
-            if(controls.remoteExecutionEnabled) OutlinedButton(onClick=onStop) {Text("Block new remote actions",color=MaterialTheme.colorScheme.error)}
-            else Button(onClick=onResume) {Text("Allow new remote actions")}
-            if(state.activeRequests.isNotEmpty()) TextButton(onClick=onActivity) {Text("Review active requests (${state.activeRequests.size}${if(state.activeRequests.size==50) "+" else ""})")}
-        }}
-        val missingAccess=state.capabilities.filter {it.descriptor.id in setOf("ui.inspect","notifications.actions") && !it.availability.isExecutable}
-        if(missingAccess.isNotEmpty()) OutlinedCard(Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-            Text("More native access",style=MaterialTheme.typography.titleMedium)
-            Text("Screen or notification actions need attention. Other ready tools remain available.",style=MaterialTheme.typography.bodySmall)
-            TextButton(onClick=onSetup) {Text("Review Android access")}
-        }}
-        state.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
-        @Composable fun attention() {
-            Text("Action Inbox",style=MaterialTheme.typography.titleLarge)
-            val proposed=state.proposals.filter {it.state in setOf(ProposalState.PROPOSED,ProposalState.VIEWED)}
-            Text(if(state.pendingProposalCount==0) "No follow-ups waiting for review." else "${state.pendingProposalCount} follow-ups waiting for review. Nothing executes until you accept.")
-            proposed.take(3).forEach {p->OutlinedCard(onClick=onInbox,modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(p.title,style=MaterialTheme.typography.titleMedium);Text("Agent …${p.agentId.takeLast(8)} · ${p.risk}",style=MaterialTheme.typography.bodySmall)}}}
-            OutlinedButton(onClick=onInbox) {Text("Review Action Inbox")}
-            if(state.pending.isNotEmpty()) Text("Approval requests",style=MaterialTheme.typography.titleLarge)
-            state.pending.take(10).forEach {r->Card(Modifier.fillMaxWidth().clickable {onReview(r)}) {Column(Modifier.padding(16.dp)) {
-                Text(labels[r.agentId] ?: "Agent …${r.agentId.takeLast(6)}",style=MaterialTheme.typography.titleMedium)
-                Text(r.assessment?.summary ?: r.capabilityId)
-                Text("${r.assessment?.risk} · expires ${time(r.approvalExpiresAtMs ?: r.expiresAtMs)}",style=MaterialTheme.typography.bodySmall)
-                TextButton(onClick={onReview(r)}) {Text("Review exact action")}
-            }}}
-            state.automations.filter {it.scheduleState in setOf("FAILED","BLOCKED","UNKNOWN_OUTCOME","MISSED")}.take(5).forEach {a->
-                OutlinedButton(onClick=onAutomations) {Text("${a.id}: ${a.scheduleState}")}
-            }
-            Text("Agents",style=MaterialTheme.typography.titleLarge)
-            remote.filterNot {it.grant.revoked}.take(4).forEach {a->OutlinedCard(onClick={onAgent(a.grant.agentId)},modifier=Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp)) {Text(labels[a.grant.agentId] ?: a.grant.label);Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"Last action ${time(it.updatedAtMs)} · ${actionStateLabel(it.state)}"} ?: "Paired · no recent action",style=MaterialTheme.typography.bodySmall)}
-            }}
-            TextButton(onClick=onAgents) {Text("Manage agents and permissions")}
         }
-        @Composable fun upcoming() {
-            Text("Upcoming",style=MaterialTheme.typography.titleLarge)
-            if(state.reminders.isEmpty() && state.automations.none {it.enabled}) Text("No upcoming reminders or automations.")
-            state.reminders.take(4).forEach {r->OutlinedCard(onClick={onReminder(r.id)},modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)) {Text(r.title);Text("${time(r.fireAtMs)} · ${r.state}",style=MaterialTheme.typography.bodySmall)}}}
-            state.automations.filter {it.enabled}.sortedBy {it.nextAtMs}.take(4).forEach {a->TextButton(onClick=onAutomations) {Text("${a.id} · ${time(a.nextAtMs)} · ${a.scheduleState}")}}
-            Button(onClick=onAutomations) {Text("Create or manage automation")}
-            Text("Recent activity",style=MaterialTheme.typography.titleLarge)
-            state.recent.take(5).forEach {r->Column(Modifier.fillMaxWidth().clickable {onRequest(r.requestId)}.padding(vertical=8.dp)) {
-                Text(r.capabilityId,style=MaterialTheme.typography.titleSmall);Text("${labels[r.agentId] ?: "Local workflow"} · ${actionStateLabel(r.state)} · ${time(r.updatedAtMs)}",style=MaterialTheme.typography.bodySmall)
-            }}
-            TextButton(onClick=onActivity) {Text("All activity and results")}
-            RuntimeHealthCard(measurements,busy,onHealth)
+        @Composable fun accessPanel() {
+            Panel {
+                SectionHeading("Phone readiness")
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {Text("Android access",style=MaterialTheme.typography.titleSmall);Text(if(nativeReady) "Native features ready" else "Starting…",style=MaterialTheme.typography.bodySmall)}
+                    TextButton(onClick=onSetup) {Text("Review")}
+                }
+                HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {Text("Device control",style=MaterialTheme.typography.titleSmall);Text(if(privilegedReady) "Available" else "Optional setup",style=MaterialTheme.typography.bodySmall)}
+                    TextButton(onClick=onRestore) {Text(if(privilegedReady) "Manage" else "Set up")}
+                }
+                if(state.capabilities.any {it.descriptor.id in setOf("ui.inspect","notifications.actions") && !it.availability.isExecutable}) Text("Screen or notification tools need attention in Android access.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.tertiary)
+            }
         }
-        if(wide) Row(horizontalArrangement=Arrangement.spacedBy(24.dp)) {
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {attention()}
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {upcoming()}
-        } else {attention();upcoming()}
+            @Composable fun review() {
+                SectionHeading("Needs your attention",if(state.pendingProposalCount>0) "Open inbox" else null,onInbox)
+                if(state.pending.isEmpty() && state.pendingProposalCount==0) {
+                    if(wide) Panel {StatusPill("All caught up",StatusTone.GOOD);Text("No approvals or suggestions waiting.",style=MaterialTheme.typography.bodySmall)}
+                    else EmptyState("You’re all caught up","Requests that need approval and agent suggestions will appear here.",R.drawable.ic_nav_activity)
+                }
+                if(state.pendingProposalCount>0) NavigationCard("${state.pendingProposalCount} agent suggestions","Review proposed follow-ups. They wait for you to accept.",onInbox,icon=R.drawable.ic_nav_activity)
+                state.pending.take(5).forEach {r->Panel {
+                    StatusPill("Approval needed",StatusTone.ATTENTION)
+                    Text(labels[r.agentId] ?: "Agent",style=MaterialTheme.typography.titleMedium)
+                    Text(r.assessment?.summary ?: titles[r.capabilityId] ?: r.capabilityId,style=MaterialTheme.typography.bodyMedium)
+                    Text("Expires ${time(r.approvalExpiresAtMs ?: r.expiresAtMs)}",style=MaterialTheme.typography.bodySmall)
+                    Button(onClick={onReview(r)}) {Text("Review action")}
+                }}
+                state.automations.filter {it.scheduleState in setOf("FAILED","BLOCKED","UNKNOWN_OUTCOME","MISSED")}.take(3).forEach {a->
+                    NavigationCard(a.label.ifBlank {"Automation needs attention"},a.scheduleState.lowercase().replace('_',' '),onAutomations,icon=R.drawable.ic_nav_automations)
+                }
+        }
+        @Composable fun agentsPanel() {
+                SectionHeading("Your agents · ${active.size}","Manage",onAgents)
+                if(active.isEmpty()) EmptyState("Connect your first agent","Pair an AI agent, then choose what it can do on this phone.",R.drawable.ic_nav_agents,"Pair an agent",onAgents)
+                active.take(3).forEach {a->NavigationCard(labels[a.grant.agentId] ?: a.grant.label,
+                    state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"${actionStateLabel(it.state)} · ${time(it.updatedAtMs)}"} ?: "Paired · waiting for its first request",
+                    {onAgent(a.grant.agentId)},icon=R.drawable.ic_nav_agents)}
+            }
+            @Composable fun updates() {
+                SectionHeading("Coming up","Automations",onAutomations)
+                if(state.reminders.isEmpty() && state.automations.none {it.enabled}) EmptyState("Make room for a routine","Schedule a reminder, health check, or commute forecast.",R.drawable.ic_nav_automations,"Create automation",onAutomations)
+                state.reminders.take(3).forEach {r->NavigationCard(r.title,time(r.fireAtMs),{onReminder(r.id)},icon=R.drawable.ic_nav_automations)}
+                state.automations.filter {it.enabled}.sortedBy {it.nextAtMs}.take(3).forEach {a->NavigationCard(a.label.ifBlank {"Scheduled automation"},time(a.nextAtMs),onAutomations,icon=R.drawable.ic_nav_automations)}
+        }
+        @Composable fun recentPanel() {
+                SectionHeading("Recent activity","View all",onActivity)
+                if(state.recent.isEmpty()) EmptyState("A clear view of every action","Completed work and results will appear here.")
+                state.recent.take(4).forEach {r->Card(onClick={onRequest(r.requestId)},modifier=Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)) {
+                    Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text(titles[r.capabilityId] ?: r.capabilityId,style=MaterialTheme.typography.titleMedium)
+                        Text("${labels[r.agentId] ?: "Local workflow"} · ${time(r.updatedAtMs)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        StatusPill(actionStateLabel(r.state),requestTone(r.state))
+                    }
+                }}
+            }
+        state.error?.let {Notice(it,true)}
+        if(wide) Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.weight(.44f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(18.dp)) {
+                connectionPanel();accessPanel();updates()
+                ExpandablePanel("Device health","On-demand runtime diagnostics") {RuntimeHealthCard(measurements,busy,onHealth)}
+                Spacer(Modifier.height(8.dp))
+            }
+            Column(Modifier.weight(.56f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                review();agentsPanel();recentPanel();Spacer(Modifier.height(8.dp))
+            }
+        } else Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(20.dp)) {
+            connectionPanel();accessPanel();review();agentsPanel();updates();recentPanel()
+            ExpandablePanel("Device health","On-demand runtime diagnostics") {RuntimeHealthCard(measurements,busy,onHealth)}
+            Spacer(Modifier.height(8.dp))
+        }
     }
 }
 private fun time(ms:Long)=java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.SHORT).format(java.util.Date(ms))

@@ -26,6 +26,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.siconnect.app.RuntimeGraph
+import dev.siconnect.app.R
+import dev.siconnect.app.ui.*
 import dev.siconnect.app.automation.*
 import dev.siconnect.app.capabilities.WeatherCommute
 import dev.siconnect.app.data.AppJson
@@ -104,18 +106,17 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
         confirmButton={TextButton(onClick={discardDraft=false;closeSelection()}) {Text("Discard changes")}},
         dismissButton={TextButton(onClick={discardDraft=false}) {Text("Keep editing")}})
     fun edit(value:AutomationDraft) {draftJson=AppJson.encodeToString(AutomationDraft.serializer(),value)}
-    fun startNew() {
-        val skill=skills.firstOrNull {it.id==AutomationTemplates.NOTICE_SKILL} ?: skills.firstOrNull() ?: return
+    fun startTemplate(skill:SkillDefinition) {
         selectedId=null
         val now=ZonedDateTime.now().plusMinutes(5)
         edit(AutomationDraft("task-"+UUID.randomUUID().toString().take(16),AutomationTemplates.title(skill),skill.id,
             AutomationTemplates.initialInputs(skill,now.zone.id),localTime=now.toLocalTime().withSecond(0).withNano(0).toString(),startDate=now.toLocalDate().toString(),zoneId=now.zone.id))
     }
+    fun startNew() { (skills.firstOrNull {it.id==AutomationTemplates.NOTICE_SKILL} ?: skills.firstOrNull())?.let(::startTemplate) }
     fun settings(action:String) {runCatching {g.context.startActivity(Intent(action).setData(Uri.parse("package:${g.context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}.onFailure {message="Open Android Settings → SIConnect to change this access"}}
-    Column(modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            Text(if(draft!=null) if(selected!=null) "Edit automation" else "New automation" else if(selected!=null) selected.label.ifBlank {"Automation"} else "Automations",
-                style=MaterialTheme.typography.headlineSmall,modifier=Modifier.weight(1f))
+    PageLayout(modifier) {
+        PageHeader(if(draft!=null) if(selected!=null) "Edit automation" else "New automation" else if(selected!=null) selected.label.ifBlank {"Automation"} else "Automations",
+            if(draft!=null) "Choose the action, timing, and access. Review before saving." else "Build a routine. Let your phone handle the repeat.") {
             if(draft!=null || selectedId!=null) TextButton(onClick=::leave,enabled=!busy) {Text("Back")}
             else Button(onClick=::startNew,enabled=ready && !busy && skills.isNotEmpty()) {Text("New")}
         }
@@ -123,10 +124,10 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
             Text(message);TextButton(onClick={message=""}) {Text("Dismiss")}
         }}
         if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if(!ready) {Text("Loading saved workflows and schedules…");return@Column}
+        if(!ready) {Text("Loading saved workflows and schedules…");return@PageLayout}
         if(draft!=null) {
             val definition=skills.firstOrNull {it.id==draft.skillId}
-            if(definition==null) {Text("This workflow is unavailable. Enable it in workflow management before editing.");return@Column}
+            if(definition==null) {Text("This workflow is unavailable. Enable it in workflow management before editing.");return@PageLayout}
             val preview=runCatching {draft.preview(System.currentTimeMillis(),selected)}
             val inputErrors=Schema.validate(definition.inputs,draft.effectiveInputs())
             val requestedCapabilities=AutomationTemplates.requestedCapabilities(definition,draft.effectiveInputs())
@@ -136,7 +137,8 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     grant.scopes.none {PolicyEngine.globMatches(it,capability)} || grant.denied.any {PolicyEngine.globMatches(it,capability)}
             }
             val unavailable=requestedCapabilities.mapNotNull {id->capabilities.firstOrNull {it.descriptor.id==id}?.takeIf {!it.availability.isExecutable}?.let {id+": "+it.availability.name}}
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            @Composable fun actionInputs() {
+                SectionHeading("1. What happens")
                 ChoiceField("What should happen?",skills.map {it.id},draft.skillId,{id->
                     val skill=skills.first {it.id==id}
                     edit(draft.copy(skillId=id,label=AutomationTemplates.title(skill),inputs=AutomationTemplates.initialInputs(skill,draft.zoneId),
@@ -162,8 +164,9 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     if(definition.id==AutomationTemplates.HEALTH_SKILL && definition.version>=3 && draft.inputs["notifyProblems"]?.jsonPrimitive?.booleanOrNull==true)
                         Text("Unchanged warnings stay quiet unless reminders are enabled. Critical conditions can remind at least hourly. Threshold hysteresis reduces repeated alerts near a boundary.",style=MaterialTheme.typography.bodySmall)
                 }
-                HorizontalDivider()
-                Text("When",style=MaterialTheme.typography.titleMedium)
+            }
+            @Composable fun timingInputs() {
+                SectionHeading("2. When it runs")
                 ChoiceField("Repeat",RecurrenceKind.entries.map {it.name},draft.recurrenceKind.name,{value->
                     val kind=RecurrenceKind.valueOf(value)
                     edit(draft.copy(recurrenceKind=kind,weekdays=if(kind==RecurrenceKind.WEEKLY) draft.weekdays.take(1) else draft.weekdays))
@@ -205,6 +208,10 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     OutlinedTextField(draft.maxLatenessMinutes,{edit(draft.copy(maxLatenessMinutes=it.take(4)))},label={Text("Maximum delay · minutes (1–1440)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
                 }
                 Row {Text("Enable schedule",Modifier.weight(1f));Switch(draft.enabled,{edit(draft.copy(enabled=it))})}
+            }
+            @Composable fun reviewSchedule() {
+                HorizontalDivider()
+                SectionHeading("3. Review & save")
                 Text("Next runs",style=MaterialTheme.typography.titleSmall)
                 preview.onSuccess {times->times.forEach {Text(formatTime(it,draft.zoneId,locale))}}
                     .onFailure {Text(it.message ?: "Check the schedule fields",color=MaterialTheme.colorScheme.error)}
@@ -233,6 +240,12 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                     }},{message=it})
                 },enabled=!busy && preview.isSuccess && inputErrors.isEmpty(),modifier=Modifier.fillMaxWidth()) {Text("Save automation")}
                 Spacer(Modifier.height(20.dp))
+            }
+            if(LocalExpandedLayout.current) Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
+                Column(Modifier.weight(.48f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {actionInputs();Spacer(Modifier.height(20.dp))}
+                Column(Modifier.weight(.52f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {timingInputs();reviewSchedule()}
+            } else Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                actionInputs();timingInputs();reviewSchedule()
             }
         } else if(selected!=null) {
             LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -295,12 +308,23 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                item {
-                    Text("Set it once. SIConnect runs the saved workflow using local permissions, including while locked when its capabilities support background execution.")
-                    Text("Android may delay scheduled work. Workflows that use the screen or need approval require owner interaction.",style=MaterialTheme.typography.bodySmall)
-                    if(skills.isEmpty()) Text("Enable an installed workflow before creating an automation.")
-                }
+            @Composable fun templates() {
+                    SectionHeading("Start with a routine")
+                    Spacer(Modifier.height(12.dp))
+                    Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        skills.take(4).forEach {skill->NavigationCard(AutomationTemplates.title(skill),
+                            when(skill.id) {AutomationTemplates.NOTICE_SKILL->"A reminder on your schedule";AutomationTemplates.HEALTH_SKILL->"Check battery, storage, and device health";"weather.commute_check"->"Prepare for tomorrow’s weather";else->skill.description},
+                            {startTemplate(skill)},icon=R.drawable.ic_nav_automations)}
+                    }
+            }
+            Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
+                if(LocalExpandedLayout.current) Column(Modifier.weight(.44f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {templates()}
+                LazyColumn(Modifier.weight(if(LocalExpandedLayout.current) .56f else 1f),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    item {
+                        if(!LocalExpandedLayout.current) {templates();Spacer(Modifier.height(20.dp))}
+                        SectionHeading("Saved automations")
+                        Text("Android can delay scheduled work. Screen actions and approvals need your interaction.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 val healthUpgrade=skills.firstOrNull {AutomationTemplates.upgradeableHealth(it)}
                 if(healthUpgrade!=null) item {
                     OutlinedCard {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -312,19 +336,17 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         }},{message=it})},enabled=!busy) {Text("Upgrade health snapshot")}
                     }}
                 }
-                if(automations.isEmpty()) item {Card {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Text("No automations yet",style=MaterialTheme.typography.titleMedium)
-                    Text("Create a recurring reminder, a device health snapshot, or a weather commute check.")
-                    Button(onClick=::startNew,enabled=skills.isNotEmpty()) {Text("Create automation")}
-                }}}
+                if(automations.isEmpty()) item {EmptyState("Your first routine starts here","Choose a template above or create an automation.",R.drawable.ic_nav_automations)}
                 items(automations,key={it.id}) {a->
                     OutlinedCard(onClick={selectedId=a.id;inspectedRunId=null},modifier=Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                         Text(a.label.ifBlank {a.id},style=MaterialTheme.typography.titleMedium)
                         skills.firstOrNull {it.id==a.skillId}?.let {Text(BackgroundExecution.description(it,capabilities),style=MaterialTheme.typography.bodySmall)}
-                        Text(if(a.enabled) "${a.scheduleState.lowercase().replace('_',' ')} · ${formatTime(a.nextAtMs,a.zoneId,locale)}" else "Disabled")
+                        StatusPill(if(a.enabled) a.scheduleState.lowercase().replace('_',' ') else "Paused",if(a.enabled) StatusTone.GOOD else StatusTone.NEUTRAL)
+                        if(a.enabled) Text("Next: ${formatTime(a.nextAtMs,a.zoneId,locale)}",style=MaterialTheme.typography.bodyMedium)
                         a.lastState?.let {Text("Last run: ${it.lowercase().replace('_',' ')}",style=MaterialTheme.typography.bodySmall)}
                         a.error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
                     }}
+                }
                 }
             }
         }

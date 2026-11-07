@@ -24,6 +24,7 @@ class StorageRetentionUiDeviceTest {
             flags=flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
         fun nodes():List<AccessibilityNodeInfo> {
+            if(android.os.Build.VERSION.SDK_INT>=34) automation.clearCache()
             val queue=java.util.ArrayDeque<AccessibilityNodeInfo>()
             val displays=automation.windowsOnAllDisplays
             (0 until displays.size()).flatMap {displays.valueAt(it)}.mapNotNull {it.root}.forEach(queue::add)
@@ -62,6 +63,7 @@ class StorageRetentionUiDeviceTest {
         }
         ActivityScenario.launch<MainActivity>(Intent(g.context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {scenario->
             click(text("Settings"));text("Android access")
+            click(text("Storage & history",scroll=true))
             val selected=dev.siconnect.app.data.RetentionPolicy.OPTIONS.first {it!=before.days}
             click(text("$selected days",scroll=true))
             text("Expire payloads after $selected days?")

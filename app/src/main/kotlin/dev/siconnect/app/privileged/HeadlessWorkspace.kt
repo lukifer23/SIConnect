@@ -12,6 +12,7 @@ import android.media.Image
 import android.media.ImageReader
 import android.os.*
 import android.view.Display
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import dev.siconnect.app.capabilities.HeadlessRules
@@ -24,6 +25,42 @@ import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
+
+/** Android's stable vertical action IDs; kept independent of Android stubs for geometry/admission tests. */
+internal object PrivateScrollContract {
+    const val FORWARD=4096
+    const val BACKWARD=8192
+    const val UP=16908344
+    const val DOWN=16908346
+    fun directions(actions:Set<Int>):List<String> = buildList {
+        if(FORWARD in actions || DOWN in actions) add("FORWARD")
+        if(BACKWARD in actions || UP in actions) add("BACKWARD")
+    }
+    fun semanticAction(direction:String,scrollable:Boolean,actions:Set<Int>):Int? {
+        require(direction in setOf("FORWARD","BACKWARD")) {"Use FORWARD or BACKWARD"}
+        val preferred=if(direction=="BACKWARD") listOf(BACKWARD,UP) else listOf(FORWARD,DOWN)
+        return preferred.firstOrNull {it in actions}
+            ?: preferred.first().takeIf {scrollable && directions(actions).isEmpty()}
+    }
+    // AccessibilityRecord initializes unreported deltas to -1, which is not movement evidence.
+    fun observedDelta(raw:Int):Int?=raw.takeUnless {it == -1}
+}
+
+internal data class PrivateScrollPlan(val x:Float,val fromY:Float,val toY:Float)
+internal fun privateScrollPlan(left:Int,top:Int,right:Int,bottom:Int,width:Int,height:Int,direction:String):PrivateScrollPlan {
+    require(width>0 && height>0 && left<right && top<bottom) {"Invalid private display or node bounds"}
+    require(direction in setOf("FORWARD","BACKWARD")) {"Use FORWARD or BACKWARD"}
+    val l=maxOf(0,left);val r=minOf(width,right);val t=maxOf(0,top);val b=minOf(height,bottom)
+    require(r-l>=32 && b-t>=96) {"Visible node is too small for a private scroll gesture"}
+    val x=l+(r-l)/2f
+    val upper=t+(b-t)*.2f;val lower=t+(b-t)*.8f
+    return if(direction=="BACKWARD") PrivateScrollPlan(x,upper,lower) else PrivateScrollPlan(x,lower,upper)
+}
+
+internal fun nextPrivateCaptureSize(width:Int,height:Int):Pair<Int,Int> {
+    require(width>0 && height>0) {"Invalid private capture dimensions"}
+    return maxOf(1,(width*.75f).toInt()) to maxOf(1,(height*.75f).toInt())
+}
 
 /** Lives in the existing authorized shell process. Never mirrors or injects into a physical display.
  * Hidden platform flags are resolved by name and verified on the resulting Display, not assumed.
@@ -266,7 +303,11 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
     }
     private fun root(s:Session):AccessibilityNodeInfo {
         requireAwakeAndUnlocked()
-        val displays=ui().windowsOnAllDisplays
+        val automation=ui()
+        // A new snapshot and every action revalidation must read the actual window,
+        // rather than nodes retained before an accepted scroll or app transition.
+        if(Build.VERSION.SDK_INT>=34) automation.clearCache()
+        val displays=automation.windowsOnAllDisplays
         val windows=displays[s.display.display.displayId].orEmpty()
         val window=windows.filter {it.type==AccessibilityWindowInfo.TYPE_APPLICATION || it.isFocused}
             .sortedWith(compareByDescending<AccessibilityWindowInfo> {it.isFocused}.thenByDescending {it.layer}).firstOrNull()
@@ -288,8 +329,8 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
         val refs=linkedMapOf<String,Reference>();val rows=mutableListOf<JsonElement>()
         val queue=ArrayDeque<Pair<AccessibilityNodeInfo,List<Int>>>()
         queue.add(root to emptyList());var visited=0;var returnedBytes=0;var truncated=false
-        val limit=(a["limit"]?.jsonPrimitive?.int ?: 200).coerceIn(1,200)
-        while(queue.isNotEmpty() && visited++<1000 && rows.size<limit) {
+        val limit=(a["limit"]?.jsonPrimitive?.int ?: 200).coerceIn(1,500)
+        while(queue.isNotEmpty() && visited++<2000 && rows.size<limit) {
             val (n,path)=queue.removeFirst()
             if(n.isPassword || n.packageName?.toString()!=s.target) continue
             if(n.isVisibleToUser) {
@@ -298,7 +339,9 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
                 val row=buildJsonObject {
                     put("nodeRef",ref);put("text",n.text?.take(1000)?.toString().orEmpty());put("description",n.contentDescription?.take(1000)?.toString().orEmpty())
                     put("resourceId",n.viewIdResourceName.orEmpty());put("clickable",n.isClickable);put("editable",n.isEditable)
+                    put("className",n.className?.toString().orEmpty())
                     put("focusable",n.isFocusable);put("actions",JsonArray(n.actionList.map {JsonPrimitive(it.id)}))
+                    put("supportedScrollDirections",JsonArray(PrivateScrollContract.directions(n.actionList.map {it.id}.toSet()).map(::JsonPrimitive)))
                     put("scrollable",n.isScrollable);put("focused",n.isFocused);put("enabled",n.isEnabled);put("selected",n.isSelected)
                     put("bounds",buildJsonObject {put("left",b.left);put("top",b.top);put("right",b.right);put("bottom",b.bottom)})
                 }
@@ -306,14 +349,15 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
                 if(returnedBytes+bytes>192*1024) {truncated=true;break}
                 rows+=row;returnedBytes+=bytes;refs[ref]=Reference(path,fingerprint(n))
             }
-            if(path.size<32) for(index in 0 until minOf(n.childCount,128,1000-visited-queue.size))
+            if(path.size<32) for(index in 0 until minOf(n.childCount,128,2000-visited-queue.size))
                 n.getChild(index)?.let {queue.add(it to path+index)}
         }
         s.snapshot=Snapshot(id,root.windowId,SystemClock.elapsedRealtime(),refs)
         return buildJsonObject {
             metadata(s).forEach {(k,v)->put(k,v)};put("snapshotId",id);put("windowId",root.windowId);put("nodes",JsonArray(rows))
             put("targetWindowVerified",true)
-            put("scannedNodes",visited);put("scanIncomplete",truncated || queue.isNotEmpty());put("passwordContentIncluded",false)
+            put("scannedNodes",visited);put("returnedNodes",rows.size);put("requestedLimit",limit)
+            put("scanIncomplete",truncated || queue.isNotEmpty());put("passwordContentIncluded",false)
         }
     }
     private fun injectOwnedEvent(s:Session,event:android.view.InputEvent):Boolean {
@@ -355,6 +399,55 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
             return released
         } finally {if(!released) runCatching {event(android.view.MotionEvent.ACTION_CANCEL)}}
     }
+    private fun swipeOwnedNode(s:Session,plan:PrivateScrollPlan):Boolean {
+        val down=SystemClock.uptimeMillis()
+        var y=plan.fromY
+        fun event(action:Int):Boolean {
+            val motion=android.view.MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,plan.x,y,0)
+            try {
+                motion.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                return injectOwnedEvent(s,motion)
+            } finally {motion.recycle()}
+        }
+        var released=false
+        try {
+            if(!event(android.view.MotionEvent.ACTION_DOWN)) return false
+            for(step in 1..12) {
+                Thread.sleep(25)
+                y=plan.fromY+(plan.toY-plan.fromY)*step/12f
+                if(!event(android.view.MotionEvent.ACTION_MOVE)) return false
+            }
+            // Stop before lifting, avoiding an unbounded fling past the selected content.
+            Thread.sleep(75)
+            released=event(android.view.MotionEvent.ACTION_UP)
+            return released
+        } finally {if(!released) runCatching {event(android.view.MotionEvent.ACTION_CANCEL)}}
+    }
+    private fun visibleScrollSignature(s:Session,node:AccessibilityNodeInfo):String {
+        val queue=ArrayDeque<AccessibilityNodeInfo>();queue.add(node)
+        val rows=mutableListOf<JsonElement>();var visited=0
+        while(queue.isNotEmpty() && visited++<128) {
+            val n=queue.removeFirst()
+            if(n.isPassword || n.packageName?.toString()!=s.target) continue
+            if(n.isVisibleToUser) {
+                val bounds=Rect().also(n::getBoundsInScreen)
+                rows.add(JsonArray(listOf(n.viewIdResourceName,n.className,n.text?.take(1000),n.contentDescription?.take(1000),bounds.flattenToString())
+                    .map {if(it==null) JsonNull else JsonPrimitive(it.toString())}))
+            }
+            for(index in 0 until minOf(n.childCount,128-visited-queue.size)) n.getChild(index)?.let(queue::add)
+        }
+        return Canonical.sha256Hex(JsonArray(rows).toString())
+    }
+    private fun scrollReadbackNode(s:Session,snapshot:Snapshot,ref:Reference,original:AccessibilityNodeInfo):AccessibilityNodeInfo? {
+        var current=root(s)
+        if(current.windowId!=snapshot.window) return null
+        for(index in ref.path) {
+            if(current.isPassword || current.packageName?.toString()!=s.target) return null
+            current=current.getChild(index) ?: return null
+        }
+        return current.takeIf {!it.isPassword && it.packageName?.toString()==s.target && it.isVisibleToUser &&
+            it.viewIdResourceName==original.viewIdResourceName && it.className?.toString()==original.className?.toString()}
+    }
     private fun action(s:Session,a:JsonObject,operation:String):JsonObject {
         val snapshot=s.snapshot ?: fail("STALE_NODE_REFERENCE","Inspect this workspace before acting")
         if(snapshot.id!=a["snapshotId"]?.jsonPrimitive?.content || SystemClock.elapsedRealtime()-snapshot.created>30_000)
@@ -368,11 +461,21 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
         }
         if(node.isPassword || !node.isEnabled || !node.isVisibleToUser || fingerprint(node)!=ref.fingerprint)
             fail("STALE_NODE_REFERENCE","Node changed; no input was sent")
-        val touch=operation=="click" && a["inputMethod"]?.jsonPrimitive?.content=="PRIVATE_TOUCH"
+        val inputMethod=a["inputMethod"]?.jsonPrimitive?.content ?: "SEMANTIC"
+        if(inputMethod !in setOf("SEMANTIC","PRIVATE_TOUCH")) fail("INVALID_ARGUMENT","Use SEMANTIC or PRIVATE_TOUCH")
+        val touch=operation in setOf("click","scroll") && inputMethod=="PRIVATE_TOUCH"
+        val direction=if(operation=="scroll") a["direction"]?.jsonPrimitive?.content else null
+        if(operation=="scroll" && direction !in setOf("FORWARD","BACKWARD")) fail("INVALID_ARGUMENT","Use FORWARD or BACKWARD")
+        val scrollPlan=if(operation=="scroll" && touch) {
+            val b=Rect().also(node::getBoundsInScreen)
+            try {privateScrollPlan(b.left,b.top,b.right,b.bottom,s.width,s.height,requireNotNull(direction))}
+            catch(e:IllegalArgumentException) {fail("NODE_OUTSIDE_WORKSPACE",e.message ?: "No safe private scroll gesture fits this node")}
+        } else null
         val action=when(operation) {
             "click"->{if(!touch && !node.isClickable && node.actionList.none {it.id==AccessibilityNodeInfo.ACTION_CLICK}) fail("ACTION_UNSUPPORTED","Node has no supported click action");AccessibilityNodeInfo.ACTION_CLICK}
             "set_text"->{if(!node.isEditable) fail("ACTION_UNSUPPORTED","Node is not editable");AccessibilityNodeInfo.ACTION_SET_TEXT}
-            else->{if(!node.isScrollable) fail("ACTION_UNSUPPORTED","Node is not scrollable");if(a["direction"]?.jsonPrimitive?.content=="BACKWARD") AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD}
+            else->if(touch) 0 else PrivateScrollContract.semanticAction(requireNotNull(direction),node.isScrollable,node.actionList.map {it.id}.toSet())
+                ?: fail("ACTION_UNSUPPORTED","Node does not advertise this scroll direction; inspect supportedScrollDirections or explicitly select PRIVATE_TOUCH")
         }
         val text=a["text"]?.jsonPrimitive?.content
         val extras=if(operation=="set_text") Bundle().apply {putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,requireNotNull(text))} else null
@@ -384,8 +487,29 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
             if(!focused || !node.refresh() || !node.isFocused || node.isPassword || node.packageName?.toString()!=s.target)
                 throw WorkspaceFailure("TEXT_FOCUS_NOT_CONFIRMED","Private field ${node.viewIdResourceName} did not confirm semantic focus (accepted=$focused, focusable=${node.isFocusable}); no text was dispatched",false)
         }
-        val accepted=if(touch) tapOwnedNode(s,node) else node.performAction(action,extras)
+        val beforeScroll=if(operation=="scroll") visibleScrollSignature(s,node) else null
+        var scrollEventObserved=false;var scrollDeltaX:Int?=null;var scrollDeltaY:Int?=null
+        var accepted=false
+        fun dispatch() {
+            accepted=when {scrollPlan!=null->swipeOwnedNode(s,scrollPlan);touch->tapOwnedNode(s,node);else->node.performAction(action,extras)}
+            if(!accepted) throw WorkspaceFailure("ACTION_NOT_CONFIRMED","Android did not confirm the action; inspect this workspace before retrying",false)
+        }
+        if(operation=="scroll") {
+            try {
+                val event=ui().executeAndWaitForEvent({dispatch()},{event->event.eventType==AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+                    event.windowId==snapshot.window && event.packageName?.toString()==s.target},450)
+                try {
+                    scrollEventObserved=true
+                    scrollDeltaX=PrivateScrollContract.observedDelta(event.scrollDeltaX)
+                    scrollDeltaY=PrivateScrollContract.observedDelta(event.scrollDeltaY)
+                } finally {event.recycle()}
+            } catch(_:java.util.concurrent.TimeoutException) {/* Accepted dispatch with no observed scroll event is not movement proof. */}
+        } else dispatch()
         if(!accepted) throw WorkspaceFailure("ACTION_NOT_CONFIRMED","Android did not confirm the action; inspect this workspace before retrying",false)
+        val scrollChanged=if(operation=="scroll") {
+            Thread.sleep(100)
+            runCatching {scrollReadbackNode(s,snapshot,ref,node)?.let {visibleScrollSignature(s,it)!=beforeScroll}}.getOrNull()
+        } else null
         var focusCleared:Boolean?=null
         if(operation=="set_text" && a["commit"]?.jsonPrimitive?.booleanOrNull==true) {
             if(!node.refresh() || !node.isFocused || node.isPassword || node.packageName?.toString()!=s.target || root(s).windowId!=snapshot.window)
@@ -397,8 +521,22 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
             if(!focusCleared) throw WorkspaceFailure("TEXT_COMMIT_NOT_CONFIRMED","Private commit key did not confirm focus release; inspect before retrying",false)
         }
         val readback=if(operation=="set_text") node.refresh() && node.text?.toString()==text else null
+        val movementObserved=scrollEventObserved && listOfNotNull(scrollDeltaX,scrollDeltaY).any {it!=0}
         return buildJsonObject {
             metadata(s).forEach {(k,v)->put(k,v)};put("actionAccepted",true);put("inputMethod",if(touch) "PRIVATE_TOUCH" else "SEMANTIC");focusCleared?.let {put("focusCleared",it)};readback?.let {put("textReadbackVerified",it)}
+            if(operation=="scroll") {
+                put("direction",requireNotNull(direction));if(!touch) put("semanticActionId",action)
+                put("scrollEventObserved",scrollEventObserved)
+                put("scrollDeltaX",scrollDeltaX?.let(::JsonPrimitive) ?: JsonNull);put("scrollDeltaY",scrollDeltaY?.let(::JsonPrimitive) ?: JsonNull)
+                put("scrollMovementVerified",movementObserved);put("scrollObservationNodeLimit",128)
+                put("visibleContentChanged",scrollChanged?.let(::JsonPrimitive) ?: JsonNull)
+                put("scrollVerification",when {
+                    movementObserved->"SCROLL_DELTA_OBSERVED"
+                    scrollChanged==true->"VISIBLE_CONTENT_CHANGED"
+                    scrollChanged==false->"NO_VISIBLE_CHANGE_OBSERVED"
+                    else->"READBACK_UNAVAILABLE"
+                })
+            }
             put("businessOutcomeVerified",false);put("guidance","Inspect the resulting private window; dispatch alone does not prove an external action completed")
         }
     }
@@ -413,15 +551,29 @@ internal class HeadlessWorkspace(private val executionIdentity: String) {
             plane.buffer.rewind();full.copyPixelsFromBuffer(plane.buffer)
             if(padded==s.width) full else Bitmap.createBitmap(full,0,0,s.width,s.height).also {full.recycle()}
         }
+        var encoded=bitmap
         try {
             val bytes=ByteArrayOutputStream();var quality=75
-            do {bytes.reset();bitmap.compress(Bitmap.CompressFormat.JPEG,quality,bytes);quality-=15} while(bytes.size()>128*1024 && quality>=15)
-            if(bytes.size()>128*1024) fail("WORKSPACE_IMAGE_TOO_LARGE","Private image exceeds the bounded capture limit")
+            while(true) {
+                for(candidate in listOf(75,60,45,30,15)) {
+                    bytes.reset();quality=candidate
+                    if(!encoded.compress(Bitmap.CompressFormat.JPEG,quality,bytes)) fail("WORKSPACE_IMAGE_UNAVAILABLE","Private frame could not be encoded")
+                    if(bytes.size()<=128*1024) break
+                }
+                if(bytes.size()<=128*1024) break
+                if(encoded.width==1 && encoded.height==1) fail("WORKSPACE_IMAGE_TOO_LARGE","Private image could not fit the bounded capture limit")
+                val (width,height)=nextPrivateCaptureSize(encoded.width,encoded.height)
+                val scaled=Bitmap.createScaledBitmap(encoded,width,height,true)
+                if(encoded!==bitmap) encoded.recycle()
+                encoded=scaled
+            }
             return buildJsonObject {
                 metadata(s).forEach {(k,v)->put(k,v)};put("mimeType","image/jpeg");put("encoding","BASE64")
                 put("data",android.util.Base64.encodeToString(bytes.toByteArray(),android.util.Base64.NO_WRAP));put("bytes",bytes.size())
+                put("imageWidth",encoded.width);put("imageHeight",encoded.height);put("originalWidth",bitmap.width);put("originalHeight",bitmap.height)
+                put("jpegQuality",quality);put("downscaled",encoded!==bitmap)
             }
-        } finally {bitmap.recycle()}
+        } finally {if(encoded!==bitmap) encoded.recycle();bitmap.recycle()}
     }
 }
 

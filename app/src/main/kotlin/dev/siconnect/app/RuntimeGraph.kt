@@ -24,6 +24,13 @@ class SIConnectApp : Application() {
 }
 val Context.graph: RuntimeGraph get() = (applicationContext as SIConnectApp).graph
 
+data class FullAccessPendingContinuation(
+    val records:List<RequestRecord>,
+    val examined:Int,
+    /** More waiting records exist beyond this bounded owner-reviewed batch. */
+    val morePending:Boolean,
+)
+
 class RuntimeGraph(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, error ->
         android.util.Log.e("SIConnect", "Runtime task failed: ${error.javaClass.simpleName}")
@@ -149,12 +156,11 @@ class RuntimeGraph(val context: Context) {
         scope.launch {ready.await();shizuku.status.collect {gateway.refreshCatalog()}}
         ready.invokeOnCompletion { e -> if (e != null) health.value = "Startup failed: ${e.javaClass.simpleName}" }
     }
-    /** Owner-only local UI action. Default development scope allows diagnostics and approval-gated shell. */
+    /** Owner-only creation/rotation. Existing owner-selected access and profile snapshots stay unchanged. */
     fun createDevelopmentAgent(): String {
         val token = Settings.randomToken("sia_")
-        val id = "development-client"
-        agents.put(AgentRecord(AgentGrant(id, "ADB development client", scopes=listOf("device.*", "requests.*", "apps.list", "apps.inspect", "shell.*", "notifications.post", "alarms.next", "reminders.*", "weather.forecast"), autoApproveUpTo=RiskClass.LOW_IMPACT),
-            Settings.sha256Hex(token), System.currentTimeMillis(), tokenHint=token.take(8)))
+        val id = DEVELOPMENT_AGENT_ID
+        agents.put(developmentAgentWithCredential(agents.get(id),Settings.sha256Hex(token),token.take(8),System.currentTimeMillis()))
         settings.setBotToken(token)
         if (BuildConfig.DEBUG) File(context.noBackupFilesDir, "development-client.json").apply {
             writeText(buildJsonObject { put("agentId", id); put("token", token); put("port", 8765) }.toString())
@@ -217,12 +223,117 @@ class RuntimeGraph(val context: Context) {
         try {
             val a=requireNotNull(agents.get(agentId))
             require(!agentId.startsWith("local-") && !a.grant.revoked && (a.grant.expiresAtMs?.let { it>System.currentTimeMillis() } ?: true)) { "Agent is revoked or expired" }
+            requireCustomAccess(a)
             val grant=a.grant.withShellPermission(always)
             agents.put(a.copy(grant=grant))
             events.emit(Event(System.currentTimeMillis(),eventType=if(always) "grant.shell_broad.allowed" else "grant.shell_standing.cleared",agentId=agentId,deviceId=settings.deviceId,detail="Local owner changed persistent shell permission"))
             w.setTransactionSuccessful()
         } finally { w.endTransaction() }
     }
+    /** Local owner UI only; callers authenticate the complete full-control decision before enabling. */
+    fun setFullAccessFromOwner(agentId:String,enabled:Boolean) {
+        require(!agentId.startsWith("local-")) {"Select a remote identity"}
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
+            require(record.grant.agentId==agentId) {"Agent identity no longer matches the selected record"}
+            val previous=record.fullAccessPreviousGrant
+            require(previous==null || previous.agentId==agentId) {"Saved custom access belongs to a different identity"}
+            if(enabled) {
+                require(!record.grant.revoked) {"Agent is revoked"}
+                val full=record.grant.copy(scopes=listOf("*"),denied=emptyList(),
+                    autoApproveUpTo=RiskClass.CRITICAL,shellMode=ShellMode.BROAD,allowSharedScreen=true,
+                    expiresAtMs=null,fullControl=true)
+                if(previous==null || record.grant!=full) {
+                    agents.put(record.copy(grant=full,fullAccessPreviousGrant=previous ?: record.grant.copy(fullControl=false)))
+                    events.emit(Event(System.currentTimeMillis(),eventType="grant.full_access.allowed",agentId=agentId,deviceId=settings.deviceId,
+                        detail="Local owner enabled full control without SIConnect action approvals or grant expiry; protected surfaces, Android authorization and device controls still apply"))
+                }
+            } else if(previous!=null) {
+                // Restoring permissions must never reverse a later revocation, expiry or identity edit.
+                val restored=previous.copy(agentId=record.grant.agentId,label=record.grant.label,
+                    revoked=record.grant.revoked,expiresAtMs=record.grant.expiresAtMs ?: previous.expiresAtMs,fullControl=false)
+                agents.put(record.copy(grant=restored,fullAccessPreviousGrant=null))
+                events.emit(Event(System.currentTimeMillis(),eventType="grant.full_access.restored",agentId=agentId,deviceId=settings.deviceId,
+                    detail="Local owner disabled full control and restored the saved custom permissions"))
+            }
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
+
+    /**
+     * Explicit continuation from the authenticated full-control owner decision only.
+     * Reuses original waiting records; reads, reconnects and profile persistence never call this.
+     */
+    suspend fun resumeEligiblePendingForFullAccessFromOwner(agentId:String):FullAccessPendingContinuation {
+        ready.await()
+        require(!agentId.startsWith("local-")) {"Select a remote identity"}
+        fun fullAgent():AgentRecord? = agents.get(agentId)?.takeIf {
+            it.grant.agentId==agentId && it.grant.fullControl && it.fullAccessPreviousGrant?.agentId==agentId && !it.grant.revoked &&
+                (it.grant.expiresAtMs?.let {expiry->expiry>System.currentTimeMillis()} ?: true)
+        }
+        require(fullAgent()!=null) {"Full control must be active for this agent before continuing waiting actions"}
+        val candidates=requests.historyPage(limit=101,agentId=agentId,states=setOf(RequestState.AWAITING_APPROVAL),newest=false)
+        val batch=candidates.take(100)
+        val continued=mutableListOf<RequestRecord>()
+        var examined=0
+        fun skipped(summary:RequestSummary,reason:String) {
+            events.emit(Event(System.currentTimeMillis(),eventType="grant.full_access.pending_skipped",agentId=agentId,
+                deviceId=settings.deviceId,requestId=summary.requestId,capabilityId=summary.capabilityId,errorCode=reason,
+                detail="Owner full-control continuation left the original action for separate review"))
+        }
+        for(summary in batch) {
+            currentCoroutineContext().ensureActive()
+            examined++
+            if(fullAgent()==null) {skipped(summary,"FULL_ACCESS_INACTIVE");break}
+            val record=requests.get(summary.requestId)
+            if(record==null || record.agentId!=agentId || record.deviceId!=settings.deviceId || record.state!=RequestState.AWAITING_APPROVAL) {
+                skipped(summary,"REQUEST_NO_LONGER_WAITING");continue
+            }
+            val now=System.currentTimeMillis()
+            if(record.payloadExpired || now>=record.expiresAtMs || now>=(record.approvalExpiresAtMs ?: record.expiresAtMs)) {
+                skipped(summary,"REQUEST_EXPIRED");continue
+            }
+            val capability=registry.get(record.capabilityId)
+            val descriptor=capability?.descriptor
+            if(capability==null || descriptor==null || descriptor.id!=record.capabilityId || descriptor.version!=record.capabilityVersion ||
+                record.selectedBackend==null || record.selectedBackend!=descriptor.backend ||
+                record.argsHash!=Canonical.actionHash(record.capabilityId,record.capabilityVersion,record.arguments)) {
+                skipped(summary,"ACTION_CHANGED");continue
+            }
+            val eligible=try {
+                val origin=Origin.valueOf(record.origin)
+                val assessment=capability.assess(record.arguments)
+                val originalAssessment=record.assessment
+                val grant=fullAgent()?.grant
+                // Only the owner's explicit full-control profile waives SIConnect action
+                // approvals, including classified critical work. All eligibility gates remain.
+                originalAssessment!=null && grant?.fullControl==true &&
+                    Schema.validate(descriptor.inputSchema,record.arguments).isEmpty() &&
+                    PolicyEngine().evaluate(grant,descriptor,record.arguments,assessment,capability.availability(record.arguments),
+                        settings.controls.value,origin,System.currentTimeMillis()).outcome==PolicyOutcome.ALLOW
+            } catch(e:CancellationException) {throw e}
+              catch(_:Exception) {false}
+            if(!eligible) {skipped(summary,"SEPARATE_REVIEW_REQUIRED");continue}
+            if(fullAgent()==null) {skipped(summary,"FULL_ACCESS_INACTIVE");break}
+            // No SQLite transaction is held across execution. The engine owns atomic
+            // state transitions, hash/deadline/backend rechecks and cancellation races.
+            val result=engine.resolveApproval(record.requestId,true,"local-owner",record.argsHash)
+            continued+=result
+            events.emit(Event(System.currentTimeMillis(),eventType="grant.full_access.pending_continued",agentId=agentId,
+                deviceId=settings.deviceId,requestId=result.requestId,capabilityId=result.capabilityId,executionStatus=result.state.name,
+                detail="Local owner continued this existing waiting action under full control; no new request was submitted"))
+        }
+        val more=candidates.size>100 || examined<batch.size
+        events.emit(Event(System.currentTimeMillis(),eventType="grant.full_access.pending_reviewed",agentId=agentId,deviceId=settings.deviceId,
+            detail="Examined $examined waiting actions; ${continued.size} continuation results; additional waiting actions: $more"))
+        return FullAccessPendingContinuation(continued,examined,more)
+    }
+
+    private fun requireCustomAccess(record:AgentRecord) {
+        require(record.fullAccessPreviousGrant==null && !record.grant.fullControl) {"Switch to custom access before changing individual permissions"}
+    }
+
     /** Explicit owner action, only low-impact native weather calculations/reminders; no shell authority. */
     fun enableWeatherAutomationFromOwner() {
         val w=db.writableDatabase;w.beginTransaction()
@@ -242,6 +353,7 @@ class RuntimeGraph(val context: Context) {
         try {
             val agent=requireNotNull(agents.get(agentId))
             require(!agent.grant.revoked && (agent.grant.expiresAtMs?.let { it>System.currentTimeMillis() } ?: true)) { "Bot is revoked or expired" }
+            requireCustomAccess(agent)
             val prefix="$family.";val pattern="$family.*"
             val grant=if(enabled) agent.grant.copy(scopes=(agent.grant.scopes+pattern).distinct(),denied=agent.grant.denied.filterNot { it==pattern || it.startsWith(prefix) })
                 else agent.grant.copy(scopes=agent.grant.scopes.filterNot { it==pattern || it.startsWith(prefix) },denied=(agent.grant.denied+pattern).distinct())
@@ -261,11 +373,40 @@ class RuntimeGraph(val context: Context) {
         try {
             val a=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             require(!a.grant.revoked && (a.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
+            requireCustomAccess(a)
             if(enabled) require(ids.all {id->a.grant.scopes.any {PolicyEngine.globMatches(it,id)} && a.grant.denied.none {PolicyEngine.globMatches(it,id)}}) {"Allow the UI interaction family first"}
             val retained=a.grant.standing.filterNot {it.capabilityId in ids && it.backend==BackendKind.ACCESSIBILITY && it.actionHash==null && it.constraints==constraints}
             val added=if(enabled) ids.map {id->StandingGrant(id,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=BackendKind.ACCESSIBILITY,note="Owner-selected semantic app access")} else emptyList()
             agents.put(a.copy(grant=a.grant.copy(standing=retained+added)))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.semantic_app.changed",agentId=agentId,detail="Local owner ${if(enabled) "allowed" else "removed"} semantic clicks/text for $targetPackage"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+    }
+
+    /** One authenticated local-owner decision enables the family and this app's private allowance. */
+    fun enablePrivateAppAccessFromOwner(agentId:String,targetPackage:String,selectedBackend:BackendKind) {
+        // Reject protected/invalid targets before opening a transaction or changing any grant.
+        dev.siconnect.app.capabilities.HeadlessRules.validatePackage(targetPackage)
+        require(!agentId.startsWith("local-")) {"Select a remote identity"}
+        require(selectedBackend in setOf(BackendKind.ADB_SERVICE,BackendKind.SHIZUKU) && privileged.kind==selectedBackend) {
+            "Selected backend changed during owner review; review the private allowance again"
+        }
+        val w=db.writableDatabase;w.beginTransaction()
+        try {
+            val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
+            require(!record.grant.revoked && (record.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
+            if(record.grant.fullControl && record.fullAccessPreviousGrant!=null) {
+                // The full profile already covers this app. Keep its original custom snapshot intact.
+                w.setTransactionSuccessful()
+                return
+            }
+            // Both existing setters use this thread's SQLite connection. Their nested
+            // transactions and audit writes commit only with this outer transaction.
+            setCapabilityFamilyFromOwner(agentId,"headless",true)
+            setHeadlessPackagePermissionFromOwner(agentId,targetPackage,true,selectedBackend)
+            require(privileged.kind==selectedBackend) {
+                "Selected backend changed during owner review; review the private allowance again"
+            }
             w.setTransactionSuccessful()
         } finally {w.endTransaction()}
     }
@@ -281,6 +422,7 @@ class RuntimeGraph(val context: Context) {
         try {
             val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             require(!record.grant.revoked && (record.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
+            requireCustomAccess(record)
             if(enabled) require(ids.all {id->record.grant.scopes.any {PolicyEngine.globMatches(it,id)} && record.grant.denied.none {PolicyEngine.globMatches(it,id)}}) {"Allow the private workspace capability family first"}
             val retained=record.grant.standing.filterNot {it.capabilityId in ids && it.backend in setOf(BackendKind.ADB_SERVICE,BackendKind.SHIZUKU) && it.actionHash==null && it.constraints==constraints}
             val added=if(enabled) ids.map {StandingGrant(it,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=selected,note="Owner-selected private app workspace access")} else emptyList()
@@ -295,6 +437,7 @@ class RuntimeGraph(val context: Context) {
         val w=db.writableDatabase;w.beginTransaction()
         try {
             val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
+            requireCustomAccess(record)
             agents.put(record.copy(grant=record.grant.copy(allowSharedScreen=allowed)))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.shared_screen.changed",agentId=agentId,
                 detail=if(allowed) "Local owner allowed shared-screen operations" else "Local owner restricted agent to background APIs and private displays"))

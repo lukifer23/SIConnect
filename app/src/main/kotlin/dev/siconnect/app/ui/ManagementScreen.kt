@@ -10,16 +10,21 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.ui.semantics.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.shape.RoundedCornerShape
 import dev.siconnect.app.*
+import dev.siconnect.app.R
 import dev.siconnect.app.data.*
 import dev.siconnect.app.automation.Automation
 import dev.siconnect.app.transport.ConnectionService
@@ -28,22 +33,38 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
 @Composable private fun SettingsAccessItem(title:String,status:String,action:String,onAction:()->Unit,explanation:String?=null) {
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+    Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(title,style=MaterialTheme.typography.titleMedium)
-                    Text(status,style=MaterialTheme.typography.bodySmall)
+                    Text(status,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick=onAction) {Text(action)}
+                TextButton(onClick=onAction,modifier=Modifier.semantics {contentDescription="$action $title"}) {Text(action)}
             }
             explanation?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
         }
     }
 }
 
+/** The service-details action is optional and permission protected on some Android releases. */
+private fun MainActivity.openScreenControlSettings():Boolean {
+    val details=Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+        .putExtra(Intent.EXTRA_COMPONENT_NAME,ComponentName(this,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java).flattenToString())
+    val handler=packageManager.resolveActivity(details,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY or android.content.pm.PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo
+    if(handler!=null && handler.exported && (handler.permission==null || checkSelfPermission(handler.permission)==android.content.pm.PackageManager.PERMISSION_GRANTED)) {
+        try {startActivity(details.setComponent(ComponentName(handler.packageName,handler.name)));return true}
+        catch(_:ActivityNotFoundException) { /* The supported accessibility list remains available below. */ }
+        catch(_:SecurityException) { /* OEM service details may require additional system privileges. */ }
+    }
+    return try {startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS));true}
+    catch(_:ActivityNotFoundException) {false}
+    catch(_:SecurityException) {false}
+}
+
 @Composable internal fun MainActivity.Management(initialTab:String="Settings",onSetup:()->Unit,onGateway:()->Unit,onAdvancedControl:()->Unit) {
         val g=graph; val scope=rememberCoroutineScope()
+        val expanded=LocalExpandedLayout.current
         val health by g.health.collectAsState(); val shizuku by g.shizuku.status.collectAsState(); val direct by g.privileged.directStatus.collectAsState(); val connection by g.gateway.state.collectAsState()
         val controls by g.settings.controls.collectAsState()
         val connectionDetail by g.gateway.detail.collectAsState()
@@ -55,19 +76,56 @@ import kotlinx.serialization.json.*
         val listenerComponent=remember {ComponentName(this,dev.siconnect.app.notifications.NotificationCaptureService::class.java)}
         val listenerGranted=remember(accessRevision) {getSystemService(NotificationManager::class.java).isNotificationListenerAccessGranted(listenerComponent)}
         val semanticGranted=remember(accessRevision) {AndroidSettings.Secure.getString(contentResolver,AndroidSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':').any {ComponentName.unflattenFromString(it)==ComponentName(this,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)}}
-        var showTools by rememberSaveable {mutableStateOf(false)}
         var showConnectionDetails by rememberSaveable {mutableStateOf(false)}
         var tab by rememberSaveable { mutableStateOf(initialTab) }
+        var settingsPage by rememberSaveable {mutableStateOf<String?>(null)}
+        var settingsSearch by rememberSaveable {mutableStateOf("")}
+        val pageState=rememberSaveableStateHolder()
+        LaunchedEffect(expanded) {if(expanded && settingsPage==null && tab=="Settings") settingsPage="Connections"}
+        BackHandler(settingsPage!=null || tab!="Settings") {settingsPage=null;tab="Settings"}
         var refresh by remember { mutableIntStateOf(0) }; var message by remember { mutableStateOf("") }
+        var restoringScreenControl by rememberSaveable {mutableStateOf(false)}
+        LaunchedEffect(semanticConnected,restoringScreenControl) {
+            if(restoringScreenControl && semanticConnected) {
+                message="Screen control restored. Android has connected the SIConnect accessibility service."
+                restoringScreenControl=false
+            }
+        }
         var events by remember { mutableStateOf(emptyList<Event>()) }
         var skills by remember { mutableStateOf(emptyList<SkillDefinition>()) }
         var roots by remember { mutableStateOf(emptyList<DocumentRoot>()) }
         var capabilities by remember { mutableStateOf(emptyList<CapabilityStatus>()) }
+        var toolSearch by rememberSaveable {mutableStateOf("")}
+        var readyToolsOnly by rememberSaveable {mutableStateOf(false)}
         var skillJson by remember { mutableStateOf("") }
         var url by remember { mutableStateOf(g.settings.gateway.value.baseUrl) }
         var gatewaySecret by remember { mutableStateOf("") }
         var approve by remember { mutableStateOf<RequestRecord?>(null) }
-        fun action(block: suspend ()->Unit) { scope.launch { try { withContext(Dispatchers.IO) { g.ready.await(); block() }; refresh++ } catch(e: CancellationException) {throw e} catch(e: Exception) { message=e.message ?: e.javaClass.simpleName } } }
+        var busy by remember {mutableStateOf(false)}
+        var removeSkill by remember {mutableStateOf<SkillDefinition?>(null)}
+        fun action(block: suspend ()->Unit) {
+            if(busy) return
+            busy=true
+            scope.launch {
+                try {withContext(Dispatchers.IO) {g.ready.await();block()};refresh++}
+                catch(e:CancellationException) {throw e}
+                catch(e:Exception) {message=e.message ?: e.javaClass.simpleName}
+                finally {busy=false}
+            }
+        }
+        val exportDiagnostics=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-ndjson")) {uri->
+            if(uri==null) message="Export cancelled. No diagnostic file was written."
+            else action {
+                val records=g.events.query(limit=5000)
+                val output=requireNotNull(contentResolver.openOutputStream(uri,"wt")) {"The selected destination could not be opened"}
+                output.bufferedWriter(Charsets.UTF_8).use {writer->
+                    records.forEach {event->
+                        writer.appendLine(AppJson.encodeToString(Event.serializer(),event.copy(agentId=null,deviceId=null,detail=null)))
+                    }
+                }
+                message="Saved ${records.size} redacted diagnostic events to your selected file."
+            }
+        }
         LaunchedEffect(refresh,tab,health,shizuku,permissionRevision) {
             withContext(Dispatchers.IO) {
                 try {
@@ -82,61 +140,153 @@ import kotlinx.serialization.json.*
             }
         }
         LaunchedEffect(tab) { if(tab=="Diagnostics") g.engine.recordUpdates.collect { refresh++ } }
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Text(if(tab=="Settings") "Settings" else tab,style=MaterialTheme.typography.headlineMedium)
-            if(showTools) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        PageLayout {
+            PageHeader(if(expanded) "Settings" else if(tab=="Settings") settingsPage ?: "Settings" else tab,
+                if(settingsPage==null && tab=="Settings") "Make this phone work the way you want." else "Your phone’s access and preferences.") {
+                if(!expanded && (settingsPage!=null || tab!="Settings")) TextButton(onClick={settingsPage=null;tab="Settings"}) {Text("Back to settings")}
+            }
+            if(tab!="Settings") FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 listOf("Settings","Capabilities","Skills","Diagnostics").forEach {t->FilterChip(selected=tab==t,onClick={tab=t},label={Text(t)})}
             }
-            if(message.isNotBlank()) Text(message,Modifier.padding(vertical=8.dp))
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(message.isNotBlank()) Row(verticalAlignment=Alignment.CenterVertically) {
+                Text(message,Modifier.weight(1f).semantics {liveRegion=LiveRegionMode.Polite},style=MaterialTheme.typography.bodyMedium)
+                TextButton(onClick={message=""}) {Text("Dismiss")}
+            }
+            Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
+                if(expanded) Column(Modifier.width(190.dp).fillMaxHeight().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Text("PREFERENCES",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(12.dp))
+                    listOf("Connections","Android access","Connected folders","Background & timing","Appearance","Commute & weather","Storage & history","Private workspaces","Advanced connection","Developer tools").forEach {name->
+                        Surface(onClick={if(name=="Developer tools") {tab="Capabilities";settingsPage=null} else {tab="Settings";settingsPage=name}},
+                            shape=MaterialTheme.shapes.medium,color=if(settingsPage==name || (name=="Developer tools" && tab!="Settings")) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
+                            Text(name,Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=14.dp),style=MaterialTheme.typography.titleSmall)
+                        }
+                    }
+                }
+            pageState.SaveableStateProvider("$tab:${settingsPage ?: "overview"}") {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                if(expanded) SectionHeading(if(tab=="Settings") settingsPage ?: "All settings" else tab)
                 when(tab) {
-                    "Capabilities" -> capabilities.forEach { cap ->
-                        Text(cap.descriptor.id,style=MaterialTheme.typography.titleMedium)
-                        Text("${cap.availability} · ${cap.descriptor.backend} · ${cap.descriptor.interaction}")
-                        Text(cap.detail ?: cap.descriptor.description)
-                        if(cap.descriptor.permissions.isNotEmpty()) Text(cap.descriptor.permissions.joinToString())
-                        HorizontalDivider()
+                    "Capabilities" -> {
+                        OutlinedTextField(toolSearch,{toolSearch=it},label={Text("Search tools")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                        FilterChip(readyToolsOnly,{readyToolsOnly=!readyToolsOnly},label={Text("Ready to use")})
+                        val shown=capabilities.filter {(!readyToolsOnly || it.availability.isExecutable) &&
+                            (it.descriptor.id+" "+it.descriptor.title+" "+it.descriptor.description).contains(toolSearch,true)}
+                        Text("${shown.size} of ${capabilities.size} tools",style=MaterialTheme.typography.labelMedium)
+                        shown.forEach {cap->Panel {
+                            Text(cap.descriptor.title,style=MaterialTheme.typography.titleMedium)
+                            StatusPill(if(cap.availability.isExecutable) "Ready" else cap.availability.name.lowercase().replace('_',' '),if(cap.availability.isExecutable) StatusTone.GOOD else StatusTone.ATTENTION)
+                            Text(cap.detail ?: cap.descriptor.description,style=MaterialTheme.typography.bodyMedium)
+                            Text(cap.descriptor.id,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }}
+                        if(shown.isEmpty()) EmptyState("No matching tools","Try another search or turn off the ready filter.")
                     }
                     "Skills" -> {
-                        OutlinedTextField(skillJson,{skillJson=it},label={Text("Install JSON skill")},modifier=Modifier.fillMaxWidth(),maxLines=8)
-                        Button(onClick={val definition=skillJson;ownerAuthentication.authenticate("Install workflow",{action {g.skills.install(SkillJson.parse(definition));message="Skill validated and installed"}},{message=it})},enabled=skillJson.isNotBlank()) { Text("Validate and install") }
-                        skills.forEach { def ->
-                            Text("${def.id} v${def.version} · ${def.steps.size} steps")
-                            Row { Button(onClick={ownerAuthentication.authenticate("Run owner workflow",{action {val id="skill:${java.util.UUID.randomUUID()}";val r=g.runner.start(def,JsonObject(emptyMap()),ExecutionContext(id,id,"local-owner",g.settings.deviceId),Origin.LOCAL_OWNER);message="${r.runId}: ${r.state}"}},{message=it})}) { Text("Run") }
-                                val enabled=g.skills.isEnabled(def.id)
-                                TextButton(onClick={if(enabled) action {g.skills.enable(def.id,false)} else ownerAuthentication.authenticate("Enable skill",{action {g.skills.enable(def.id,true)}},{message=it})}) {Text(if(enabled) "Disable" else "Enable")}
-                                TextButton(onClick={ action { g.skills.remove(def.id) } }) { Text("Remove") } }
+                        ExpandablePanel("Install a workflow","Paste a definition, then validate it before installation") {
+                            OutlinedTextField(skillJson,{skillJson=it},label={Text("Workflow JSON")},modifier=Modifier.fillMaxWidth(),maxLines=10,enabled=!busy)
+                            Button(onClick={
+                                val definition=skillJson
+                                ownerAuthentication.authenticate("Install workflow",{action {g.skills.install(SkillJson.parse(definition));message="Workflow validated and installed"}},{message=it})
+                            },enabled=!busy && skillJson.isNotBlank()) {Text("Validate and install")}
+                        }
+                        SectionHeading("Installed workflows")
+                        if(skills.isEmpty()) EmptyState("No workflows installed","Install a validated definition to make it available for local automation.")
+                        skills.forEach {def->
+                            val enabled=g.skills.isEnabled(def.id)
+                            Panel {
+                                Text(def.id.replace('.',' ').replace('_',' ').replaceFirstChar {it.uppercase()},style=MaterialTheme.typography.titleMedium)
+                                StatusPill(if(enabled) "Enabled" else "Disabled",if(enabled) StatusTone.GOOD else StatusTone.NEUTRAL)
+                                Text(def.description,style=MaterialTheme.typography.bodyMedium)
+                                Text("Version ${def.version} · ${def.steps.size} steps",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick={ownerAuthentication.authenticate("Run owner workflow",{action {
+                                        val id="skill:${java.util.UUID.randomUUID()}"
+                                        val r=g.runner.start(def,JsonObject(emptyMap()),ExecutionContext(id,id,"local-owner",g.settings.deviceId),Origin.LOCAL_OWNER)
+                                        message="${r.runId}: ${r.state}"
+                                    }},{message=it})},enabled=!busy && enabled) {Text("Run once")}
+                                    OutlinedButton(onClick={if(enabled) action {g.skills.enable(def.id,false)} else ownerAuthentication.authenticate("Enable workflow",{action {g.skills.enable(def.id,true)}},{message=it})},enabled=!busy) {Text(if(enabled) "Disable" else "Enable")}
+                                    TextButton(onClick={removeSkill=def},enabled=!busy) {Text("Remove",color=MaterialTheme.colorScheme.error)}
+                                }
+                            }
                         }
                     }
                     "Diagnostics" -> {
-                        OutlinedButton(onClick={action {
-                            val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime",arguments=buildJsonObject {put("checkDatabase",true)}),Origin.LOCAL_OWNER)
-                            require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Database check could not complete"}
-                            message="Live database integrity: "+r.result!!.output.jsonObject.getValue("databaseIntegrity").jsonPrimitive.content
-                        }}) {Text("Check database health")}
-                        Button(onClick={ action {
-                            val file=java.io.File(noBackupFilesDir,"diagnostics.jsonl")
-                            file.writeText(g.events.query(limit=5000).joinToString("\n") { e -> AppJson.encodeToString(Event.serializer(),e.copy(agentId=null,deviceId=null,detail=null)) })
-                            message="Redacted export saved privately to no_backup/diagnostics.jsonl; retrieve using run-as in debug builds"
-                        } }) { Text("Export redacted JSONL") }
-                        Text(g.gateway.detail.collectAsState().value)
-                        events.forEach { e -> Text("${e.eventType} · ${e.capabilityId ?: "connection"} · ${e.executionStatus ?: ""}\n${e.errorCode ?: ""} ${e.requestId ?: ""}") }
+                        Panel {
+                            Text("Runtime & storage",style=MaterialTheme.typography.titleMedium)
+                            Text(connectionDetail,style=MaterialTheme.typography.bodyMedium)
+                            OutlinedButton(onClick={action {
+                                val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime",arguments=buildJsonObject {put("checkDatabase",true)}),Origin.LOCAL_OWNER)
+                                require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Database check could not complete"}
+                                message="Live database integrity: "+r.result!!.output.jsonObject.getValue("databaseIntegrity").jsonPrimitive.content
+                            }},enabled=!busy) {Text("Check database health")}
+                        }
+                        Panel {
+                            Text("Export diagnostics",style=MaterialTheme.typography.titleMedium)
+                            Text("Choose where to save up to 5,000 events. Agent identities, device identity, and event details are removed from this export.",style=MaterialTheme.typography.bodyMedium)
+                            Button(onClick={ownerAuthentication.authenticate("Save redacted diagnostics",{exportDiagnostics.launch("siconnect-diagnostics.jsonl")},{message=it})},enabled=!busy) {Text("Save redacted diagnostics")}
+                        }
+                        SectionHeading("Recent diagnostic events")
+                        if(events.isEmpty()) EmptyState("No retained events","New runtime and connection events will appear here.")
+                        events.forEach {event->Panel {
+                            Text(event.eventType.replace('.',' '),style=MaterialTheme.typography.titleSmall)
+                            Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.MEDIUM).format(java.util.Date(event.timestampMs)),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            event.capabilityId?.let {Text(it,style=MaterialTheme.typography.bodySmall)}
+                            event.errorCode?.let {Text(it,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}
+                            event.executionStatus?.let {Text(it.toString(),style=MaterialTheme.typography.bodySmall)}
+                        }}
                     }
                     "Settings" -> {
-                        SettingsAccessItem("Gateway",if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected" else connectionDetail,"Manage",onGateway)
+                        if(settingsPage==null) {
+                            OutlinedTextField(settingsSearch,{settingsSearch=it},label={Text("Find a setting")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                            val categories=listOf(
+                                Triple("Connections","Gateway, agents, and advanced device control",R.drawable.ic_nav_agents),
+                                Triple("Android access","Screen, notifications, and calendar",R.drawable.ic_nav_settings),
+                                Triple("Connected folders","Choose documents your agents can use",R.drawable.ic_nav_home),
+                                Triple("Background & timing","Battery access and precise reminders",R.drawable.ic_nav_automations),
+                                Triple("Appearance","System, light, or dark theme",R.drawable.ic_nav_settings),
+                                Triple("Commute & weather","Destinations, travel timing, and forecasts",R.drawable.ic_nav_automations),
+                                Triple("Storage & history","Execution history and payload retention",R.drawable.ic_nav_activity),
+                                Triple("Private workspaces","Manage apps running on private displays",R.drawable.ic_nav_home),
+                                Triple("Advanced connection","Backend selection and manual configuration",R.drawable.ic_nav_settings),
+                                Triple("Developer tools","Tool catalog, workflows, and diagnostics",R.drawable.ic_nav_activity),
+                            ).filter {(title,description,_)->settingsSearch.isBlank() || "$title $description".contains(settingsSearch,true)}
+                            if(categories.isEmpty()) EmptyState("No matching settings","Try a different word, such as notifications, theme, or gateway.")
+                            BoxWithConstraints {
+                                val twoColumns=maxWidth>=560.dp
+                                Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                                    categories.chunked(if(twoColumns) 2 else 1).forEach {row->
+                                        Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                                            row.forEach {(title,description,icon)->NavigationCard(title,description,{
+                                                if(title=="Developer tools") {tab="Capabilities"} else settingsPage=title
+                                            },Modifier.weight(1f),icon)}
+                                            if(twoColumns && row.size==1) Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                            }
+                            OutlinedButton(onClick=onSetup) {Text("Guided setup & verification")}
+                        }
+                        if(settingsPage=="Connections") {
+                            SettingsAccessItem("Gateway",if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected" else connectionDetail,"Manage",onGateway)
                         SettingsAccessItem("Advanced device control",if(g.privileged.available()) "Available · ${if(g.settings.privilegeBackend=="direct") "bundled service" else "Shizuku"}" else "Optional · setup or recovery needed","Open",onAdvancedControl)
-                        TextButton(onClick=onSetup) {Text("Guided setup and verification")}
-                        Text("Android access",style=MaterialTheme.typography.titleLarge)
-                        Text("Access belongs to this phone. Agent permissions are managed separately in Agents.",style=MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick=onSetup) {Text("Guided setup and verification")}
+
+                        }
+                        if(settingsPage=="Android access") {
+                            Text("Access belongs to this phone. Agent permissions are managed separately in Agents.",style=MaterialTheme.typography.bodySmall)
                         if(permissionStatus.isNotBlank()) Text(permissionStatus)
                         SettingsAccessItem("Approval and reminder alerts",if(notificationsEnabled) "Allowed" else "Off",if(notificationsEnabled) "Manage" else "Enable",{
                             if(!notificationsEnabled && android.os.Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
                                 requestNativeAccess(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
                             else startActivity(Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(AndroidSettings.EXTRA_APP_PACKAGE,packageName))
                         })
-                        SettingsAccessItem("Screen control",if(semanticConnected) "Connected" else if(semanticGranted) "Enabled · service disconnected" else "Not enabled",if(semanticGranted) "Manage" else "Enable",{
-                            startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
-                        },if(semanticGranted && !semanticConnected) "Android has enabled access but disconnected the service. Turn SIConnect off and on in Accessibility settings." else null)
+                        SettingsAccessItem("Screen control",if(semanticConnected) "Connected" else if(semanticGranted) "Enabled · service disconnected" else "Not enabled",if(semanticGranted && !semanticConnected) "Restore connection" else if(semanticGranted) "Manage" else "Enable",{
+                            val restore=semanticGranted && !semanticConnected
+                            if(openScreenControlSettings()) {
+                                restoringScreenControl=restore
+                                if(restore) message="In Android Accessibility settings, open SIConnect, turn its service off, then on. Return here to verify the connection."
+                            } else message="Android could not open Accessibility settings. Open your phone’s Settings, then Accessibility, and select SIConnect."
+                        },if(semanticGranted && !semanticConnected) "Android has retained your permission, but the service is disconnected. Restore connection opens Android settings: select SIConnect, turn its service off, then on. This status changes to Connected only when Android reconnects it." else null)
                         SettingsAccessItem("Notification actions",if(listenerConnected) "Connected" else if(listenerGranted) "Allowed · service disconnected" else "Not enabled",if(listenerGranted && !listenerConnected) "Reconnect" else if(listenerGranted) "Manage" else "Enable",{
                             if(listenerGranted && !listenerConnected) {
                                 android.service.notification.NotificationListenerService.requestRebind(listenerComponent)
@@ -148,24 +298,52 @@ import kotlinx.serialization.json.*
                             if(calendarGranted) startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))
                             else requestNativeAccess(arrayOf(Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR))
                         })
-                        Text("Connected folders",style=MaterialTheme.typography.titleMedium)
+
+                        }
+                        if(settingsPage=="Connected folders") {
+                            Text("Connected folders",style=MaterialTheme.typography.titleMedium)
                         Text(if(roots.isEmpty()) "No folders selected. Android lets you choose shared folders; protected app storage is excluded." else "${roots.size} selected. Android access and each agent’s document grant are required.",style=MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick={ownerAuthentication.authenticate("Connect document folder",{documentPicker.launch(null)},{documentStatus=it})}) {Text("Choose folder")}
                         if(documentStatus.isNotBlank()) Text(documentStatus)
                         roots.forEach {root->SettingsAccessItem(root.label,"Selected folder","Disconnect",{action {DocumentRoots(this@Management,g.db).remove(root.id);g.gateway.refreshCatalog();documentStatus="";message="Folder access removed"}})}
-                        val exact=g.reminders.canScheduleExact()
+
+                        }
+                        if(settingsPage=="Background & timing") {
+                            val exact=g.reminders.canScheduleExact()
                         SettingsAccessItem("Precise reminders",if(exact) "Allowed" else "Flexible timing available","Manage",{startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))})
                         val batteryExempt=getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
                         SettingsAccessItem("Background operation",if(batteryExempt) "Battery exemption allowed" else "Android battery optimization applies","Manage",{startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))})
-                        Text("Appearance",style=MaterialTheme.typography.titleMedium)
+
+                        }
+                        if(settingsPage=="Appearance") {
+                            Text("Choose your appearance",style=MaterialTheme.typography.titleMedium)
+                        Text("Changes apply immediately across the app and are saved on this phone.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         val appearance by g.settings.appearance.collectAsState()
                         FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             listOf("SYSTEM" to "System","LIGHT" to "Light","DARK" to "Dark").forEach {(value,label)->FilterChip(selected=appearance==value,onClick={g.settings.setAppearance(value)},label={Text(label)})}
                         }
-                        CommuteSettings()
-                        StorageSettings()
-                        PrivateWorkspaceSettings()
-                        TextButton(onClick={showConnectionDetails=!showConnectionDetails}) {Text(if(showConnectionDetails) "Hide advanced connection settings" else "Advanced connection settings")}
+
+                        }
+                        if(settingsPage=="Appearance") Panel {
+                            StatusPill("Live appearance",StatusTone.GOOD)
+                            Text("Your control center",style=MaterialTheme.typography.titleLarge)
+                            Text("Cards, status labels, and controls use your selected theme. System follows Android’s appearance.",style=MaterialTheme.typography.bodyMedium)
+                            OutlinedButton(onClick={g.settings.setAppearance("SYSTEM")}) {Text("Follow Android appearance")}
+                        }
+                        if(settingsPage=="Commute & weather") {
+                            CommuteSettings()
+
+                        }
+                        if(settingsPage=="Storage & history") {
+                            StorageSettings()
+
+                        }
+                        if(settingsPage=="Private workspaces") {
+                            PrivateWorkspaceSettings()
+
+                        }
+                        if(settingsPage=="Advanced connection") {
+                            TextButton(onClick={showConnectionDetails=!showConnectionDetails}) {Text(if(showConnectionDetails) "Hide advanced connection settings" else "Advanced connection settings")}
                         if(showConnectionDetails) {
                             Row(verticalAlignment=Alignment.CenterVertically) {Text("Route privileged requests",Modifier.weight(1f));Switch(controls.privilegedEnabled,{enabled->
                                 if(enabled) ownerAuthentication.authenticate("Enable privileged execution",{g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=true))},{message=it})
@@ -192,13 +370,25 @@ import kotlinx.serialization.json.*
                             TextButton(onClick={g.settings.setGateway(g.settings.gateway.value.copy(enabled=false));stopService(Intent(this@Management,ConnectionService::class.java))}) {Text("Disconnect gateway")}
                             if(BuildConfig.DEBUG) TextButton(onClick={ownerAuthentication.authenticate("Rotate development credential",{action {g.createDevelopmentAgent();message="Development credential rotated"}},{message=it})}) {Text("Rotate development credential")}
                         }
-                        TextButton(onClick={showTools=!showTools}) {Text(if(showTools) "Hide advanced tools" else "Advanced tools")}
+
+                        }
                         Text("Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",style=MaterialTheme.typography.bodySmall)
 
                     }
                 }
             }
+            }
+            }
             if(tab!="Settings") TextButton(onClick={refresh++}) { Text("Refresh") }
+        }
+        removeSkill?.let {definition->
+            AlertDialog(onDismissRequest={removeSkill=null},title={Text("Remove this workflow?")},
+                text={Text("${definition.id} will no longer be available for new runs. Saved schedules and already running executions are managed separately in Automations.")},
+                confirmButton={TextButton(onClick={removeSkill=null;action {
+                    require(g.skills.all(includeDisabled=true).firstOrNull {it.id==definition.id}==definition) {"Workflow changed. Review it again before removing."}
+                    g.skills.remove(definition.id);message="Workflow removed"
+                }},enabled=!busy) {Text("Remove workflow")}},
+                dismissButton={TextButton(onClick={removeSkill=null}) {Text("Keep workflow")}})
         }
         approve?.let { r -> OwnerApprovalDialog(r,error=message,onClose={approve=null},onDeny={action {approve=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
             ownerAuthentication.authenticate("Approve ${r.capabilityId}",{

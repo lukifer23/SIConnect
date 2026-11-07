@@ -123,6 +123,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
 
     @Composable private fun Home() {
         val g=graph
+        var activityUsesPane by remember {mutableStateOf(false)}
         val scope=rememberCoroutineScope()
         val config by g.settings.gateway.collectAsState()
         val connection by g.gateway.state.collectAsState()
@@ -156,13 +157,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         LaunchedEffect(snapshot.error) {snapshot.error?.let {note=it}}
         var measurements by remember {mutableStateOf<JsonObject?>(null)}
         var busy by remember { mutableStateOf(false) }
-        var setup by remember { mutableStateOf(false) }
+        var setup by rememberSaveable { mutableStateOf(false) }
         var controlHelp by rememberSaveable { mutableStateOf(false) }
         var nativeSetup by rememberSaveable {mutableStateOf(!getSharedPreferences("owner_setup",MODE_PRIVATE).getBoolean("reviewed",false) && g.settings.gateway.value.baseUrl.isBlank())}
         var connectionCode by remember { mutableStateOf("") }
-        var pairName by remember { mutableStateOf("Dots") }
+        var pairName by rememberSaveable { mutableStateOf("Dots") }
         var pairError by remember { mutableStateOf("") }
-        var pairDialog by remember { mutableStateOf(false) }
+        var pairDialog by rememberSaveable { mutableStateOf(false) }
         var pairCode by remember { mutableStateOf<dev.siconnect.app.transport.PairingInvitation?>(null) }
         var hasBotKey by remember { mutableStateOf(false) }
         var legacyCredential by remember {mutableStateOf(false)}
@@ -183,8 +184,11 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
         var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
         var review by remember { mutableStateOf<RequestRecord?>(null) }
+        var inspectedId by rememberSaveable {mutableStateOf<String?>(null)}
         var inspected by remember { mutableStateOf<RequestRecord?>(null) }
         var inspectedEvents by remember { mutableStateOf(emptyList<Event>()) }
+        fun closeInspection() {inspectedId=null;inspected=null;inspectedEvents=emptyList()}
+        fun inspectRequest(id:String) {inspected=null;inspectedEvents=emptyList();inspectedId=id}
         val bots=snapshot.agents.filterNot {it.grant.agentId.startsWith("local-")}
         val labels=snapshot.agents.associate {it.grant.agentId to botDisplayName(it,snapshot.agents)}
         val reminders=snapshot.reminders
@@ -206,19 +210,21 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             if(target!=null) {
                 val stored=withContext(Dispatchers.IO) { g.ready.await();g.requests.get(target) }
                 if(stored!=null) {
-                    destination=Destination.HOME;advanced=false;reviewId=stored.requestId;review=stored
+                    closeInspection();destination=Destination.HOME;advanced=false;reviewId=stored.requestId;review=stored
                     // Consume this delivery, not the request identity: a later notification tap
                     // must reopen the same action, including its resolved/expired result.
                     intent.removeExtra("requestId")
                 }
             }
         }
-        LaunchedEffect(inspected?.requestId,snapshot.revision) {
-            val id=inspected?.requestId
-            if(id!=null) withContext(Dispatchers.IO) {
-                inspected=g.requests.get(id)
-                inspectedEvents=g.events.query(requestId=id,limit=30)
-            } else inspectedEvents=emptyList()
+        LaunchedEffect(inspectedId,snapshot.revision,connectionHistoryRevision) {
+            val id=inspectedId
+            if(id==null) {inspected=null;inspectedEvents=emptyList()}
+            else try {
+                val loaded=withContext(Dispatchers.IO) {g.ready.await();g.requests.get(id) to g.events.query(requestId=id,limit=30)}
+                if(inspectedId==id) {inspected=loaded.first;inspectedEvents=loaded.second}
+            } catch(e:CancellationException) {throw e}
+              catch(_:Exception) {if(inspectedId==id) note="Could not load this action. Its saved record is unchanged."}
         }
         LaunchedEffect(pairDialog) { if(pairDialog) withContext(Dispatchers.IO) {
             g.ready.await();pairCode=g.settings.pendingPairing();pairCode?.let {pairName=it.label}
@@ -233,10 +239,41 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(clip)
             note=if(secret) "Bot key copied. Paste it into your bot's secure token field." else "MCP address copied."
         }
-        ControlCenterNavigation(destination,{destination=it},snackbarHostState) {wide ->
+        @Composable fun resultDetails(r:RequestRecord) {
+            val privatePackage=(r.arguments["packageName"] as? JsonPrimitive)?.contentOrNull?.takeIf {
+                r.state==RequestState.DENIED && r.capabilityId=="headless.open" && r.policy?.rule in setOf("agent_scope","agent_denylist") && bots.any {bot->bot.grant.agentId==r.agentId && !bot.grant.revoked}
+            }
+            val privateLabel by produceState(privatePackage,privatePackage) {
+                value=privatePackage?.let {pkg->withContext(Dispatchers.IO) {runCatching {packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg,0)).toString()}.getOrDefault(pkg)}}
+            }
+            key(r.requestId) {RequestDetails(r,labels[r.agentId] ?: "Agent",inspectedEvents,
+                r.state==RequestState.DENIED && r.policy?.rule in setOf("agent_scope","agent_denylist") && bots.any {it.grant.agentId==r.agentId},busy,
+                onPermissions={closeInspection();activity=false;note="";selectedAgentId=r.agentId;destination=Destination.AGENTS},
+                onCancel={ownerAuthentication.authenticate("Cancel active request",{work {
+                    val cancelled=g.engine.cancel(r.requestId,"local-owner")
+                    withContext(Dispatchers.Main) {if(inspectedId==r.requestId) inspected=cancelled}
+                    note="Cancellation requested. Review the recorded outcome before repeating the action."
+                }},{note=it})},privateApp=privateLabel,onAllowPrivateApp={
+                    val pkg=privatePackage
+                    if(pkg!=null) {
+                        val backend=g.privileged.kind
+                        ownerAuthentication.authenticate("Allow private access for ${privateLabel ?: pkg}",{if(inspectedId==r.requestId) work {
+                            val stored=requireNotNull(g.requests.get(r.requestId)) {"This request is no longer available; review current agent permissions."}
+                            require(stored.agentId==r.agentId && stored.state==RequestState.DENIED && stored.capabilityId=="headless.open" && stored.argsHash==r.argsHash && (stored.arguments["packageName"] as? JsonPrimitive)?.contentOrNull==pkg) {"The request changed; review it again."}
+                            g.enablePrivateAppAccessFromOwner(r.agentId,pkg,backend)
+                            withContext(Dispatchers.Main) {closeInspection();note="Private app access saved. Ask this agent to submit a fresh request; the earlier blocked action has not been rerun."}
+                        }},{note=it})
+                    }
+                })}
+        }
+        ControlCenterNavigation(destination,{next->
+            if(destination==Destination.ACTIVITY && activityUsesPane) closeInspection()
+            destination=next
+        },snackbarHostState) {wide ->
+            SideEffect {activityUsesPane=wide}
             when(destination) {
                 Destination.HOME -> HomeDashboard(snapshot,wide,connection,connectionDetail,health.startsWith("Ready"),g.privileged.available(),controls,
-                    measurements,busy,onReview={reviewId=it.requestId;review=it},onRequest={id->work {inspected=g.requests.get(id)}},
+                    measurements,busy,onReview={reviewId=it.requestId;review=it},onRequest={id->inspectRequest(id)},
                     onAgent={selectedAgentId=it;destination=Destination.AGENTS},onAgents={destination=Destination.AGENTS},
                     onConnect={setup=true},onRestore={controlHelp=true},onAutomations={destination=Destination.AUTOMATIONS},onActivity={destination=Destination.ACTIVITY},
                     onHealth={work {val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime"),Origin.LOCAL_OWNER);require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Health unavailable"};measurements=r.result!!.output.jsonObject}},
@@ -249,7 +286,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                         val apply={work {g.setCapabilityFamilyFromOwner(id,family,enabled)}}
                         if(enabled) ownerAuthentication.authenticate("Allow $family access",apply,{note=it}) else apply()
                     },onShell={allowBot=it},onReconnect={bot->ownerAuthentication.authenticate("Reconnect selected identity",{work {pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label;pairDialog=true}},{note=it})},
-                    onRevoke={bot->work {g.revokeAgentFromOwner(bot.grant.agentId)}},onRequest={id->work {inspected=g.requests.get(id)}},
+                    onRevoke={bot->work {g.revokeAgentFromOwner(bot.grant.agentId)}},onRequest={id->inspectRequest(id)},
                     onSemanticApp={id,pkg,enabled->
                         val apply={work {g.setSemanticPackagePermissionFromOwner(id,pkg,enabled)}}
                         if(enabled) ownerAuthentication.authenticate("Allow screen actions in $pkg",apply,{note=it}) else apply()
@@ -260,24 +297,41 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     },onSharedScreen={id,allowed->
                         val apply={work {g.setSharedScreenPermissionFromOwner(id,allowed)}}
                         if(allowed) ownerAuthentication.authenticate("Allow shared-screen actions",apply,{note=it}) else apply()
-                    })
-                Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier.padding(16.dp))
-                Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id}) {id->work {inspected=g.requests.get(id)}}
+                    },onFullControl={agent,enabled->
+                        val apply={work {
+                            g.setFullAccessFromOwner(agent.grant.agentId,enabled)
+                            if(enabled) {
+                                val continuation=runCatching {g.resumeEligiblePendingForFullAccessFromOwner(agent.grant.agentId)}
+                                    .onFailure {if(it is CancellationException) throw it}
+                                note=continuation.fold(
+                                    onSuccess={result->"Full control saved. Rechecked ${result.examined} waiting requests; ${result.records.size} continued with their original identities. ${if(result.morePending) "More waiting work remains in Activity." else "Review outcomes in Activity."}"},
+                                    onFailure={"Full control saved. Some waiting work could not continue; review Activity before retrying."})
+                            } else note="Previous custom permissions restored."
+                        }}
+                        if(enabled) ownerAuthentication.authenticate("Enable full control for ${botDisplayName(agent,bots)}",apply,{note=it}) else apply()
+                    },busy=busy,onInitialAgentConsumed={selectedAgentId=null})
+                Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier)
+                Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id},detail={
+                    inspected?.let {r->
+                        SectionHeading(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId,"Close",{closeInspection()})
+                        resultDetails(r)
+                    } ?: EmptyState("Select an action","Keep your activity list in view while you inspect a result and its audit trail.")
+                }) {id->inspectRequest(id)}
                 Destination.SETTINGS -> Management("Settings",onSetup={nativeSetup=true},onGateway={setup=true},onAdvancedControl={controlHelp=true})
             }
         }
-        if(activity) ActivityDialog(g.requests,snapshot.revision,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> work {inspected=g.requests.get(id)}})
+        if(activity) ActivityDialog(g.requests,snapshot.revision,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> inspectRequest(id)})
         if(inbox) ActionInbox(g,snapshot.revision,{title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onClose={inbox=false},onRequest={id->work {
             val r=requireNotNull(g.requests.get(id));inbox=false
-            if(r.state==RequestState.AWAITING_APPROVAL) {reviewId=id;review=r} else inspected=r
+            if(r.state==RequestState.AWAITING_APPROVAL) {reviewId=id;review=r} else inspectRequest(id)
         }})
         if(nativeSetup) NativeSetup(onClose={nativeSetup=false},onGateway={nativeSetup=false;setup=true},onAgents={nativeSetup=false;destination=Destination.AGENTS},onAdvanced={nativeSetup=false;controlHelp=true})
         if(controlHelp) AdvancedControlSetup {controlHelp=false}
-        if(setup) AlertDialog(onDismissRequest={setup=false;connectionCode=""},title={Text("Gateway connection")},text={Column(
+        if(setup) AlertDialog(onDismissRequest={setup=false;connectionCode=""},title={Text("Your connection")},text={Column(
             Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),
             verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Connected. This phone can receive authorized agent requests." else connectionDetail)
-            Text("Disconnecting closes the remote bridge. Already dispatched actions and local schedules continue; cancel an active request separately in Activity.",style=MaterialTheme.typography.bodySmall)
+            StatusPill(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Gateway connected" else "Gateway offline",if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) StatusTone.GOOD else StatusTone.ATTENTION)
+            Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Your agents can securely reach this phone." else connectionDetail,style=MaterialTheme.typography.bodyLarge)
             if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE && config.enabled)
                 Text("Native schedules continue using available Android access. Interrupted actions are not automatically resubmitted.",style=MaterialTheme.typography.bodySmall)
             TextButton(onClick={showConnectionHistory=!showConnectionHistory}) {Text(if(showConnectionHistory) "Hide connection history" else "Connection history")}
@@ -298,6 +352,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Text("Stored on this phone under the existing event retention policy. Pairing codes and credentials are excluded.",style=MaterialTheme.typography.bodySmall)
             }
             if(config.baseUrl.isNotBlank()) {
+                Text("Agent connection address",style=MaterialTheme.typography.titleSmall)
                 Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) {Text("Copy MCP address")}
                 if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE) Button(onClick={
@@ -312,6 +367,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     withContext(Dispatchers.Main) {stopService(Intent(this@MainActivity,ConnectionService::class.java))}
                     gatewayError=""
                 }},enabled=!busy) {Text("Disconnect remote gateway")}
+                Text("Disconnecting keeps your agents and credentials. Running actions and local schedules continue.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick={setup=false;destination=Destination.AGENTS}) {Text("Manage AI agents")}
                 TextButton(onClick={replaceGateway=!replaceGateway}) {Text(if(replaceGateway) "Keep existing gateway" else "Use a different gateway")}
             }
@@ -342,7 +398,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 }
             }
         }},confirmButton={TextButton(onClick={setup=false;connectionCode="";gatewayError=""}) {Text("Done")}})
-        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair a new bot" else "Continue pairing ${pairCode!!.label}")},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair an agent" else "Connect ${pairCode!!.label}")},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
             if(pairCode==null) {
@@ -372,34 +428,17 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 if(reviewId==r.requestId) work {review=g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
             },{note=it})
         }) }
-        inspected?.let { r -> AlertDialog(onDismissRequest={inspected=null},title={Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId)},
-            text={Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                Text("${actionStateLabel(r.state)} · ${labels[r.agentId] ?: r.agentId}")
-                r.policy?.let {Text(it.reason)}
-                if(r.state==RequestState.DENIED && r.policy?.rule in setOf("agent_scope","agent_denylist") && bots.any {it.grant.agentId==r.agentId}) {
-                    Button(onClick={inspected=null;activity=false;note="";selectedAgentId=r.agentId;destination=Destination.AGENTS}) {Text("Review this bot’s permissions")}
-                }
-                Text("Request: ${r.requestId}\nBackend: ${r.result?.backend ?: r.selectedBackend ?: "not executed"}")
-                r.assessment?.shellCommand?.let { Text(it) }
-                r.errorMessage?.let { Text(it) }
-                if(!r.state.isTerminal) {
-                    Text("Cancellation asks the executing backend to stop. A side effect may already have happened; an uncertain outcome remains recorded.",style=MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick={ownerAuthentication.authenticate("Cancel active request",{work {
-                        inspected=g.engine.cancel(r.requestId,"local-owner")
-                        note="Cancellation requested. Review the recorded outcome before repeating the action."
-                    }},{note=it})},enabled=!busy) {Text("Cancel this request")}
-                }
-                r.result?.let { Text(it.output.toString(),style=MaterialTheme.typography.bodySmall) }
-                HorizontalDivider(); Text("Audit trail",style=MaterialTheme.typography.titleMedium)
-                inspectedEvents.reversed().forEach { Text("${it.eventType} · ${it.policyDecision ?: it.executionStatus ?: it.errorCode ?: ""}",style=MaterialTheme.typography.bodySmall) }
-            }},confirmButton={TextButton(onClick={inspected=null}) { Text("Close") }}) }
+        if(destination!=Destination.ACTIVITY || !activityUsesPane) inspected?.let {r->
+            AlertDialog(onDismissRequest={closeInspection()},title={Text(g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId)},
+                text={Box(Modifier.heightIn(max=480.dp)) {resultDetails(r)}},confirmButton={TextButton(onClick={closeInspection()}) {Text("Close")}})
+        }
         allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,error=note,onClose={allowBot=null},onReduce={work {g.setShellPermissionFromOwner(a.grant.agentId,false);allowBot=g.agents.get(a.grant.agentId)}},onAllow={
             ownerAuthentication.authenticate("Always allow device control",{
                 if(allowBot?.grant?.agentId==a.grant.agentId) work {g.setShellPermissionFromOwner(a.grant.agentId,true);allowBot=g.agents.get(a.grant.agentId);note="Always allowed. Saved on this phone until you revoke it."}
             },{note=it})
         }) }
         reminder?.let { r -> AlertDialog(onDismissRequest={reminder=null},title={Text(r.title)},
-            text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                 Text(r.text)
                 Text(java.time.Instant.ofEpochMilli(r.fireAtMs).atZone(java.time.ZoneId.systemDefault()).toString())
                 Text(if(r.exact) "Precise timing through Android AlarmManager" else "Flexible timing through Android WorkManager")

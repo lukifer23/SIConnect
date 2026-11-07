@@ -87,11 +87,12 @@ import kotlinx.coroutines.*
                     labels.forEach {(id,_)->DropdownMenuItem(text={Text(name(id))},onClick={agent=id;reset();agentsOpen=false})}
                 }}
                 TextButton(onClick={oldest=!oldest;reset()}) {Text(if(oldest) "Oldest first" else "Newest first")}
-                if(!loading && rows.isEmpty()) Text("No proposals match this page.")
+                if(!loading && rows.isEmpty()) EmptyState("No suggestions here","Agent follow-ups appear here for you to review. Try another status to see past suggestions.")
                 rows.forEach {row->OutlinedCard(onClick={selected=row.proposalId;error=""},modifier=Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                         Text(row.title,style=MaterialTheme.typography.titleMedium)
-                        Text("${name(row.agentId)} · ${proposalStateLabel(row.state,row.requestState)}")
+                        Text(name(row.agentId),style=MaterialTheme.typography.bodySmall)
+                        StatusPill(proposalStateLabel(row.state,row.requestState))
                         Text("${row.risk.name.replace('_',' ')} · ${java.util.Date(row.createdAtMs)}",style=MaterialTheme.typography.bodySmall)
                         Text(row.summary,maxLines=3)
                     }

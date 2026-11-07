@@ -38,7 +38,11 @@ import kotlinx.coroutines.*
     val recovery by bootstrap.recovery.collectAsState()
     var configureRecovery by rememberSaveable {mutableStateOf(false)}
     var pairAgain by rememberSaveable {mutableStateOf(false)}
-    LaunchedEffect(state.phase) {if(state.phase==BootstrapPhase.PRIVILEGED_READY) {pairAgain=false;configureRecovery=false}}
+    var previousPhase by remember {mutableStateOf(state.phase)}
+    LaunchedEffect(state.phase) {
+        if(state.phase==BootstrapPhase.PRIVILEGED_READY && previousPhase!=BootstrapPhase.PRIVILEGED_READY) {pairAgain=false;configureRecovery=false}
+        previousPhase=state.phase
+    }
     DisposableEffect(Unit) {onDispose {active=false;generation++}}
     LaunchedEffect(permissionRevision) {bootstrap.refresh()}
     fun authorize(title:String,action:()->Unit) {
@@ -57,7 +61,7 @@ import kotlinx.coroutines.*
     Dialog(onDismissRequest=onClose,properties=DialogProperties(usePlatformDefaultWidth=false)) {
         Surface(Modifier.widthIn(max=600.dp).fillMaxWidth().fillMaxHeight(.94f).safeDrawingPadding().imePadding(),shape=MaterialTheme.shapes.large) {
             Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                Text("Advanced device control",style=MaterialTheme.typography.headlineSmall)
+                PageHeader("Device control","Connect once. Restore control from this phone.")
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                     if(bootstrap.pairedAt>0L) {
                         Row {Text("Reconnect automatically",Modifier.weight(1f));Switch(recovery,{enabled->
@@ -67,7 +71,8 @@ import kotlinx.coroutines.*
                         Text("Reuses this phone’s saved pairing after connection or service loss. Android may still require you to enable Wireless debugging after reboot.",style=MaterialTheme.typography.bodySmall)
                     }
                     if(state.phase==BootstrapPhase.PRIVILEGED_READY && !configureRecovery && !pairAgain) {
-                        Text("Device control ready",style=MaterialTheme.typography.titleLarge)
+                        StatusPill("Device control ready",StatusTone.GOOD)
+                        Text("Connected and verified",style=MaterialTheme.typography.titleLarge)
                         Text("The bundled service is connected. Authorized tools can use it over Wi-Fi or mobile data.")
                         Text("Shell UID 2000",style=MaterialTheme.typography.bodyMedium)
                         if(bootstrap.pairedAt==0L) Button(onClick={configureRecovery=true}) {Text("Set up phone-only recovery")}
@@ -99,7 +104,7 @@ import kotlinx.coroutines.*
                         Text(state.detail)
                     }
                     if(state.busy || finding) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if(message.isNotBlank()) Text(message,color=MaterialTheme.colorScheme.error)
+                    if(message.isNotBlank()) Notice(message,true)
                     if(state.phase!=BootstrapPhase.PRIVILEGED_READY) lastFailure?.let {Text(it,color=MaterialTheme.colorScheme.error)}
                     TextButton(onClick={advanced=!advanced}) {Text(if(advanced) "Hide advanced options" else "Advanced options")}
                     if(advanced) {
