@@ -50,8 +50,12 @@ internal class TermuxJournal(context:Context,name:String="termux.db"):SQLiteOpen
         try {
             // No automatic pruning: a late result may be the only outcome evidence for
             // a core request left UNKNOWN_OUTCOME by process death or cancellation.
-            val pending=db.rawQuery("SELECT count(*) FROM executions WHERE phase IN ('PREPARED','DISPATCHING')",null).use {it.moveToFirst();it.getInt(0)}
-            if(pending>=TermuxContract.MAX_PENDING) throw CapabilityException("TERMUX_UNRESOLVED_LIMIT","64 Termux dispatches have no completion evidence; inspect existing results before starting more",noSideEffects=true)
+            // Rows stay DISPATCHING so a late callback can still be recorded, but a dispatch whose
+            // deadline passed more than STALE_DISPATCH_GRACE_MS ago no longer blocks admission.
+            // Otherwise 64 commands that never call back (servers, killed Termux) lock out Termux forever.
+            val pending=db.rawQuery("SELECT count(*) FROM executions WHERE phase='PREPARED' OR (phase='DISPATCHING' AND deadline_at>?)",
+                arrayOf((now-TermuxContract.STALE_DISPATCH_GRACE_MS).toString())).use {it.moveToFirst();it.getInt(0)}
+            if(pending>=TermuxContract.MAX_PENDING) throw CapabilityException("TERMUX_UNRESOLVED_LIMIT","${TermuxContract.MAX_PENDING} recent Termux dispatches have no completion evidence; inspect existing results or wait for their deadlines to lapse before starting more",noSideEffects=true)
             db.insertOrThrow("executions",null,ContentValues().apply {
                 put("request_id",id);put("agent_id",agent);put("nonce_hash",nonceHash);put("package_uid",uid)
                 put("package_version",version);put("installed_at",installedAt)

@@ -33,8 +33,8 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
     fun exact(a: JsonObject)=a["exact"]?.jsonPrimitive?.booleanOrNull ?: false
     fun availability(a: JsonObject)=if(exact(a) && !g.reminders.canScheduleExact()) Availability.PERMISSION_REQUIRED else Availability.IMPLEMENTED
     fun owned(id: String,ctx: ExecutionContext): Reminder {
-        val r=g.reminders.get(id) ?: throw CapabilityException("NOT_FOUND","No such reminder")
-        if(r.agentId!=ctx.agentId && ctx.agentId!="local-owner") throw CapabilityException("POLICY_DENIED","Reminder belongs to another agent")
+        val r=g.reminders.get(id) ?: throw CapabilityException("NOT_FOUND","No such reminder",noSideEffects=true)
+        if(r.agentId!=ctx.agentId && ctx.agentId!="local-owner") throw CapabilityException("POLICY_DENIED","Reminder belongs to another agent",noSideEffects=true)
         return r
     }
     register("reminders.create",objectSchema {

@@ -24,6 +24,14 @@ A pairing invitation and the browser's consent session each expire. Restart cons
 
 Native tools can still work. After an authorized ADB connection, run `python3 tools/start_builtin.py --serial <serial>`; add `--restart` after an APK update. This starts the bundled privileged authority; it is not a Mac-side runtime server. Phone-local pairing, raw-v2 Binder bootstrap and the tested trusted-Wi-Fi reboot recovery have passed. See [phone setup and failure handling](phone-setup.md). Mac-assisted restoration is separate historical evidence; normal local recovery does not invoke the Mac script. Never claim an app-sandbox process is privileged shell.
 
+## Remote bridge stopped notification
+
+Enrollment retries temporary gateway failures (timeouts, 429, 5xx) with backoff. The bridge stops only when the gateway rejects the address, enrollment token or device credential (400/401/403/404/405); the ongoing notification then reads "SIConnect remote bridge stopped" with the reason. Fix the gateway configuration and reconnect from Gateway; agents and saved grants are unaffected.
+
+## Termux reports TERMUX_UNRESOLVED_LIMIT
+
+64 recent dispatches are still awaiting a callback. Inspect them with `termux.recent` (unresolved only). Dispatches more than 15 minutes past their deadline no longer count, so the limit clears on its own; nothing is replayed.
+
 ## Slow execution
 
 Prefer typed tools and request status lookup over repeated screen capture. A command containing sleeps, UI dumping and parsing reports the combined duration. Use bounded XML capture, verify before acting, and stop when the requested state is reached. Do not resend messages or repeat installs solely because a transport response was lost. See [performance](performance.md).

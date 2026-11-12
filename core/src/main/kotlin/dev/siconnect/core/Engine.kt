@@ -6,6 +6,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
@@ -120,7 +121,9 @@ class ExecutionEngine(
     private val defaultExpiryMs: Long = 15 * 60_000,
     private val approvalTtlMs: Long = 10 * 60_000,
 ) {
-    private val updates = MutableSharedFlow<RequestRecord>(extraBufferCapacity = 256)
+    // DROP_OLDEST: a slow collector loses stale intermediate states instead of tryEmit silently
+    // dropping the newest (often terminal) update for every subscriber. Waiters re-read the store.
+    private val updates = MutableSharedFlow<RequestRecord>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val recordUpdates: SharedFlow<RequestRecord> = updates
     private val running = ConcurrentHashMap<String, Job>()
     private val executionLock = Any()
@@ -265,7 +268,12 @@ class ExecutionEngine(
         fun done(r: RequestRecord) = r.state.isTerminal || (!untilTerminal && r.state == RequestState.AWAITING_APPROVAL)
         store.get(requestId)?.let { if (done(it)) return it }
         return withTimeoutOrNull(timeoutMs) {
-            updates.onSubscription { store.get(requestId)?.let { emit(it) } }.first { it.requestId == requestId && done(it) }
+            // Resubscribing re-reads the durable record, so a missed update costs at most one recheck interval.
+            var found: RequestRecord? = null
+            while (found == null) found = withTimeoutOrNull(AWAIT_RECHECK_MS) {
+                updates.onSubscription { store.get(requestId)?.let { emit(it) } }.first { it.requestId == requestId && done(it) }
+            }
+            found
         } ?: store.get(requestId)
     }
 
@@ -295,12 +303,33 @@ class ExecutionEngine(
         return changed
     }
 
-    /** Periodic sweep closing approvals whose window lapsed. */
+    /**
+     * Periodic sweep: closes approvals whose window lapsed, and closes requests orphaned in a
+     * non-terminal state by an exception escaping submit/resolveApproval/execute (for example a
+     * transient storage error) instead of leaving them open until the next process restart.
+     */
     fun expireStale() {
         val now = clock.nowMs()
         store.listByStates(setOf(RequestState.AWAITING_APPROVAL))
             .filter { now >= (it.approvalExpiresAtMs ?: it.expiresAtMs) }
             .forEach { r -> transitionBlocking(r, RequestState.EXPIRED, "approval.expired") { it }?.let(approvals::approvalClosed) }
+        val stalled = now - STALLED_REQUEST_MS
+        store.listByStates(setOf(RequestState.RECEIVED, RequestState.VALIDATED, RequestState.APPROVED))
+            .filter { it.updatedAtMs <= stalled }
+            .forEach { r ->
+                transitionBlocking(r, RequestState.FAILED, "request.stalled_failed") {
+                    it.copy(errorCode = "ADMISSION_STALLED", errorMessage = "Request stopped before execution; not executed")
+                }
+            }
+        synchronized(executionLock) {
+            store.listByStates(setOf(RequestState.EXECUTING))
+                .filter { it.updatedAtMs <= stalled && running[it.requestId] == null }
+                .forEach { r ->
+                    transitionBlocking(r, RequestState.UNKNOWN_OUTCOME, "request.orphaned_unknown") {
+                        it.copy(errorCode = "INTERRUPTED", errorMessage = "Execution lost its worker; outcome unknown")
+                    }
+                }
+        }
     }
 
     private suspend fun execute(record: RequestRecord, capability: Capability, awaitCompletion: Boolean = true): RequestRecord {
@@ -331,6 +360,8 @@ class ExecutionEngine(
         job = scope.launch(start = CoroutineStart.LAZY) {
             bodyStarted.set(true)
             var backendDispatched = false
+            // A capability that declares a mutation boundary has written nothing until it calls beginMutation().
+            fun noEffectsYet() = !backendDispatched || (capability.declaresMutationBoundary && !ctx.mutationStarted)
             try {
                 // Admission can precede actual dispatcher execution. Owner restrictions and
                 // backend selection may change while this coroutine is still queued.
@@ -367,15 +398,15 @@ class ExecutionEngine(
                         errorMessage = if (state != RequestState.SUCCEEDED) result.verificationDetail else null)
                 }
             } catch (e: TimeoutCancellationException) {
-                unknownOrFailed(executing, capability, "TIMEOUT", "Capability timeout or request deadline reached", started, noSideEffects = !backendDispatched)
+                unknownOrFailed(executing, capability, "TIMEOUT", "Capability timeout or request deadline reached", started, noSideEffects = noEffectsYet())
             } catch (e: CancellationException) {
-                unknownOrFailed(executing, capability, "CANCELLED", e.message ?: "cancelled", started, cancelled = true, noSideEffects = !backendDispatched)
+                unknownOrFailed(executing, capability, "CANCELLED", e.message ?: "cancelled", started, cancelled = true, noSideEffects = noEffectsYet())
             } catch (e: CapabilityException) {
                 if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
-                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started, noSideEffects=e.noSideEffects || !backendDispatched)
+                    unknownOrFailed(executing, capability, e.code, e.message ?: e.code, started, noSideEffects=e.noSideEffects || noEffectsYet())
             } catch (e: Exception) {
                 if (store.get(executing.requestId)?.state == RequestState.EXECUTING)
-                    unknownOrFailed(executing, capability, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", started, noSideEffects = !backendDispatched)
+                    unknownOrFailed(executing, capability, "EXECUTION_ERROR", "${e::class.simpleName}: ${e.message}", started, noSideEffects = noEffectsYet())
             }
         }
         running[executing.requestId] = job
@@ -453,3 +484,8 @@ class ExecutionEngine(
         detail = detail ?: decision?.reason,
     ))
 }
+
+/** Upper bound on how long a waiter can miss a dropped in-memory update before re-reading the store. */
+internal const val AWAIT_RECHECK_MS = 1_000L
+/** A request still pre-execution (or EXECUTING with no live worker) after this long is orphaned. */
+internal const val STALLED_REQUEST_MS = 5 * 60_000L

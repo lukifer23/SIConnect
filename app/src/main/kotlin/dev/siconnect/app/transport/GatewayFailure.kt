@@ -25,3 +25,15 @@ internal enum class GatewayFailure(val guidance:String) {
         fun closed(reason:String)=if(reason=="Replaced by authenticated reconnect") SESSION_REPLACED else REMOTE_CLOSED
     }
 }
+
+/** Enrollment HTTP outcome. Only a definite credential/configuration rejection stops reconnecting. */
+internal enum class EnrollmentOutcome { ENROLLED, ALREADY_REGISTERED, RETRY, REJECTED;
+    companion object {
+        fun of(httpCode:Int)=when(httpCode) {
+            200->ENROLLED
+            409->ALREADY_REGISTERED
+            400,401,403,404,405->REJECTED
+            else->RETRY // 408/429/5xx and other transient edge or gateway failures
+        }
+    }
+}

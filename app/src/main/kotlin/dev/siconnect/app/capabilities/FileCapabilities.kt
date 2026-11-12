@@ -40,14 +40,15 @@ fun registerFileCapabilities(g:RuntimeGraph) {
         put("sizeBytes",if(f.isFile) f.length() else 0);put("modifiedAtMs",f.lastModified());put("storage","APP_MANAGED")
     }
     fun schema(block:ObjectSchemaBuilder.()->Unit={})=objectSchema {string("path","Relative path within SIConnect managed storage",true,maxLength=1000);block()}
-    fun register(id:String,title:String,input:JsonObject,risk:RiskClass=RiskClass.READ_ONLY,body:(JsonObject)->JsonElement) {
+    fun register(id:String,title:String,input:JsonObject,risk:RiskClass=RiskClass.READ_ONLY,body:ExecutionContext.(JsonObject)->JsonElement) {
         g.registry.register(object:Capability {
             override val descriptor=CapabilityDescriptor(id,title=title,description="$title. App-owned SIConnect managed storage only; no access to another app's private files or Secure Folder.",inputSchema=input,
                 backend=BackendKind.NATIVE,risk=risk,interaction=InteractionMode.BACKGROUND,sideEffects=if(risk>RiskClass.READ_ONLY) listOf(title) else emptyList())
+            override val declaresMutationBoundary=true
             override fun availability()=Availability.IMPLEMENTED
             override suspend fun execute(args:JsonObject,ctx:ExecutionContext)=lock.withLock {
                 check(root.isDirectory || root.mkdirs()) {"Managed storage could not be opened"}
-                CapabilityResult(body(args),BackendKind.NATIVE,"uid=${Process.myUid()}",if(risk>RiskClass.READ_ONLY) VerificationStatus.VERIFIED else VerificationStatus.NOT_APPLICABLE,
+                CapabilityResult(ctx.body(args),BackendKind.NATIVE,"uid=${Process.myUid()}",if(risk>RiskClass.READ_ONLY) VerificationStatus.VERIFIED else VerificationStatus.NOT_APPLICABLE,
                     if(risk>RiskClass.READ_ONLY) "Local filesystem postcondition checked; no cloud synchronization implied" else null)
             }
         })
@@ -66,7 +67,7 @@ fun registerFileCapabilities(g:RuntimeGraph) {
     }
     register("files.hash","SHA-256 of managed file",schema()) {a ->buildJsonObject {put("sha256",hash(file(a.str("path"))));put("algorithm","SHA-256")}}
     register("files.mkdir","Create managed directory",schema(),RiskClass.LOW_IMPACT) {a ->
-        val f=file(a.str("path"));check(f.isDirectory || f.mkdir()) {"Parent must exist and target must be a directory"};check(f.isDirectory);metadata(f)
+        val f=file(a.str("path"));if(!f.isDirectory) beginMutation();check(f.isDirectory || f.mkdir()) {"Parent must exist and target must be a directory"};check(f.isDirectory);metadata(f)
     }
     register("files.write","Atomically write managed file",schema {
         string("content","UTF-8 text or base64 bytes (bounded write)",true,maxLength=16000);string("encoding","Input encoding",enum=listOf("utf8","base64"));boolean("overwrite","Replace an existing file; default false")
@@ -75,18 +76,19 @@ fun registerFileCapabilities(g:RuntimeGraph) {
         if(f.exists() && !overwrite) throw CapabilityException("ALREADY_EXISTS","Choose overwrite explicitly")
         require(f.parentFile?.isDirectory==true && !f.isDirectory) {"Parent must exist and target must be a file"}
         val content=a.str("content");val bytes=if(a["encoding"]?.jsonPrimitive?.content=="base64") Base64.decode(content,Base64.NO_WRAP) else content.toByteArray()
-        val atomic=AtomicFile(f);val stream=atomic.startWrite()
+        beginMutation();val atomic=AtomicFile(f);val stream=atomic.startWrite()
         try {stream.write(bytes);atomic.finishWrite(stream)} catch(e:Exception) {atomic.failWrite(stream);throw e}
         val expected=MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {"%02x".format(it)}
         check(hash(f)==expected) {"Written content could not be verified"}
         buildJsonObject {put("path",a.str("path"));put("sizeBytes",bytes.size);put("sha256",expected);put("storage","APP_MANAGED")}
     }
-    fun transfer(a:JsonObject,move:Boolean):JsonObject {
+    fun transfer(ctx:ExecutionContext,a:JsonObject,move:Boolean):JsonObject {
         val source=file(a.str("path"));val target=file(a.str("destination"))
         if(!source.isFile) throw CapabilityException("NOT_A_FILE","Source must be a regular file")
         if(target.exists()) throw CapabilityException("ALREADY_EXISTS","Destination already exists; no implicit replacement")
         require(target.parentFile?.isDirectory==true) {"Destination directory must exist"}
         val digest=hash(source)
+        ctx.beginMutation()
         if(move) Files.move(source.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE)
         else {
             val atomic=AtomicFile(target);val stream=atomic.startWrite()
@@ -101,10 +103,10 @@ fun registerFileCapabilities(g:RuntimeGraph) {
         return buildJsonObject {put("path",a.str("destination"));put("sha256",digest);put("moved",move)}
     }
     val transferSchema=schema {string("destination","New relative path in managed storage",true,maxLength=1000)}
-    register("files.copy","Copy managed file",transferSchema,RiskClass.MODERATE_IMPACT) {transfer(it,false)}
-    register("files.move","Move or rename managed file",transferSchema,RiskClass.MODERATE_IMPACT) {transfer(it,true)}
+    register("files.copy","Copy managed file",transferSchema,RiskClass.MODERATE_IMPACT) {transfer(this,it,false)}
+    register("files.move","Move or rename managed file",transferSchema,RiskClass.MODERATE_IMPACT) {transfer(this,it,true)}
     register("files.delete","Delete managed file or empty directory",schema(),RiskClass.MODERATE_IMPACT) {a ->
         val f=file(a.str("path"));if(!f.exists()) throw CapabilityException("NOT_FOUND","Path does not exist")
-        Files.delete(f.toPath());check(!f.exists());buildJsonObject {put("deleted",true);put("path",a.str("path"))}
+        beginMutation();Files.delete(f.toPath());check(!f.exists());buildJsonObject {put("deleted",true);put("path",a.str("path"))}
     }
 }

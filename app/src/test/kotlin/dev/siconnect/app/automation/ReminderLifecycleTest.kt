@@ -66,6 +66,13 @@ class ReminderLifecycleTest {
         fun due() {now+=6000}
     }
 
+    @Test fun rejectedReminderInputIsReportedAsNotWritten() = runTest {
+        val f=Fixture(backgroundScope)
+        try {f.lifecycle.put(f.reminder().copy(fireAtMs=f.now-1));fail("A past reminder must be rejected")}
+        catch(e:CapabilityException) {assertEquals("INVALID_TIME",e.code);assertTrue("Validation happens before any write",e.noSideEffects)}
+        assertNull(f.store.get("fixture"));assertTrue(f.dispatch.jobs.isEmpty())
+    }
+
     @Test fun cancellingPendingApprovalClosesOriginalRequestAndCannotPostAfterApproval() = runTest {
         val f=Fixture(backgroundScope,RiskClass.HIGH_IMPACT);f.create();f.due()
         assertEquals(RequestState.AWAITING_APPROVAL,f.lifecycle.deliver("fixture"))

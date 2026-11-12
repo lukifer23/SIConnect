@@ -64,3 +64,5 @@ After interrupted delivery, retrieve the original request outcome before decidin
 ## Verification scope
 
 See [engineering pass 12](engineering-pass-12.md) for the exact installed build, owner-interactive execution, hosted checks and remaining acceptance gaps. A future scheduled scan was observed with the screen off and locked, without manual Run now. Its six real readings succeeded and the next 15-minute slot advanced. A second scheduled run survived an in-place development update. These observations do not establish universal Doze timing or a new reboot result. The development update uses the original signing identity; public signed distribution remains a separate release milestone.
+
+Exact automations start their run directly from the exact alarm under a bounded wake lock, inside Android's idle allowlist window, instead of only enqueueing an ordinary WorkManager job that Doze can defer. A delayed WorkManager job remains as a durable watchdog if the process dies; a slot runs at most once.

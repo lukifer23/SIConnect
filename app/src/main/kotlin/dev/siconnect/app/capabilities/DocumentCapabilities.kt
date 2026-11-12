@@ -118,8 +118,9 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
-    private fun write(n: Node, bytes: ByteArray, io: Io) {
+    private fun write(n: Node, bytes: ByteArray, io: Io, ctx: ExecutionContext) {
         file(n); supported(n, DocumentsContract.Document.FLAG_SUPPORTS_WRITE)
+        ctx.beginMutation()
         val pfd = resolver.openFileDescriptor(n.uri, "wt", io.signal) ?: throw CapabilityException("DOCUMENT_UNWRITABLE", "Document could not be opened for replacement")
         ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { output -> io.own(output); io.active(); output.write(bytes); output.flush() }
         val expected = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -146,7 +147,8 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
             if (mutation) put("writeStatus", "LOCAL_PROVIDER_WRITE")
         }, BackendKind.NATIVE, "uid=${Process.myUid()}", if (mutation) VerificationStatus.VERIFIED else VerificationStatus.NOT_APPLICABLE,
             if (mutation) "Local provider postcondition checked; no cloud synchronization, invitation or human visibility inferred" else null)
-        fun op(id: String, title: String, input: JsonObject, mutation: Boolean = false, body: (JsonObject, Io) -> CapabilityResult): Capability = object : Capability {
+        fun op(id: String, title: String, input: JsonObject, mutation: Boolean = false, body: ExecutionContext.(JsonObject, Io) -> CapabilityResult): Capability = object : Capability {
+            override val declaresMutationBoundary = true
             override val descriptor = CapabilityDescriptor(id, title = title,
                 description = "$title through an owner-selected Storage Access Framework folder. Uses rootId plus a validated relative descendant path; arbitrary URIs and filesystem paths are rejected. Provider-local state does not prove cloud synchronization. No shell fallback.",
                 inputSchema = input, outputSchema = outSchema, backend = BackendKind.NATIVE, risk = if (mutation) RiskClass.MODERATE_IMPACT else RiskClass.READ_ONLY,
@@ -164,7 +166,7 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
                 val resource = AtomicReference<Closeable?>(); val signal = CancellationSignal(); val job = currentCoroutineContext().job
                 val cancellation = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { signal.cancel(); runCatching { resource.getAndSet(null)?.close() } } }
                 try { withContext(Dispatchers.IO) { lock.withLock {
-                    try { body(args, Io(signal, { job.ensureActive() }, resource)) }
+                    try { ctx.body(args, Io(signal, { job.ensureActive() }, resource)) }
                     catch (_: SecurityException) { throw CapabilityException("PERMISSION_REQUIRED", "The selected document grant was revoked or denied") }
                     catch (_: java.io.FileNotFoundException) { throw CapabilityException("DOCUMENT_UNAVAILABLE", "Document or provider is unavailable; inspect the root and original request before retrying") }
                 } } } finally { cancellation.cancel(); runCatching { resource.getAndSet(null)?.close() } }
@@ -205,6 +207,7 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
                 // Refuse an existing display name, instead of relying on provider-specific duplicate naming.
                 val path = if (parent.path.isEmpty()) name else "${parent.path}/$name"
                 try { resolve(parent.root, path, io); throw CapabilityException("ALREADY_EXISTS", "A child with that name already exists") } catch (e: CapabilityException) { if (e.code != "DOCUMENT_NOT_FOUND") throw e }
+                beginMutation()
                 val uri = DocumentsContract.createDocument(resolver, parent.uri, mime, name) ?: throw CapabilityException("PROVIDER_WRITE_FAILED", "Document creation returned no URI")
                 val created = query(uri, io).use { c -> if (!c.moveToFirst()) throw CapabilityException("POSTCONDITION_FAILED", "Created document could not be read back"); node(c, parent.root, if (parent.path.isEmpty()) c.string("_display_name") else "${parent.path}/${c.string("_display_name")}") }
                 val verified = resolve(parent.root, created.path, io)
@@ -215,7 +218,7 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
                 val n = selected(a, true, io); nonRoot(n)
                 if (a["overwrite"]?.jsonPrimitive?.booleanOrNull != true) throw CapabilityException("OVERWRITE_REQUIRED", "Explicitly set overwrite=true; replacement is not atomic across arbitrary providers")
                 val bytes = if (a["encoding"]?.jsonPrimitive?.content == "base64") try { Base64.getDecoder().decode(a.str("content")) } catch (_: IllegalArgumentException) { throw CapabilityException("INVALID_ENCODING", "Invalid base64 content") } else a.str("content").toByteArray(Charsets.UTF_8)
-                write(n, bytes, io)
+                write(n, bytes, io, this)
                 val current = resolve(n.root, n.path, io)
                 result(buildJsonObject { put("document", current.json()); put("sha256", digest(current, io)) }, true)
             },
@@ -225,6 +228,7 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
                 val destination = if (parent.isEmpty()) name else "$parent/$name"
                 if (destination == n.path) return@op result(buildJsonObject { put("document", n.json()) }, true)
                 try { resolve(n.root, destination, io); throw CapabilityException("ALREADY_EXISTS", "Rename destination already exists") } catch (e: CapabilityException) { if (e.code != "DOCUMENT_NOT_FOUND") throw e }
+                beginMutation()
                 val uri = DocumentsContract.renameDocument(resolver, n.uri, name) ?: throw CapabilityException("PROVIDER_WRITE_FAILED", "Provider returned no renamed document URI")
                 val renamed = query(uri, io).use { c -> if (!c.moveToFirst()) throw CapabilityException("POSTCONDITION_FAILED", "Renamed document could not be read back"); node(c, n.root, if (parent.isEmpty()) c.string("_display_name") else "$parent/${c.string("_display_name")}") }
                 val verified = resolve(n.root, renamed.path, io)
@@ -234,6 +238,7 @@ internal class DocumentOperations(private val resolver: ContentResolver, private
             op("documents.delete", "Delete a document file or empty directory", schema(), true) { a, io ->
                 val n = selected(a, true, io); nonRoot(n); supported(n, DocumentsContract.Document.FLAG_SUPPORTS_DELETE)
                 if (n.directory) query(DocumentsContract.buildChildDocumentsUriUsingTree(n.tree, n.id), io).use { if (it.moveToFirst()) throw CapabilityException("DIRECTORY_NOT_EMPTY", "Recursive deletion is not supported") }
+                beginMutation()
                 if (!DocumentsContract.deleteDocument(resolver, n.uri)) throw CapabilityException("PROVIDER_WRITE_FAILED", "Provider did not confirm deletion")
                 try { resolve(n.root, n.path, io); throw CapabilityException("POSTCONDITION_FAILED", "Deleted document remains beneath the root") } catch (e: CapabilityException) { if (e.code != "DOCUMENT_NOT_FOUND") throw e }
                 result(buildJsonObject { put("rootId", n.root.id); put("path", n.path); put("deleted", true) }, true)

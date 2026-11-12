@@ -74,6 +74,7 @@ Device setup, gateway deployment and agent pairing are covered in [docs/developm
 
 ## Documentation
 
+- [Pass 23: audit fixes for liveness, outcome honesty and recovery](docs/engineering-pass-23.md)
 - [Pass 22: typed phone workflows, recovery UI and real Codex execution](docs/engineering-pass-22.md)
 
 - [November 6 project review, implemented fixes and verification](docs/source-audit-2026-11-06.md)

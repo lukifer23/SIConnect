@@ -17,6 +17,8 @@ internal object TermuxContract {
     const val MAX_OUTPUT_BYTES=32768
     const val MAX_INPUT_BYTES=65536
     const val MAX_PENDING=64
+    /** After deadline + grace, an uncompleted dispatch stops counting toward MAX_PENDING (it remains inspectable and may still complete). */
+    const val STALE_DISPATCH_GRACE_MS=15*60_000L
     fun commandSucceeded(errorCode:Int?,exitCode:Int?):Boolean=errorCode==RESULT_ERR_SUCCESS && exitCode==0
     fun completeCallbackStatus(errorCode:Int,exitCode:Int?):Boolean=errorCode!=RESULT_ERR_SUCCESS || exitCode!=null
     fun supportsResultApi(version:String?):Boolean? {

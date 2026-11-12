@@ -111,7 +111,8 @@ internal class CalendarOperations(private val context: Context) {
             boolean("deleted", "Local absence verified"); string("writeStatus", "Local provider write only")
             string("serverSync", "No server acknowledgement is inferred"); string("attendeeDelivery", "No invitation delivery is inferred")
         }
-        fun op(id: String, title: String, input: JsonObject, write: Boolean = false, body: (JsonObject) -> CapabilityResult): Capability = object : Capability {
+        fun op(id: String, title: String, input: JsonObject, write: Boolean = false, body: ExecutionContext.(JsonObject) -> CapabilityResult): Capability = object : Capability {
+            override val declaresMutationBoundary = true
             override val descriptor = CapabilityDescriptor(id, title = title,
                 description = "$title using Android Calendar Provider in the background. Select an explicit calendar ID. Local writes/readback do not prove account synchronization or invitation delivery. Recurring event IDs refer to entire series; modifying a series requires applyToSeries=true.",
                 inputSchema = input, outputSchema = output, permissions = if (write) listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR) else listOf(Manifest.permission.READ_CALENDAR),
@@ -126,7 +127,7 @@ internal class CalendarOperations(private val context: Context) {
                 withContext(queryCancellation.asContextElement(signal)) {
                     dev.siconnect.app.backend.cancellableIo(signal::cancel) {
                         if (!permitted(write)) throw CapabilityException("PERMISSION_REQUIRED", "Calendar permission was revoked")
-                        try { body(args) } catch (e: SecurityException) { throw CapabilityException("PERMISSION_REQUIRED", "Calendar Provider denied this operation") }
+                        try { ctx.body(args) } catch (e: SecurityException) { throw CapabilityException("PERMISSION_REQUIRED", "Calendar Provider denied this operation") }
                     }
                 }
             }
@@ -191,6 +192,7 @@ internal class CalendarOperations(private val context: Context) {
                         put("duration", if (a["allDay"]?.jsonPrimitive?.booleanOrNull == true) "P${delta / 86400000}D" else "PT${delta / 1000}S")
                     } else if ("repeatCount" in a || "repeatInterval" in a) throw CapabilityException("INVALID_RECURRENCE", "Repeat bounds require an explicit repeating frequency")
                 }
+                beginMutation()
                 val uri = resolver.insert(events, values) ?: throw CapabilityException("PROVIDER_WRITE_FAILED", "Provider did not return the inserted event URI")
                 val eid = ContentUris.parseId(uri); val row = event(cid, eid)
                 if (row["title"]?.jsonPrimitive?.content != a.str("title") || row["startAtMs"]?.jsonPrimitive?.longOrNull != a.long("startAtMs", -1)) throw CapabilityException("POSTCONDITION_FAILED", "Inserted event could not be verified; inspect original request before retrying")
@@ -213,6 +215,7 @@ internal class CalendarOperations(private val context: Context) {
                     values.putAll(temporalValues(a))
                 }
                 if (values.size() == 0) throw CapabilityException("EMPTY_UPDATE", "Supply at least one supported field")
+                beginMutation()
                 if (resolver.update(events, values, "_id=? AND calendar_id=? AND deleted=0", arrayOf(eid.toString(), cid.toString())) != 1) throw CapabilityException("EVENT_CHANGED", "Event disappeared or changed while updating")
                 val row = event(cid, eid)
                 for ((key, _) in values.valueSet()) {
@@ -227,6 +230,7 @@ internal class CalendarOperations(private val context: Context) {
                 integer("calendarId", "Explicit calendar identifier", true, min = 1); integer("eventId", "Exact event or series identifier", true, min = 1); boolean("applyToSeries", "Confirm deletion of entire recurring series")
             }, true) { a ->
                 val cid = a.id("calendarId"); val eid = a.id("eventId"); calendar(cid, true); seriesCheck(a, event(cid, eid))
+                beginMutation()
                 if (resolver.delete(events, "_id=? AND calendar_id=? AND deleted=0", arrayOf(eid.toString(), cid.toString())) != 1) throw CapabilityException("EVENT_CHANGED", "Event changed before deletion")
                 query(events, arrayOf("_id"), "_id=? AND calendar_id=? AND deleted=0", arrayOf(eid.toString(), cid.toString())).use { if (it.moveToFirst()) throw CapabilityException("POSTCONDITION_FAILED", "Event remains locally visible after deletion") }
                 verified(buildJsonObject { put("calendarId", cid); put("eventId", eid); put("deleted", true) }, "Event absent from local nondeleted rows; server deletion unverified")
@@ -247,6 +251,7 @@ internal class CalendarOperations(private val context: Context) {
                 val count = query(reminders, arrayOf("_id"), "event_id=?", arrayOf(eid.toString())).use { it.count }
                 val maximum = selected["maxReminders"]?.jsonPrimitive?.longOrNull ?: 5
                 if (count >= maximum.coerceAtMost(100)) throw CapabilityException("REMINDER_LIMIT", "Selected calendar reminder limit reached")
+                beginMutation()
                 val uri = resolver.insert(reminders, ContentValues().apply { put("event_id", eid); put("minutes", a.long("minutesBefore", 0)); put("method", CalendarContract.Reminders.METHOD_ALERT) }) ?: throw CapabilityException("PROVIDER_WRITE_FAILED", "No reminder URI returned")
                 val rid = ContentUris.parseId(uri)
                 query(reminders, arrayOf("minutes", "method"), "_id=? AND event_id=?", arrayOf(rid.toString(), eid.toString())).use { if (!it.moveToFirst() || it.getLong(0) != a.long("minutesBefore", 0) || it.getInt(1) != CalendarContract.Reminders.METHOD_ALERT) throw CapabilityException("POSTCONDITION_FAILED", "Reminder readback did not match") }
@@ -256,6 +261,7 @@ internal class CalendarOperations(private val context: Context) {
                 integer("calendarId", "Explicit calendar identifier", true, min = 1); integer("eventId", "Exact event identifier", true, min = 1); integer("reminderId", "Exact reminder identifier", true, min = 1); boolean("applyToSeries", "Confirm reminder changes for entire recurring series")
             }, true) { a ->
                 val cid = a.id("calendarId"); val eid = a.id("eventId"); val rid = a.id("reminderId"); calendar(cid, true); seriesCheck(a, event(cid, eid))
+                beginMutation()
                 if (resolver.delete(reminders, "_id=? AND event_id=?", arrayOf(rid.toString(), eid.toString())) != 1) throw CapabilityException("REMINDER_NOT_FOUND", "Reminder does not exist on the selected event")
                 query(reminders, arrayOf("_id"), "_id=? AND event_id=?", arrayOf(rid.toString(), eid.toString())).use { if (it.moveToFirst()) throw CapabilityException("POSTCONDITION_FAILED", "Reminder remains after deletion") }
                 verified(buildJsonObject { put("calendarId", cid); put("eventId", eid); put("reminderId", rid); put("deleted", true) }, "Reminder row absent locally; server synchronization unverified")

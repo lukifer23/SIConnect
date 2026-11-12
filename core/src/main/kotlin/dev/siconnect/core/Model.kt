@@ -121,7 +121,16 @@ data class ExecutionContext(
     val agentId: String,
     val deviceId: String,
     val deadlineAtMs: Long? = null,
-)
+) {
+    private val mutation = java.util.concurrent.atomic.AtomicBoolean(false)
+    /**
+     * Called by a capability that sets [Capability.declaresMutationBoundary] immediately
+     * before its first externally visible write. Failures before this point are recorded
+     * as having no side effects instead of UNKNOWN_OUTCOME.
+     */
+    fun beginMutation() { mutation.set(true) }
+    val mutationStarted: Boolean get() = mutation.get()
+}
 
 interface Capability {
     val descriptor: CapabilityDescriptor
@@ -139,5 +148,12 @@ interface Capability {
         sideEffects = descriptor.sideEffects,
         reversibility = descriptor.reversibility,
     )
+    /**
+     * True only when every externally visible write in [execute] is preceded by
+     * [ExecutionContext.beginMutation]. The engine then treats any failure before that
+     * call (validation, lookups, permission checks) as side-effect free. Leave false
+     * unless every write path is marked: an unmarked write would be misreported.
+     */
+    val declaresMutationBoundary: Boolean get() = false
     suspend fun execute(args: JsonObject, ctx: ExecutionContext): CapabilityResult
 }

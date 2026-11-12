@@ -82,6 +82,27 @@ class TermuxJournalDeviceTest {
         } finally {journal.close();context.deleteDatabase(name)}
     }
 
+    @Test fun lapsedDispatchesStopBlockingAdmissionButStillAcceptLateCallbacks() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val name="termux-journal-test-${UUID.randomUUID()}.db"
+        val journal=TermuxJournal(context,name)
+        try {
+            repeat(TermuxContract.MAX_PENDING) {i->
+                journal.prepare("hung-$i","owner-a","nonce-$i",12345,118,1000,2000,2100,1024)
+                journal.markDispatch("hung-$i",2001);journal.waiterEnded("hung-$i","TIMED_OUT")
+            }
+            try {journal.prepare("blocked","owner-a","nonce-x",12345,118,1000,3000,3100,1024);fail("Recent unresolved dispatches must still cap admission")}
+            catch(e:dev.siconnect.core.CapabilityException) {assertEquals("TERMUX_UNRESOLVED_LIMIT",e.code)}
+            val later=2100+TermuxContract.STALE_DISPATCH_GRACE_MS+1
+            journal.prepare("admitted","owner-a","nonce-y",12345,118,1000,later,later+100,1024)
+            assertEquals("DISPATCHING",journal.entry("hung-0")?.phase)
+            assertEquals(TermuxContract.MAX_PENDING+1,journal.pendingCount("owner-a"))
+            assertTrue("A lapsed dispatch must still record its real late result",journal.receive("hung-0","nonce-0",buildJsonObject {
+                put("executionErrorCode",TermuxContract.RESULT_ERR_SUCCESS);put("exitCode",0)
+            },later+1))
+        } finally {journal.close();context.deleteDatabase(name)}
+    }
+
     @Test fun missingExitCodeDoesNotFalselyConfirmExternalAppsPolicy() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val name="termux-journal-test-${UUID.randomUUID()}.db"

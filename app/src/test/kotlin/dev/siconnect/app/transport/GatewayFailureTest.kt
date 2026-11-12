@@ -14,6 +14,12 @@ class GatewayFailureTest {
         assertEquals(GatewayFailure.REMOTE_CLOSED,GatewayFailure.closed(privateText))
         GatewayFailure.entries.forEach {assertFalse(it.guidance.contains(privateText))}
     }
+    @Test fun transientEnrollmentFailuresRetryInsteadOfStoppingRemoteAccess() {
+        listOf(408,429,500,502,503,504,520,522).forEach {assertEquals("HTTP $it",EnrollmentOutcome.RETRY,EnrollmentOutcome.of(it))}
+        listOf(400,401,403,404,405).forEach {assertEquals("HTTP $it",EnrollmentOutcome.REJECTED,EnrollmentOutcome.of(it))}
+        assertEquals(EnrollmentOutcome.ENROLLED,EnrollmentOutcome.of(200))
+        assertEquals(EnrollmentOutcome.ALREADY_REGISTERED,EnrollmentOutcome.of(409))
+    }
     @Test fun sessionReplacementIsDistinctFromOrdinaryClosure() {
         assertEquals(GatewayFailure.SESSION_REPLACED,GatewayFailure.closed("Replaced by authenticated reconnect"))
         assertEquals(GatewayFailure.REMOTE_CLOSED,GatewayFailure.closed("maintenance"))

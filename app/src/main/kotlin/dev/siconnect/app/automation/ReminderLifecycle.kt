@@ -49,6 +49,9 @@ internal class ReminderLifecycle(
         if(record.state.isTerminal || record.state==RequestState.AWAITING_APPROVAL)
             save(r,r.copy(state=record.state.name,error=record.errorCode)) else r
 
+    /** Validation before the durable write: nothing has changed, so the request must not become UNKNOWN_OUTCOME. */
+    private fun reject(ok:Boolean,code:String,message:String) {if(!ok) throw CapabilityException(code,message,noSideEffects=true)}
+
     suspend fun put(r:Reminder,deduplicate:Boolean=false):Reminder = lock(r.id).withLock {
         val old=store.get(r.id)
         if(deduplicate && old!=null) {
@@ -56,11 +59,11 @@ internal class ReminderLifecycle(
                 throw CapabilityException("IDEMPOTENCY_CONFLICT","Reminder key belongs to different arguments; update explicitly",noSideEffects=true)
             return@withLock old
         }
-        require(r.fireAtMs>clock.nowMs()) {"Reminder must be in the future"}
-        require(deliveryId(r.id).length<=200) {"Reminder identity exceeds its delivery request budget"}
-        require(!r.exact || dispatch.canScheduleExact()) {"Enable precise reminders in Android settings"}
-        require(old==null || old.state in setOf("SCHEDULED","BLOCKED")) {"Reminder has already fired or is being delivered"}
-        require(old==null || old.revision==r.revision) {"Reminder changed. Open it again."}
+        reject(r.fireAtMs>clock.nowMs(),"INVALID_TIME","Reminder must be in the future")
+        reject(deliveryId(r.id).length<=200,"INVALID_ARGUMENT","Reminder identity exceeds its delivery request budget")
+        reject(!r.exact || dispatch.canScheduleExact(),"PERMISSION_REQUIRED","Enable precise reminders in Android settings")
+        reject(old==null || old.state in setOf("SCHEDULED","BLOCKED"),"REMINDER_NOT_EDITABLE","Reminder has already fired or is being delivered")
+        reject(old==null || old.revision==r.revision,"REMINDER_CHANGED","Reminder changed. Open it again.")
         val desired=r.copy(state="SCHEDULED",error=null)
         val saved=if(old==null) {check(store.insert(desired)) {"Reminder already exists"};desired} else save(old,desired)
         try {dispatch.stop(saved);dispatch.schedule(saved);saved}

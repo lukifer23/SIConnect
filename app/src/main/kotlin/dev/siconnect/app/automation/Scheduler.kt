@@ -9,6 +9,8 @@ import dev.siconnect.app.graph
 import dev.siconnect.app.data.*
 import dev.siconnect.core.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -320,7 +322,26 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent) {
         val id=intent.getStringExtra("id") ?: return
         val slot=intent.getLongExtra("slot",0)
+        // Durable watchdog first: survives receiver timeout and process death. Delayed so the
+        // inline attempt normally wins; fire() is idempotent per (automation, slot).
         WorkManager.getInstance(c).enqueueUniqueWork("automation:$id:$slot",ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<AutomationWorker>().setInputData(workDataOf("id" to id,"slot" to slot)).build())
+            OneTimeWorkRequestBuilder<AutomationWorker>().setInputData(workDataOf("id" to id,"slot" to slot))
+                .setInitialDelay(15,java.util.concurrent.TimeUnit.SECONDS).build())
+        // An exact alarm's idle allowlist does not cover ordinary WorkManager jobs, which Doze can
+        // defer for hours. Start the run now, inside the alarm's window, under a bounded wake lock.
+        val pending=goAsync()
+        val wake=c.getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK,"SIConnect:automation")
+        wake.acquire(10_000)
+        val g=c.graph
+        // The run itself is owned by the app scope, never cancelled by the receiver deadline.
+        val work=g.scope.launch {
+            try {g.scheduler.fire(id,slot)}
+            catch(e:CancellationException) {throw e}
+            catch(e:Exception) {g.events.emit(Event(System.currentTimeMillis(),eventType="automation.alarm.inline_error",requestId=Scheduler.runId(id,slot),errorCode=e.javaClass.simpleName))}
+        }
+        g.scope.launch {
+            try {withTimeoutOrNull(8_000) {work.join()}}
+            finally {if(wake.isHeld) wake.release();pending.finish()}
+        }
     }
 }

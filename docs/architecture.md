@@ -36,7 +36,9 @@ gateway invoke --> ExecutionEngine.submit
   6c. DENY / UNAVAILABLE -> DENIED / FAILED with reason
 ```
 
-Each transition is a compare-and-set on the persisted record and emits an `Event` (trace id, request id, agent, capability, backend, policy decision, status, duration, error code, verification). On startup, `recover()` turns `EXECUTING`/`VERIFYING` into `UNKNOWN_OUTCOME` and never re-runs them.
+Each transition is a compare-and-set on the persisted record and emits an `Event` (trace id, request id, agent, capability, backend, policy decision, status, duration, error code, verification). On startup, `recover()` turns `EXECUTING`/`VERIFYING` into `UNKNOWN_OUTCOME` and never re-runs them. The 60-second maintenance sweep (`expireStale`) also closes requests orphaned without a restart: anything still `RECEIVED`/`VALIDATED`/`APPROVED` after five minutes becomes `FAILED` (`ADMISSION_STALLED`, not executed), and an `EXECUTING` record with no live worker becomes `UNKNOWN_OUTCOME`. Waiters re-read the durable record at least every second, so a dropped in-memory update cannot stall them.
+
+A failure is `UNKNOWN_OUTCOME` only when side effects may have started. Capabilities that set `declaresMutationBoundary` call `ExecutionContext.beginMutation()` immediately before their first write; any failure before that point (validation, lookups, permission checks) is recorded as `FAILED` with nothing written. Calendar, Documents, managed Files and reminders use this; other capabilities keep the conservative default.
 
 States: `RECEIVED, VALIDATED, AWAITING_APPROVAL, APPROVED, DENIED, EXPIRED, EXECUTING, VERIFYING, SUCCEEDED, FAILED, CANCELLED, UNKNOWN_OUTCOME`. Legal transitions are encoded in `RequestState.canTransitionTo`.
 

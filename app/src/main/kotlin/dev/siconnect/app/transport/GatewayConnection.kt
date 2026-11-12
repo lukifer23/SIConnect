@@ -121,8 +121,12 @@ class GatewayConnection(private val g: RuntimeGraph) {
                             .header("Authorization","Bearer ${g.settings.enrollToken()}")
                             .post(buildJsonObject { put("deviceToken",g.settings.deviceSecret()) }.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r -> r.code }
                     }
-                    if(registration==200) { g.settings.enrolled=true; g.settings.setEnrollToken(null) }
-                    else if(registration!=409) { state.value=ConnectionState.AUTH_FAILED; detail.value="Gateway enrollment failed: $registration"; break }
+                    when(EnrollmentOutcome.of(registration)) {
+                        EnrollmentOutcome.ENROLLED -> { g.settings.enrolled=true; g.settings.setEnrollToken(null) }
+                        EnrollmentOutcome.ALREADY_REGISTERED -> {}
+                        EnrollmentOutcome.REJECTED -> { state.value=ConnectionState.AUTH_FAILED; detail.value="Gateway enrollment was rejected ($registration). Check the gateway address and enrollment token."; break }
+                        EnrollmentOutcome.RETRY -> throw java.io.IOException("Gateway enrollment temporarily unavailable ($registration)")
+                    }
                 }
                 val done=CompletableDeferred<Unit>()
                 val epoch=generation.incrementAndGet()
@@ -234,12 +238,16 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 wake.awaitBackoff(Random.nextLong(cap/2,cap+1),networkGeneration)
                 } catch(e: CancellationException) { throw e }
                   catch(e: Exception) {
-                    state.value=ConnectionState.BACKOFF; detail.value="Connection unavailable: ${e.javaClass.simpleName}"
+                    state.value=ConnectionState.BACKOFF
+                    detail.value=if(e.message?.startsWith("Gateway enrollment temporarily unavailable")==true) "${e.message}. Retrying with backoff." else "Connection unavailable: ${e.javaClass.simpleName}"
                     val cap=minOf(300_000L,1000L shl attempt.coerceAtMost(8));attempt++
                     wake.awaitBackoff(Random.nextLong(cap/2,cap+1),networkGeneration)
                 }
             }
-            } finally {monitor.close()}
+            } finally {
+                monitor.close()
+                if(state.value==ConnectionState.AUTH_FAILED) ConnectionService.showAttentionNeeded(g,detail.value)
+            }
         }
     }
 }
@@ -256,6 +264,16 @@ class ConnectionService: Service() {
         @Volatile private var running=false
         private val assistanceLock=Mutex()
         private val lastAssisted=java.util.concurrent.atomic.AtomicLong()
+        /** Replace the ongoing-connection text: the loop has stopped and needs the owner. */
+        internal fun showAttentionNeeded(g:RuntimeGraph,reason:String) {
+            if(!running) return
+            runCatching {
+                g.context.getSystemService(NotificationManager::class.java).notify(880,Notification.Builder(g.context,"connection").setSmallIcon(R.drawable.ic_stat)
+                    .setContentTitle("SIConnect remote bridge stopped").setContentText(reason).setStyle(Notification.BigTextStyle().bigText(reason))
+                    .setContentIntent(PendingIntent.getActivity(g.context,880,g.context.packageManager.getLaunchIntentForPackage(g.context.packageName),PendingIntent.FLAG_IMMUTABLE))
+                    .setOngoing(true).build())
+            }
+        }
         internal fun requestSavedStart(g:RuntimeGraph) {g.context.startForegroundService(Intent(g.context,ConnectionService::class.java))}
         /** Restore only the already owner-enabled bridge. Privilege assistance is fixed to
          * this app, ten seconds, current selected authority and existing advanced controls. */
