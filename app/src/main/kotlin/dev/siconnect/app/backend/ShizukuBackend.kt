@@ -18,8 +18,10 @@ class ShizukuBackend(context: Context, private val scope: CoroutineScope) {
         .tag("siconnect.shell").version(6).daemon(false).processNameSuffix("privileged")
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            service = IPrivilegedShell.Stub.asInterface(binder)
-            binder?.linkToDeath({ service = null; status.value = "UserService died; reconnect required" }, 0)
+            val connected = IPrivilegedShell.Stub.asInterface(binder)
+            service = connected
+            // A late death notice from a replaced Binder must not clear the newer connection.
+            binder?.linkToDeath({ synchronized(this) { if (service === connected) { service = null; status.value = "UserService died; reconnect required" } } }, 0)
             scope.launch { status.value = runCatching { withContext(Dispatchers.IO) { service?.identity() } }.getOrNull() ?: "Identity unavailable" }
         }
         override fun onServiceDisconnected(name: ComponentName?) { service = null; status.value = "UserService disconnected" }

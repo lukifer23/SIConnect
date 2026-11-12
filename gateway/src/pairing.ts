@@ -3,9 +3,20 @@ import { sha256, type Env } from './auth.js';
 export interface Invitation { hash: string; agentId: string; expiresAt: number; sealed: string }
 export interface PhoneAuthorization { agentId: string; deviceId: string; agentToken: string }
 
+const CODE = /^([A-Za-z0-9_-]{1,100})\.(pair_[A-Za-z0-9_-]{24})$/;
+
+/** Non-consuming check: lets a mistyped code be corrected without spending browser consent. */
+export async function invitationAvailable(code: string, env: Env): Promise<boolean> {
+  const match = CODE.exec(code);
+  if (!match) return false;
+  const bridge = env.DEVICES.get(env.DEVICES.idFromName(match[1]));
+  const response = await bridge.fetch(new Request('https://internal/pairing/check', { method: 'POST', body: JSON.stringify({ hash: await sha256(code) }) }));
+  return response.ok;
+}
+
 /** The invitation code is the decryption key; the gateway stores only its hash and ciphertext. */
 export async function consumeInvitation(code: string, env: Env): Promise<PhoneAuthorization> {
-  const match = /^([A-Za-z0-9_-]{1,100})\.(pair_[A-Za-z0-9_-]{24})$/.exec(code);
+  const match = CODE.exec(code);
   if (!match) throw new Error('INVALID_PAIRING');
   const bridge = env.DEVICES.get(env.DEVICES.idFromName(match[1]));
   const response = await bridge.fetch(new Request('https://internal/pairing/consume', { method: 'POST', body: JSON.stringify({ hash: await sha256(code) }) }));

@@ -12,7 +12,7 @@ import { Client as LegacyClient } from '@modelcontextprotocol/sdk/client/index.j
 import { StreamableHTTPClientTransport as LegacyTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const secret=()=>randomBytes(32).toString('base64url');
-const agent=secret(), device=secret(), enrollment=secret();
+const agent=secret(), otherAgent=secret(), device=secret(), enrollment=secret();
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const base='http://127.0.0.1:8788';
 let dir, worker, socket;
@@ -57,10 +57,10 @@ async function reconnectPeer() {
 }
 before(async()=>{
   dir=await mkdtemp(join(tmpdir(),'siconnect-protocol-'));
-  const config={name:'siconnect-protocol-test',main:resolve('src/index.ts'),compatibility_date:'2026-10-20',compatibility_flags:['nodejs_compat','global_fetch_strictly_public'],
+  const config={name:'siconnect-protocol-test',main:resolve('src/index.ts'),compatibility_date:'2026-10-20',compatibility_flags:['nodejs_compat','global_fetch_strictly_public','enable_request_signal'],
     kv_namespaces:[{binding:'OAUTH_KV',id:'00000000000000000000000000000000'}],
     durable_objects:{bindings:[{name:'DEVICES',class_name:'DeviceBridge'}]},migrations:[{tag:'v1',new_sqlite_classes:['DeviceBridge']}],
-    vars:{PUBLIC_ORIGIN:base,DEVICE_ENROLL_TOKEN:enrollment,AGENTS_JSON:JSON.stringify([{id:'test-agent',deviceId:'test-device',tokenSha256:hash(agent),expiresAt:Date.now()+3600000}])}};
+    vars:{PUBLIC_ORIGIN:base,DEVICE_ENROLL_TOKEN:enrollment,AGENTS_JSON:JSON.stringify([{id:'test-agent',deviceId:'test-device',tokenSha256:hash(agent),expiresAt:Date.now()+3600000},{id:'second-agent',deviceId:'test-device',tokenSha256:hash(otherAgent),expiresAt:Date.now()+3600000}])}};
   await writeFile(join(dir,'wrangler.json'),JSON.stringify(config),{mode:0o600});
   worker=spawn(resolve('node_modules/.bin/wrangler'),['dev','--config',join(dir,'wrangler.json'),'--port','8788','--ip','127.0.0.1','--local'],{env:{...process.env,WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe']});
   worker.stdout.on('data',b=>{output+=b}); worker.stderr.on('data',b=>{output+=b});
@@ -77,10 +77,10 @@ before(async()=>{
 });
 after(async()=>{socket?.close();worker?.kill('SIGTERM');if(dir) await rm(dir,{recursive:true,force:true});});
 
-async function client(legacy=false){
+async function client(legacy=false,token=agent){
   const c=legacy?new LegacyClient({name:'SIConnect-v1-test',version:'1'}):new Client({name:'SIConnect-v2-test',version:'1'});
   const Transport=legacy?LegacyTransport:StreamableHTTPClientTransport;
-  await c.connect(new Transport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:`Bearer ${agent}`}}}));
+  await c.connect(new Transport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
   return c;
 }
 test('unauthenticated MCP and device connections are refused',async()=>{
@@ -223,7 +223,8 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   const c=new Client({name:'OAuth SDK integration',version:'1'});
   try {await c.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{authProvider:provider}));assert.equal((await c.callTool({name:'test_echo',arguments:{value:'oauth'}})).structuredContent.result.output.value,'oauth');}
   finally {await c.close()}
-  assert.equal((await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'})).status,400);
+  // Replay is refused: the used code is rejected before the spent consent is even consulted.
+  assert.equal((await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'})).status,401);
   const old=tokens.access_token;assert.equal(await auth(provider,{serverUrl:base+'/mcp'}),'AUTHORIZED');assert.notEqual(tokens.access_token,old);
 });
 test('authenticated socket replacement rejects old in-flight ownership and requires hello',async()=>{
@@ -309,4 +310,62 @@ test('device disconnect is reported as offline rather than synthetic success',as
     assert.equal(r.structuredContent.backendAvailability,'UNKNOWN');
   }
   finally {await c.close()}
+});
+
+async function rehello(extra={}) {
+  if(socket.readyState!==WebSocket.OPEN) await reconnectPeer();
+  const ack=new Promise(resolve=>{const l=raw=>{if(JSON.parse(raw).type==='hello_ack'){socket.off('message',l);resolve()}};socket.on('message',l)});
+  socket.send(JSON.stringify({type:'hello',capabilities:capabilities(),...extra}));
+  await ack;
+}
+
+test('one malformed or colliding phone descriptor does not break the MCP endpoint',async()=>{
+  const bad=[...capabilities(),
+    {descriptor:{id:'test.bad_schema',version:1,title:'Bad',description:'x',risk:'READ_ONLY',inputSchema:{type:'object',properties:{_siconnectOperationKey:{type:'string'}}}},availability:'IMPLEMENTED'},
+    {descriptor:{id:'test.echo',version:2,title:'Duplicate echo',description:'x',risk:'READ_ONLY',inputSchema:{type:'object',properties:{}}},availability:'IMPLEMENTED'},
+    {descriptor:{id:'siconnect.connection',version:1,title:'Shadow',description:'x',risk:'READ_ONLY',inputSchema:{type:'object',properties:{}}},availability:'IMPLEMENTED'}];
+  if(socket.readyState!==WebSocket.OPEN) await reconnectPeer();
+  const ack=new Promise(resolve=>{const l=raw=>{if(JSON.parse(raw).type==='hello_ack'){socket.off('message',l);resolve()}};socket.on('message',l)});
+  socket.send(JSON.stringify({type:'hello',capabilities:bad}));await ack;
+  const c=await client();
+  try {
+    const names=(await c.listTools()).tools.map(t=>t.name);
+    assert.ok(names.includes('test_echo') && names.includes('test_write') && names.includes('siconnect_connection'));
+    assert.ok(!names.includes('test_bad_schema'));
+    assert.equal(names.filter(n=>n==='test_echo').length,1);
+    assert.equal(names.filter(n=>n==='siconnect_connection').length,1);
+    assert.equal((await c.callTool({name:'test_echo',arguments:{value:'still works'}})).structuredContent.result.output.value,'still works');
+  } finally {await c.close();await rehello()}
+});
+
+test('a phone-revoked agent cannot list tools, probe the connection or invoke',async()=>{
+  await rehello({revokedAgents:['test-agent']});
+  try {
+    const mcp=await fetch(base+'/mcp',{method:'POST',headers:{Authorization:`Bearer ${agent}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},
+      body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})});
+    assert.equal(mcp.status,403);
+    assert.equal((await mcp.json()).error,'AGENT_REVOKED');
+    assert.equal((await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).status,403);
+  } finally {await rehello({revokedAgents:[]})}
+  const c=await client();
+  try {assert.ok((await c.listTools()).tools.length>0)} finally {await c.close()}
+});
+
+test('one agent with abandoned in-flight calls cannot lock other agents out of the phone',{timeout:20000},async()=>{
+  await rehello();
+  const c=await client();
+  const other=await client(false,otherAgent);
+  try {
+    for(let i=0;i<8;i++) {
+      const controller=new AbortController();
+      const outcome=c.callTool({name:'test_echo',arguments:{value:'hold-after-commit'}},{signal:controller.signal}).then(r=>({resolved:r}),e=>({rejected:e}));
+      await new Promise(r=>setTimeout(r,60));controller.abort();
+      assert.ok((await outcome).rejected,`call ${i} should still be waiting on the phone when aborted`);
+    }
+    const own=await c.callTool({name:'test_echo',arguments:{value:'ninth'}});
+    assert.ok(['AGENT_BUSY','DEVICE_BUSY'].includes(own.structuredContent?.error) || own.structuredContent?.result?.output?.value==='ninth',
+      'Either the abort released the slot or the cap is scoped to this agent');
+    const result=await other.callTool({name:'test_echo',arguments:{value:'other agent'}});
+    assert.equal(result.structuredContent.result.output.value,'other agent');
+  } finally {await c.close();await other.close()}
 });

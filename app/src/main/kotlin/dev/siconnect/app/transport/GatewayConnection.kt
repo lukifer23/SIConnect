@@ -75,6 +75,10 @@ class GatewayConnection(private val g: RuntimeGraph) {
     private fun hello()=buildJsonObject {
         put("type","hello");put("deviceId",g.settings.deviceId)
         put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses()))
+        // The gateway refuses catalog/connection/invoke for these identities, so a revoked bot's
+        // still-valid OAuth grant cannot list tools or probe the phone. Revocation is permanent per ID.
+        put("revokedAgents",JsonArray(g.agents.all().filter {it.grant.revoked && !it.grant.agentId.startsWith("local-")}
+            .map {it.grant.agentId}.takeLast(500).map(::JsonPrimitive)))
     }.toString()
     private var loop: Job?=null
     @Volatile private var socket: WebSocket?=null

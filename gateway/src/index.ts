@@ -9,7 +9,7 @@ import { invocationEnvelope, invocationSchema } from './invocation.js';
 
 type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
 type SocketState = { epoch: string; ready: boolean };
-type Pending = { epoch: string; resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { epoch: string; agentId: string; resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 const encoder = new TextEncoder();
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 
@@ -52,9 +52,18 @@ export class DeviceBridge extends DurableObject<Env> {
       for (const socket of this.ctx.getWebSockets('device')) if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: invitation.agentId }));
       return json(invitation);
     }
+    if (path === '/pairing/check') {
+      // Non-consuming validity check so a mistyped code does not spend the browser's consent.
+      const { hash } = await request.json() as { hash: string };
+      const item = /^[a-f0-9]{64}$/.test(hash) ? await this.ctx.storage.get<Invitation>('pair:' + hash) : undefined;
+      return json({ valid: !!item && item.expiresAt > Date.now() }, item && item.expiresAt > Date.now() ? 200 : 401);
+    }
+    const agent = new URL(request.url).searchParams.get('agent');
+    if (agent && await this.revoked(agent)) return json({ error: 'AGENT_REVOKED', detail: 'The phone owner revoked this agent. Pair a new agent in SIConnect.' }, 403);
     if (path === '/catalog') return json({ protocol: 2, online: !!await this.activeSocket(), capabilities: await this.ctx.storage.get('capabilities') ?? [] });
     if (path === '/invoke') {
       const body = await request.json() as { agentId: string; agentToken: string; transportExpiresAtMs?: number; request: Record<string, unknown> };
+      if (await this.revoked(body.agentId)) return json({ error: 'AGENT_REVOKED', executionDispatched: false }, 403);
       const slot = Math.floor(Date.now() / 60_000);
       const rate = this.rate.get(body.agentId);
       if (rate?.slot === slot && rate.count >= 60) return json({ error: 'RATE_LIMITED' }, 429);
@@ -64,7 +73,11 @@ export class DeviceBridge extends DurableObject<Env> {
       if (!socket) return json({ error: 'DEVICE_OFFLINE', observedAtMs: Date.now(), failureLayer: 'TRANSPORT', executionDispatched: false,
         backendAvailability: 'UNKNOWN',
         detail: 'No acknowledged phone connection. This attempt was not forwarded; the phone backend state was not measured. Preserve any original request identity while restoring the existing connection.' }, 503);
-      if (this.pending.size >= 16) return json({ error: 'DEVICE_BUSY' }, 429);
+      // Per-agent cap first: one client's abandoned or slow calls must not starve every other agent.
+      let ownPending = 0;
+      for (const p of this.pending.values()) if (p.agentId === body.agentId) ownPending++;
+      if (ownPending >= 8) return json({ error: 'AGENT_BUSY', executionDispatched: false, detail: 'This agent already has 8 calls in flight on the phone. Wait for them or read their request IDs.' }, 429);
+      if (this.pending.size >= 32) return json({ error: 'DEVICE_BUSY', executionDispatched: false }, 429);
       const epoch = (socket.deserializeAttachment() as SocketState).epoch;
       const id = String(body.request.requestId);
       if (this.pending.has(id)) return json({ error: 'REQUEST_IN_FLIGHT', requestId: id,
@@ -81,7 +94,7 @@ export class DeviceBridge extends DurableObject<Env> {
       try {
         const result = await new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('GATEWAY_TIMEOUT_UNKNOWN_OUTCOME')), Math.min(expiry - Date.now(), 130_000));
-          this.pending.set(id, { epoch, resolve, reject, timer });
+          this.pending.set(id, { epoch, agentId: body.agentId, resolve, reject, timer });
           request.signal.addEventListener('abort', aborted, { once: true });
           if (request.signal.aborted) { aborted(); return; }
           const envelope = JSON.stringify({ type: 'invoke', id, agentToken: body.agentToken, request: body.request });
@@ -101,16 +114,22 @@ export class DeviceBridge extends DurableObject<Env> {
     return json({ error: 'NOT_FOUND' }, 404);
   }
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== 'string' || encoder.encode(message).byteLength > 1_048_576) { socket.close(1009, 'Envelope too large'); return; }
+    if (typeof message !== 'string' || encoder.encode(message).byteLength > 1_048_576) { this.closeDevice(socket, 1009, 'Envelope too large'); return; }
     try {
       const attachment = socket.deserializeAttachment() as SocketState | null;
-      if (!attachment?.epoch || attachment.epoch !== await this.ctx.storage.get<string>('socketEpoch')) { socket.close(1008, 'Stale device session'); return; }
+      if (!attachment?.epoch || attachment.epoch !== await this.ctx.storage.get<string>('socketEpoch')) { this.closeDevice(socket, 1008, 'Stale device session'); return; }
       const body = JSON.parse(message);
       if (body.type !== 'hello' && !attachment.ready) throw new Error('Device hello required');
       if (body.type === 'hello') {
         if (!Array.isArray(body.capabilities) || body.capabilities.length > 128) throw new Error('Invalid catalog');
         for (const cap of body.capabilities as Capability[]) {
           if (!/^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*)+$/.test(cap.descriptor.id)) throw new Error('Invalid capability');
+        }
+        // Older phones omit the list; only replace it when the phone states it.
+        if (body.revokedAgents !== undefined) {
+          if (!Array.isArray(body.revokedAgents) || body.revokedAgents.length > 500 ||
+              !body.revokedAgents.every((id: unknown) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id))) throw new Error('Invalid revocation list');
+          await this.ctx.storage.put('revokedAgents', body.revokedAgents);
         }
         await this.ctx.storage.put('capabilities', body.capabilities);
         socket.serializeAttachment({ ...attachment, ready: true } satisfies SocketState);
@@ -143,7 +162,15 @@ export class DeviceBridge extends DurableObject<Env> {
           });
         }
       }
-    } catch { socket.close(1008, 'Invalid device envelope'); }
+    } catch { this.closeDevice(socket, 1008, 'Invalid device envelope'); }
+  }
+  /** Server-initiated close: fail this session's pending calls now rather than at their 130s timer. */
+  private closeDevice(socket: WebSocket, code: number, reason: string): void {
+    this.webSocketClose(socket, code, reason, false);
+    socket.close(code, reason);
+  }
+  private async revoked(agentId: string): Promise<boolean> {
+    return (await this.ctx.storage.get<string[]>('revokedAgents') ?? []).includes(agentId);
   }
   private async activeSocket(): Promise<WebSocket | undefined> {
     const epoch = await this.ctx.storage.get<string>('socketEpoch');
@@ -182,29 +209,45 @@ export default {
         return bridge.fetch(new Request('https://internal/socket', request));
       }
       const principal = ['/mcp','/connection'].includes(url.pathname) ? await authenticate(request, env) : null;
-      if(principal && url.pathname==='/connection') return env.DEVICES.get(env.DEVICES.idFromName(principal.deviceId)).fetch('https://internal/catalog');
+      if(principal && url.pathname==='/connection') return env.DEVICES.get(env.DEVICES.idFromName(principal.deviceId)).fetch('https://internal/catalog?agent='+encodeURIComponent(principal.id));
       if (!principal) return oauthFetch(request, env, ctx);
       const token = bearer(request)!;
       return serveMcp(request, env, { agentId: principal.id, deviceId: principal.deviceId, agentToken: token });
-    } catch { return json({ error: 'INVALID_REQUEST' }, 400); }
+    } catch (error) {
+      // Only the error class: messages may echo request content.
+      console.error('gateway request failed', (error as Error)?.name ?? 'Error');
+      return json({ error: 'INVALID_REQUEST' }, 400);
+    }
   }
 } satisfies ExportedHandler<Env>;
 
 export async function serveMcp(request: Request, env: Env, authorization: PhoneAuthorization): Promise<Response> {
       const bridge = env.DEVICES.get(env.DEVICES.idFromName(authorization.deviceId));
-      const catalog = await (await bridge.fetch('https://internal/catalog')).json() as { online: boolean; capabilities: Capability[] };
+      const catalogUrl = 'https://internal/catalog?agent=' + encodeURIComponent(authorization.agentId);
+      const catalogResponse = await bridge.fetch(catalogUrl);
+      if (catalogResponse.status === 403) return catalogResponse;
+      const catalog = await catalogResponse.json() as { online: boolean; capabilities: Capability[] };
+      // One malformed or colliding phone descriptor must not take down the whole MCP endpoint.
+      const tools: { name: string; descriptor: Capability['descriptor']; inputSchema: z.ZodType }[] = [];
+      const names = new Set(['siconnect_connection']);
+      for (const cap of catalog.capabilities) {
+        const name = cap.descriptor.id.replaceAll('.', '_');
+        if (names.has(name)) { console.warn('skipping colliding tool name', name); continue; }
+        try { tools.push({ name, descriptor: cap.descriptor, inputSchema: z.fromJSONSchema(invocationSchema(cap.descriptor.inputSchema)) }); names.add(name); }
+        catch (error) { console.warn('skipping tool with unsupported schema', name, (error as Error)?.name ?? 'Error'); }
+      }
       const handler = createMcpHandler(() => {
         const server = new McpServer({ name: 'SIConnect', version: '0.2.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
-        for (const cap of catalog.capabilities) {
-          const descriptor = cap.descriptor;
-          server.registerTool(descriptor.id.replaceAll('.', '_'), {
+        for (const { name, descriptor, inputSchema } of tools) {
+          server.registerTool(name, {
             title: descriptor.title, description: descriptor.description,
-            inputSchema: z.fromJSONSchema(invocationSchema(descriptor.inputSchema)),
+            inputSchema,
             annotations: { readOnlyHint: descriptor.risk === 'READ_ONLY', destructiveHint: ['HIGH_IMPACT', 'CRITICAL'].includes(descriptor.risk) }
           }, async (args, context) => {
             const envelope = await invocationEnvelope(authorization, descriptor.id, args);
             const response = await bridge.fetch(new Request('https://internal/invoke', {
-              method: 'POST', signal: context.mcpReq.signal,
+              // The SDK signal alone does not fire on client disconnect; the platform request signal does (enable_request_signal).
+              method: 'POST', signal: AbortSignal.any([context.mcpReq.signal, request.signal]),
               body: JSON.stringify(envelope)
             }));
             const record = await response.json() as Record<string, unknown>;
@@ -219,7 +262,7 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
           inputSchema: z.object({}),
           annotations: { readOnlyHint: true, destructiveHint: false }
         }, async () => {
-          const fresh = await (await bridge.fetch('https://internal/catalog')).json() as { online: boolean; capabilities: Capability[] };
+          const fresh = await (await bridge.fetch(catalogUrl)).json() as { online: boolean; capabilities: Capability[] };
           const status = { observedAtMs: Date.now(), phoneSessionAcknowledged: fresh.online,
             nativeCatalogTools: fresh.capabilities.length, executionDispatched: false,
             observationScope: 'GATEWAY_TO_PHONE_SESSION', backendAvailability: 'NOT_MEASURED',

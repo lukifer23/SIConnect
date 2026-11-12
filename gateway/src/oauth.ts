@@ -1,6 +1,6 @@
 import OAuthProvider, { AuthorizationError, CimdFetchError, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import type { Env } from './auth.js';
-import { consumeInvitation, type PhoneAuthorization } from './pairing.js';
+import { consumeInvitation, invitationAvailable, type PhoneAuthorization } from './pairing.js';
 import { serveMcp } from './index.js';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
@@ -36,6 +36,7 @@ export async function oauthFetch(request: Request, env: Env, ctx: ExecutionConte
             consent.headers.set('Content-Type', 'text/html; charset=utf-8');
             consent.headers.set('Cache-Control', 'no-store');
             consent.headers.set('Referrer-Policy', 'no-referrer');
+            consent.headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
             const publisher = details.clientDomain ? `Published by <strong>${escape(details.clientDomain)}</strong>.` : 'The app name is self-registered and unverified.';
             return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect SIConnect</title>
 <style>body{color:#edf9f6;background:#0d1218;font:17px system-ui;max-width:480px;margin:8vh auto;padding:24px}input,button{font:inherit;border-radius:12px;padding:14px;box-sizing:border-box}input{width:100%;background:#202d39;color:white;border:1px solid #6a807a}button{margin:14px 8px 0 0;background:#8adcc3;border:0}small{color:#bccdc8}label{display:block;margin:20px 0 8px}</style>
@@ -55,12 +56,18 @@ ${details.redirectIsLoopback ? '<p>This connects an app on your computer. Contin
             const denied = await oauth.denyConsent(req, handle);
             return new Response(null, { status: 302, headers: denied.headers });
           }
+          // A wrong code must not spend the one-use consent: check it without consuming first,
+          // so the owner can go back and retype it on the same consent page.
+          const code = (form.get('code') ?? '').trim();
+          if (!await invitationAvailable(code, bindings))
+            return new Response('That pairing code is incorrect, expired or already used. Go back to correct it, or create a fresh code in SIConnect on your phone.', { status: 401, headers });
           // Browser-bound one-use consent is verified before consuming phone authority.
           const approved = await oauth.approveConsent(req, handle);
-          let props: PhoneAuthorization;
-          try { props = await consumeInvitation((form.get('code') ?? '').trim(), bindings); }
-          catch { return new Response('Pairing code expired, was already used, or is incorrect. Start the connection again and generate a fresh code on your phone.', { status: 401, headers }); }
+          // Check scope before the invitation is consumed so a bad grant cannot burn a valid code.
           if (!approved.request.scope.includes('phone:control')) return new Response('Phone control scope required', { status: 400, headers });
+          let props: PhoneAuthorization;
+          try { props = await consumeInvitation(code, bindings); }
+          catch { return new Response('Pairing code expired, was already used, or is incorrect. Start the connection again and generate a fresh code on your phone.', { status: 401, headers }); }
           const { redirectTo } = await oauth.completeAuthorization({ request: approved.request, userId: props.agentId, metadata: { deviceId: props.deviceId }, scope: approved.request.scope, props });
           approved.headers.set('Location', redirectTo);
           return new Response(null, { status: 302, headers: approved.headers });

@@ -25,7 +25,7 @@ class SchedulerDeviceTest {
     }
     @Test fun actualDeferrableRecurringSlotExecutesOnceAndAdvances()=runBlocking {
         val id="scheduler-fixture-${UUID.randomUUID()}";val slot=System.currentTimeMillis()+2000
-        val skillId="scheduler.native.${UUID.randomUUID()}"
+        val skillId="scheduler.native.n${UUID.randomUUID().toString().replace("-","")}"
         val definition=SkillDefinition(skillId,1,"Disposable native scheduler acceptance",steps=listOf(
             SkillStep("status","device.status"),SkillStep("battery","device.battery"),SkillStep("memory","device.memory")))
         try {

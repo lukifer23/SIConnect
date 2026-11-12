@@ -489,6 +489,7 @@ class RuntimeGraph(val context: Context) {
             events.emit(Event(System.currentTimeMillis(),eventType="agent.revoked",agentId=agentId,deviceId=settings.deviceId,detail="Local owner revoked bot"))
             w.setTransactionSuccessful()
         } finally {w.endTransaction()}
+        gateway.refreshCatalog() // re-sends hello with the updated revocation list
     }
     fun authenticate(token: String): AgentRecord? {
         if (token.length !in 20..300) return null

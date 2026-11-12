@@ -130,6 +130,10 @@ class ExecutionEngine(
 
     fun request(requestId: String): RequestRecord? = store.get(requestId)
 
+    /** True when [capabilityId] would run [args] as an interpreted command (or cannot be assessed). */
+    internal fun interpretsCommand(capabilityId: String, args: JsonObject): Boolean =
+        registry.get(capabilityId)?.let { c -> runCatching { c.assess(args).shellCommand != null }.getOrDefault(true) } ?: false
+
     /**
      * Submits a request and runs it to the point where it either finishes or waits for approval.
      * Duplicate submissions (same request id or idempotency key) return the existing record and never re-execute.

@@ -2,6 +2,8 @@
 
 The implemented `gateway/` is a Cloudflare Worker and SQLite-backed Durable Object. It uses official `@modelcontextprotocol/server` 2.3.1 `createMcpHandler`, not a hand-written protocol compatibility implementation.
 
+Before the first deployment, create your own `OAUTH_KV` namespace (`npx wrangler kv namespace create OAUTH_KV`) and replace the `kv_namespaces` id and `PUBLIC_ORIGIN` in `gateway/wrangler.jsonc` with yours. The committed values belong to the project owner's deployment; deploying them unchanged would target someone else's namespace.
+
 ```sh
 cd gateway
 npm ci
@@ -16,7 +18,7 @@ npm run deploy
 
 Secrets: `DEVICE_ENROLL_TOKEN` for owner enrollment and `AGENTS_JSON` containing token hashes, authenticated agent IDs, target device IDs, expiration/revocation fields. See source types for exact structure. Never put values in Git, chat or shell history. Wrangler account identity must be checked before mutation; the development deployment used the owner's personal/free account.
 
-The phone stores its device credential encrypted with Android Keystore and initiates an outbound authenticated WebSocket. Registration is `/register/<deviceId>`, device socket `/device/<deviceId>`, agent MCP endpoint `/mcp`, health `/health`. Health is not proof of phone connectivity. Device hello advertises actual registered capabilities. Offline requests fail explicitly; this implementation does not promise an offline durable execution queue. Concurrency and rate limits are enforced by the Durable Object.
+The phone stores its device credential encrypted with Android Keystore and initiates an outbound authenticated WebSocket. Registration is `/register/<deviceId>`, device socket `/device/<deviceId>`, agent MCP endpoint `/mcp`, health `/health`. Health is not proof of phone connectivity. Device hello advertises actual registered capabilities. Offline requests fail explicitly; this implementation does not promise an offline durable execution queue. Concurrency and rate limits are enforced by the Durable Object: at most 8 in-flight calls per agent (`AGENT_BUSY`) and 32 per device (`DEVICE_BUSY`), so one agent's abandoned calls cannot starve others. A phone catalog entry with an unsupported schema or a colliding tool name is skipped (and logged) instead of failing the whole MCP endpoint. The Worker enables `enable_request_signal` so client disconnects can propagate; local `wrangler dev` did not demonstrate abort propagation to the Durable Object, which is why the per-agent cap exists.
 
 For real-phone checks, supply a PRIVATE file with `url` and `agentToken`, then run:
 
@@ -34,7 +36,7 @@ For Dots/ChatGPT: Plugins → Add → Add custom MCP server, choose the existing
 
 Browser consent is separately bound to its initiating browser for ten minutes. If it expires, return to the existing plugin and choose Continue connecting; do not create duplicate plugins or disable CSRF protection. A fresh pairing code may also be needed. Official SDK integration exercises S256 PKCE, consent binding, token refresh and actual MCP invocation against a test-only device peer. Actual hosted Dots/ChatGPT authorization subsequently completed; native status and privileged identity calls matched the phone database. Initial expired browser/code attempts were resolved with fresh consent, without changing security checks.
 
-Access tokens last one hour; refresh grants last thirty days. Local owner grants remain durable independently of these token lifetimes. Revoking the paired agent on the phone immediately prevents further device execution, including with otherwise valid OAuth tokens. The gateway decrypts the forwarding credential when serving authorized calls: it remains a trusted intermediary, not an end-to-end signature boundary.
+Access tokens last one hour; refresh grants last thirty days. Local owner grants remain durable independently of these token lifetimes. Revoking the paired agent on the phone immediately prevents further device execution, including with otherwise valid OAuth tokens; once the phone's next hello reaches the gateway, the gateway also refuses that agent's catalog and connection probe (`AGENT_REVOKED`). The gateway decrypts the forwarding credential when serving authorized calls: it remains a trusted intermediary, not an end-to-end signature boundary.
 
 The phone reports ONLINE only after an acknowledged protocol-2 hello. Pairing waits for a saved-invitation acknowledgement and shows progress/errors; a transport socket alone is insufficient proof of readiness. An authenticated private-bearer `GET /connection` returns actual socket/catalog status without exposing credentials. Deployment does not require Docker or a Mac-side server. After phone reboot, native functionality can recover; the bundled privileged service still needs authorized bootstrap.
 

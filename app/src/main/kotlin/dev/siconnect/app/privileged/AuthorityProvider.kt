@@ -17,7 +17,22 @@ class AuthorityProvider: ContentProvider() {
         require(method=="attach")
         android.util.Log.i("SIConnectAuthority","Authenticated shell attachment received")
         val binder=requireNotNull(extras?.getBinder("service"))
-        synchronized(DirectAuthority) { DirectAuthority.service=IPrivilegedShell.Stub.asInterface(binder) }
+        synchronized(DirectAuthority) {
+            // First live attachment wins. Any shell-uid process (another app's Shizuku service,
+            // an adb shell) can call this provider; it must not silently take over a running
+            // authority and receive agent commands or forge their results. The genuine daemon
+            // holds a single-instance lock and re-attaches the same Binder; a restart replaces
+            // it only after the old process (and its Binder) has died.
+            val current=DirectAuthority.service?.asBinder()
+            if(current!=null && current!==binder && current.isBinderAlive) {
+                android.util.Log.w("SIConnectAuthority","Rejected a second privileged attachment while the current authority is alive")
+                context?.graph?.let {g->g.scope.launch {g.ready.await()
+                    g.events.emit(dev.siconnect.core.Event(System.currentTimeMillis(),eventType="privileged.attach_rejected",deviceId=g.settings.deviceId,
+                        errorCode="AUTHORITY_ALREADY_ATTACHED",detail="A shell/root caller tried to replace the live built-in privileged service; it was refused"))}}
+                throw SecurityException("A privileged service is already attached")
+            }
+            DirectAuthority.service=IPrivilegedShell.Stub.asInterface(binder)
+        }
         binder.linkToDeath({
             synchronized(DirectAuthority) {
                 if(DirectAuthority.service?.asBinder()===binder) {

@@ -77,8 +77,12 @@ object SkillValidator {
         for (s in def.steps) {
             if (!STEP_ID.matches(s.id)) errors += "step '${s.id}': invalid id"
             if (!seen.add(s.id)) errors += "step '${s.id}': duplicate id"
-            if (s.capability == "skills.run") errors += "step '${s.id}': nested skill execution is not allowed"
-            if (registry.get(s.capability) == null) errors += "step '${s.id}': unknown capability '${s.capability}'"
+            val capability = registry.get(s.capability)
+            // Compare the resolved id: registry lookups also accept tool-name aliases (skills_run).
+            if ((capability?.descriptor?.id ?: s.capability) == "skills.run") errors += "step '${s.id}': nested skill execution is not allowed"
+            if (capability == null) errors += "step '${s.id}': unknown capability '${s.capability}'"
+            else if (Templates.referencesStepOutput(s.args) && runCatching { capability.assess(s.args).shellCommand != null }.getOrDefault(true))
+                errors += "step '${s.id}': earlier step output cannot be interpolated into a command; pass it through typed arguments instead"
             if (s.onError !in setOf("fail", "continue")) errors += "step '${s.id}': onError must be fail|continue"
             if (s.approvalWaitMs !in 0..def.timeoutMs) errors += "step '${s.id}': invalid approval wait"
             if(runCatching {Schema.checkPayload(s.args)}.isFailure) {errors+="step '${s.id}': argument payload exceeds limits";continue}
@@ -229,10 +233,19 @@ class DurableSkillRunner(private val engine: ExecutionEngine, private val store:
                 val childId = childRequestId(r.runId, step.id)
                 if (r.pendingRequestId != childId) r = save(r, r.copy(pendingRequestId = childId))
                 stopped(runId)?.let {return it}
-                var record = engine.request(childId) ?: engine.submit(InvocationRequest(requestId = childId,
-                    traceId = r.traceId, agentId = r.agentId, capabilityId = step.capability,
-                    arguments = Templates.resolve(step.args, values) as JsonObject,
-                    expiresAtMs = r.deadlineMs, parentRequestId = r.runId), Origin.valueOf(r.origin))
+                var record = engine.request(childId) ?: run {
+                    // Untrusted step output (notification/message text, command stdout) must never
+                    // become shell syntax. Also enforced at install; re-checked for older definitions.
+                    if (Templates.referencesStepOutput(step.args) && engine.interpretsCommand(step.capability, step.args))
+                        return save(r, r.copy(state = SkillState.FAILED, pendingRequestId = null, error = "UNSAFE_COMMAND_INTERPOLATION: step ${step.id}"))
+                    val resolved = Templates.resolve(step.args, values) as JsonObject
+                    // Admission would reject this every retry; fail the step now instead of until the deadline.
+                    if (runCatching { Schema.checkPayload(resolved) }.isFailure)
+                        return save(r, r.copy(state = SkillState.FAILED, pendingRequestId = null, error = "STEP_ARGUMENTS_TOO_LARGE: step ${step.id}"))
+                    engine.submit(InvocationRequest(requestId = childId,
+                        traceId = r.traceId, agentId = r.agentId, capabilityId = step.capability,
+                        arguments = resolved, expiresAtMs = r.deadlineMs, parentRequestId = r.runId), Origin.valueOf(r.origin))
+                }
                 stopped(runId)?.let {stopped->
                     if(stopped.error?.startsWith("CANCELLATION_")==true && !record.state.isTerminal) return cancel(runId)
                     return stopped
@@ -376,6 +389,9 @@ object Templates {
         is JsonObject -> JsonObject(e.mapValues { resolve(it.value, scope) })
         else -> e
     }
+
+    /** True when any template in [e] reads an earlier step's result rather than invoker input or time. */
+    fun referencesStepOutput(e: JsonElement): Boolean = SkillValidator.refs(e).any { it.substringBefore('.') == "steps" }
 
     fun lookup(path: String, scope: Map<String, JsonElement>): JsonElement {
         val parts = path.split('.')
