@@ -87,7 +87,7 @@ internal class MapsScreen(private val g:RuntimeGraph,private val ctx:ExecutionCo
             }
             if(parser.eventType==XmlPullParser.START_TAG && parser.name=="node" && parser.getAttributeValue(null,"package")==MAPS_PACKAGE && parser.getAttributeValue(null,"password")!="true") {
                 val bounds=parser.getAttributeValue(null,"bounds").orEmpty()
-                val match=Regex("\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]").matchEntire(bounds)
+                val match=NODE_BOUNDS.matchEntire(bounds)
                 if(match!=null) labels+=RouteLabel(parser.getAttributeValue(null,"text").orEmpty(),parser.getAttributeValue(null,"content-desc").orEmpty(),match.groupValues[2].toInt(),match.groupValues[4].toInt(),match.groupValues[1].toInt(),match.groupValues[3].toInt(),
                     parser.getAttributeValue(null,"resource-id").orEmpty(),parser.getAttributeValue(null,"clickable")=="true",parser.getAttributeValue(null,"focused")=="true")
             }
@@ -270,3 +270,6 @@ internal class MapsScreen(private val g:RuntimeGraph,private val ctx:ExecutionCo
         }
     }
 }
+
+/** Compiled once: parsed for every node of every Maps UI dump. */
+private val NODE_BOUNDS=Regex("\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]")

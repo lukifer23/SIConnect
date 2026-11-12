@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -67,10 +68,23 @@ class GatewayConnection(private val g: RuntimeGraph) {
     }
     private val generation=java.util.concurrent.atomic.AtomicLong()
     /** Refresh discovery after backend/permission changes using the same authoritative registry. */
+    // Permission, backend, accessibility and Termux callbacks often fire together. Coalesce them
+    // into one probe/encode/send, and skip resending an unchanged catalog on the same socket.
+    private val helloRequests=kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity=1,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    @Volatile private var lastHello:Pair<WebSocket,String>?=null
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private val helloSender by lazy {g.scope.launch {helloRequests.debounce(250).collect {runCatching {sendHello()}}}}
     fun refreshCatalog() {
         g.registry.invalidateDiscovery()
         if(state.value!=ConnectionState.ONLINE) return
-        g.scope.launch {socket?.send(hello())}
+        helloSender
+        helloRequests.tryEmit(Unit)
+    }
+    private fun sendHello() {
+        val ws=socket ?: return
+        val text=hello()
+        if(lastHello?.let {it.first===ws && it.second==text}==true) return
+        if(ws.send(text)) lastHello=ws to text
     }
     private fun hello()=buildJsonObject {
         put("type","hello");put("deviceId",g.settings.deviceId)
@@ -149,7 +163,8 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     override fun onOpen(ws: WebSocket,r: Response) {
                         if(generation.get()!=epoch) {ws.cancel();done.complete(Unit);return}
                         state.value=ConnectionState.AUTHENTICATING
-                        ws.send(hello())
+                        val text=hello()
+                        if(ws.send(text)) lastHello=ws to text
                         g.scope.launch {
                             delay(10_000)
                             if(socket===ws && state.value==ConnectionState.AUTHENTICATING) { detail.value="Gateway did not confirm connection";ws.close(1002,"Handshake timeout");done.complete(Unit) }

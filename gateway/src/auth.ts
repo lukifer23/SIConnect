@@ -26,10 +26,16 @@ export function bearer(request: Request): string | null {
   const match = /^Bearer ([A-Za-z0-9_-]{20,300})$/.exec(request.headers.get('Authorization') ?? '');
   return match?.[1] ?? null;
 }
+let principalCache: { source: string; principals: Principal[] } | undefined;
+/** Parse the static principal list once per isolate (re-parsed only if the secret changes). */
+function parsedPrincipals(source: string): Principal[] {
+  if (principalCache?.source !== source) principalCache = { source, principals: JSON.parse(source) as Principal[] };
+  return principalCache.principals;
+}
 export async function authenticate(request: Request, env: Env): Promise<Principal | null> {
   const token = bearer(request);
   if (!token) return null;
   const hash = await sha256(token);
-  const principals: Principal[] = JSON.parse(env.AGENTS_JSON || '[]');
+  const principals = parsedPrincipals(env.AGENTS_JSON || '[]');
   return principals.find(p => constantEqual(p.tokenSha256, hash) && !p.revoked && p.expiresAt > Date.now() && /^[a-zA-Z0-9_-]{1,100}$/.test(p.deviceId)) ?? null;
 }

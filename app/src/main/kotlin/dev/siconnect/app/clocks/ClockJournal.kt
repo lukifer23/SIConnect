@@ -1,5 +1,7 @@
 package dev.siconnect.app.clocks
 
+import dev.siconnect.app.data.writeTransaction
+
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
@@ -30,18 +32,15 @@ internal class ClockJournal(context:Context,name:String="clock.db"):SQLiteOpenHe
     }
     override fun onUpgrade(db:SQLiteDatabase,oldVersion:Int,newVersion:Int) {error("Unsupported Clock journal migration; preserving timer identities")}
     fun recoverOrphans() {
-        val db=writableDatabase;db.beginTransaction()
-        try {
+        writableDatabase.writeTransaction {db->
             db.execSQL("UPDATE timers SET start_phase='NOT_DISPATCHED' WHERE start_phase='PREPARED'")
             db.execSQL("UPDATE timers SET start_phase='OUTCOME_UNKNOWN' WHERE start_phase='DISPATCHING'")
             db.execSQL("UPDATE operations SET phase='NOT_DISPATCHED' WHERE phase='PREPARED'")
             db.execSQL("UPDATE operations SET phase='OUTCOME_UNKNOWN' WHERE phase='DISPATCHING'")
-            db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
+        }
     }
     fun prepare(timer:ManagedTimer) {
-        val db=writableDatabase;db.beginTransaction()
-        try {
+        writableDatabase.writeTransaction {db->
             db.insertOrThrow("timers",null,ContentValues().apply {
                 put("timer_id",timer.timerId);put("agent_id",timer.agentId);put("start_request_id",timer.startRequestId)
                 put("package_name",timer.packageName);put("package_uid",timer.uid);put("installed_at",timer.installedAtMs)
@@ -49,20 +48,21 @@ internal class ClockJournal(context:Context,name:String="clock.db"):SQLiteOpenHe
                 put("created_at",timer.createdAtMs);put("start_phase","PREPARED")
             })
             insertOperation(timer.startRequestId,timer.timerId,"START",timer.createdAtMs)
-            db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
+        }
     }
     private fun insertOperation(requestId:String,timerId:String,kind:String,now:Long) {
         writableDatabase.insertOrThrow("operations",null,ContentValues().apply {
             put("request_id",requestId);put("timer_id",timerId);put("kind",kind);put("phase","PREPARED");put("created_at",now);put("updated_at",now)
         })
     }
-    fun timer(id:String):ManagedTimer?=readableDatabase.rawQuery("SELECT * FROM timers WHERE timer_id=?",arrayOf(id)).use {c->
-        if(!c.moveToFirst()) return@use null
+    private fun readTimer(c:android.database.Cursor):ManagedTimer {
         fun s(k:String)=c.getString(c.getColumnIndexOrThrow(k))
         fun n(k:String)=c.getLong(c.getColumnIndexOrThrow(k))
-        ManagedTimer(s("timer_id"),s("agent_id"),s("start_request_id"),s("package_name"),n("package_uid").toInt(),n("installed_at"),
+        return ManagedTimer(s("timer_id"),s("agent_id"),s("start_request_id"),s("package_name"),n("package_uid").toInt(),n("installed_at"),
             n("duration_seconds").toInt(),s("label"),s("published_label"),n("created_at"),s("start_phase"))
+    }
+    fun timer(id:String):ManagedTimer?=readableDatabase.rawQuery("SELECT * FROM timers WHERE timer_id=?",arrayOf(id)).use {c->
+        if(c.moveToFirst()) readTimer(c) else null
     }
     fun owned(agent:String,id:String)=timer(id)?.takeIf {it.agentId==agent}
         ?: throw CapabilityException("CLOCK_TIMER_NOT_FOUND","No managed timer belongs to this agent and timerId",noSideEffects=true)
@@ -73,33 +73,32 @@ internal class ClockJournal(context:Context,name:String="clock.db"):SQLiteOpenHe
         val args=mutableListOf(agent)
         val after=if(before==null) "" else " AND (created_at<? OR (created_at=? AND timer_id<?))".also {args+=listOf(before.createdAtMs.toString(),before.createdAtMs.toString(),before.timerId)}
         args+=limit.coerceIn(1,50).toString()
-        return readableDatabase.rawQuery("SELECT timer_id FROM timers WHERE agent_id=?$after ORDER BY created_at DESC,timer_id DESC LIMIT ?",args.toTypedArray())
-            .use {c->buildList {while(c.moveToNext()) add(c.getString(0))}}.mapNotNull(::timer)
+        // One query for the page instead of one per row.
+        return readableDatabase.rawQuery("SELECT * FROM timers WHERE agent_id=?$after ORDER BY created_at DESC,timer_id DESC LIMIT ?",args.toTypedArray())
+            .use {c->buildList {while(c.moveToNext()) add(readTimer(c))}}
     }
     fun prepareCancel(timer:ManagedTimer,requestId:String,now:Long) {
-        val db=writableDatabase;db.beginTransaction()
-        try {
+        writableDatabase.writeTransaction {db->
             val existing=db.rawQuery("SELECT request_id FROM operations WHERE timer_id=? AND kind='CANCEL' AND phase IN ('PREPARED','DISPATCHING','ACCEPTED','OUTCOME_UNKNOWN') LIMIT 1",arrayOf(timer.timerId))
                 .use {if(it.moveToFirst()) it.getString(0) else null}
             if(existing!=null) throw CapabilityException("CLOCK_CANCEL_ALREADY_DISPATCHED","Cancellation already has a recorded dispatch; inspect timer status and original request $existing instead of replaying",noSideEffects=true)
             insertOperation(requestId,timer.timerId,"CANCEL",now)
-            db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
+        }
     }
     fun operation(requestId:String):JsonObject?=readableDatabase.rawQuery("SELECT timer_id,kind,phase,created_at,updated_at FROM operations WHERE request_id=?",arrayOf(requestId)).use {c->
         if(!c.moveToFirst()) null else buildJsonObject {
             put("requestId",requestId);put("timerId",c.getString(0));put("kind",c.getString(1));put("phase",c.getString(2));put("createdAtMs",c.getLong(3));put("updatedAtMs",c.getLong(4))
         }
     }
-    fun operations(timerId:String):List<JsonObject> = readableDatabase.rawQuery("SELECT request_id FROM operations WHERE timer_id=? ORDER BY created_at DESC,request_id DESC LIMIT 10",arrayOf(timerId))
-        .use {c->buildList {while(c.moveToNext()) add(c.getString(0))}}.mapNotNull(::operation)
+    fun operations(timerId:String):List<JsonObject> = readableDatabase.rawQuery("SELECT request_id,timer_id,kind,phase,created_at,updated_at FROM operations WHERE timer_id=? ORDER BY created_at DESC,request_id DESC LIMIT 10",arrayOf(timerId))
+        .use {c->buildList {while(c.moveToNext()) add(buildJsonObject {
+            put("requestId",c.getString(0));put("timerId",c.getString(1));put("kind",c.getString(2));put("phase",c.getString(3));put("createdAtMs",c.getLong(4));put("updatedAtMs",c.getLong(5))
+        })}}
     fun phase(requestId:String,phase:String) {
         require(phase in setOf("DISPATCHING","ACCEPTED","OUTCOME_UNKNOWN","NOT_DISPATCHED"))
-        val db=writableDatabase;db.beginTransaction()
-        try {
+        writableDatabase.writeTransaction {db->
             check(db.update("operations",ContentValues().apply {put("phase",phase);put("updated_at",System.currentTimeMillis())},"request_id=?",arrayOf(requestId))==1)
             db.execSQL("UPDATE timers SET start_phase=? WHERE start_request_id=?",arrayOf(phase,requestId))
-            db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
+        }
     }
 }

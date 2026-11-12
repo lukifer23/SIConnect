@@ -278,6 +278,10 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         } }
         LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null } }
         LaunchedEffect(setup) {if(setup) {replaceGateway=false;legacyCredential=false;gatewayError=""}}
+        /** Expanding access requires owner authentication; reducing it never does. */
+        fun authIfEnabling(enabling:Boolean,title:String,apply:()->Unit) {
+            if(enabling) ownerAuthentication.authenticate(title,apply,{note=it}) else apply()
+        }
         fun copyForBot(value: String, secret: Boolean) {
             val clip=android.content.ClipData.newPlainText(if(secret) "SIConnect bot key" else "SIConnect MCP address",value)
             if(secret && android.os.Build.VERSION.SDK_INT>=33) clip.description.extras=android.os.PersistableBundle().apply {
@@ -338,19 +342,19 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
                     onFamily={id,family,enabled->
                         val apply={work {g.setCapabilityFamilyFromOwner(id,family,enabled)}}
-                        if(enabled) ownerAuthentication.authenticate("Allow $family access",apply,{note=it}) else apply()
+                        authIfEnabling(enabled,"Allow $family access",apply)
                     },onShell={shellError="";allowBotId=it.grant.agentId},onReconnect={bot->ownerAuthentication.authenticate("Reconnect selected identity",{work {pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label;pairDialog=true}},{note=it})},
                     onRevoke={bot->work {g.revokeAgentFromOwner(bot.grant.agentId)}},onRequest={id->inspectRequest(id)},
                     onSemanticApp={id,pkg,enabled->
                         val apply={work {g.setSemanticPackagePermissionFromOwner(id,pkg,enabled)}}
-                        if(enabled) ownerAuthentication.authenticate("Allow screen actions in $pkg",apply,{note=it}) else apply()
+                        authIfEnabling(enabled,"Allow screen actions in $pkg",apply)
                     },onHeadlessApp={id,pkg,enabled->
                         val selected=g.privileged.kind
                         val apply={work {g.setHeadlessPackagePermissionFromOwner(id,pkg,enabled,selected)}}
-                        if(enabled) ownerAuthentication.authenticate("Allow private app actions in $pkg via $selected",apply,{note=it}) else apply()
+                        authIfEnabling(enabled,"Allow private app actions in $pkg via $selected",apply)
                     },onSharedScreen={id,allowed->
                         val apply={work {g.setSharedScreenPermissionFromOwner(id,allowed)}}
-                        if(allowed) ownerAuthentication.authenticate("Allow shared-screen actions",apply,{note=it}) else apply()
+                        authIfEnabling(allowed,"Allow shared-screen actions",apply)
                     },onFullControl={agent,enabled->
                         val apply={work {
                             g.setFullAccessFromOwner(agent.grant.agentId,enabled)
@@ -362,7 +366,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                                     onFailure={"Full control saved. Some waiting work could not continue; review Activity before retrying."})
                             } else note="Previous custom permissions restored."
                         }}
-                        if(enabled) ownerAuthentication.authenticate("Enable full control for ${botDisplayName(agent,bots)}",apply,{note=it}) else apply()
+                        authIfEnabling(enabled,"Enable full control for ${botDisplayName(agent,bots)}",apply)
                     },onRename={agent,label->work {g.renameAgentFromOwner(agent.grant.agentId,label,agent.grant.label);note="Agent name saved. Connection and permissions are unchanged."}},busy=busy,onInitialAgentConsumed={selectedAgentId=null})
                 Destination.AUTOMATIONS -> AutomationsScreen(g,authenticate={title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onChanged={controlModel.refresh()},modifier=Modifier)
                 Destination.ACTIVITY -> ActivityScreen(g.requests,snapshot.revision,labels,{id->g.registry.get(id)?.descriptor?.title ?: id},detail={

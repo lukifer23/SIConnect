@@ -157,6 +157,12 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
     companion object { const val VERSION = 12 }
 }
 
+/** Commits only when [block] completes; any exception (or non-local return path that throws) rolls back. */
+inline fun <T> SQLiteDatabase.writeTransaction(block:(SQLiteDatabase)->T):T {
+    beginTransaction()
+    try {val result=block(this);setTransactionSuccessful();return result} finally {endTransaction()}
+}
+
 inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
     buildList { while (c.moveToNext()) add(block(c)) }
 }

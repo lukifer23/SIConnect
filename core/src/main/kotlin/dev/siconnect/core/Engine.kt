@@ -147,10 +147,11 @@ class ExecutionEngine(
         val capId = capability?.descriptor?.id ?: req.capabilityId
         require(req.requestId.length in 1..200 && req.agentId.length in 1..200) { "Invalid request identity" }
         Schema.checkPayload(req.arguments)
+        val actionHash = Canonical.actionHash(capId, version, req.arguments)
         val fingerprint = Canonical.sha256Hex(Canonical.encode(kotlinx.serialization.json.buildJsonObject {
             put("agent", kotlinx.serialization.json.JsonPrimitive(req.agentId))
             put("device", kotlinx.serialization.json.JsonPrimitive(deviceId))
-            put("action", kotlinx.serialization.json.JsonPrimitive(Canonical.actionHash(capId, version, req.arguments)))
+            put("action", kotlinx.serialization.json.JsonPrimitive(actionHash))
             put("origin", kotlinx.serialization.json.JsonPrimitive(origin.name))
             put("parent", kotlinx.serialization.json.JsonPrimitive(req.parentRequestId))
             put("expiry", kotlinx.serialization.json.JsonPrimitive(req.expiresAtMs))
@@ -166,7 +167,7 @@ class ExecutionEngine(
         var record = RequestRecord(
             requestId = req.requestId, traceId = req.traceId, agentId = req.agentId, deviceId = deviceId,
             capabilityId = capId, capabilityVersion = version, arguments = req.arguments,
-            argsHash = Canonical.actionHash(capId, version, req.arguments), idempotencyKey = req.idempotencyKey,
+            argsHash = actionHash, idempotencyKey = req.idempotencyKey,
             operationFingerprint = fingerprint, selectedBackend = capability?.descriptor?.backend, origin = origin.name, state = RequestState.RECEIVED, createdAtMs = now, updatedAtMs = now,
             expiresAtMs = req.expiresAtMs ?: (now + defaultExpiryMs), parentRequestId = req.parentRequestId,
         )

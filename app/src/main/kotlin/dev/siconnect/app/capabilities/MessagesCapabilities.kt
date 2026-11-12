@@ -13,7 +13,7 @@ import kotlinx.serialization.json.*
 fun registerMessagesCapabilities(g:RuntimeGraph) {
     val locks=Array(32) {Mutex()}
     g.registry.register(object:Capability {
-        override val descriptor get()=CapabilityDescriptor("messages.recent",title="Read recent visible Google Messages conversation",
+        private val memo=backendDescriptor({g.privileged.kind}) {kind->CapabilityDescriptor("messages.recent",title="Read recent visible Google Messages conversation",
             description="Read bounded visible Google Messages bubbles on an owned private display. Requires messages.recent plus existing headless.open/inspect/click/scroll/close scopes and applicable per-app/backend allowances; parent approval never grants child permissions. Exact visible conversation label and thread header are checked; this does not verify a Contacts identity, phone number, SMS/RCS database ID or complete message history. Opening a conversation may mark it read or send an app-managed read receipt. No composing, sending, deletion or authentication actions. The physical phone must already be awake/unlocked and Messages must not be visible on a shared display. New workspaces are closed when authorized; an optional existing owned Messages session remains open. Bounded local scrolling reduces agent round trips. Inspect countFulfilled, coverage and stopReason; incomplete results must not be described as the latest requested messages. Never automatically replay an uncertain request.",
             inputSchema=objectSchema {
                 string("conversationLabel","Exact case-sensitive visible conversation name, not a contact lookup or verified phone identity",true,maxLength=500)
@@ -21,8 +21,9 @@ fun registerMessagesCapabilities(g:RuntimeGraph) {
                 integer("maxScrolls","Maximum thread scroll dispatches, including locating the latest edge; default8",min=1,max=12)
                 integer("maxConversationScrolls","Maximum conversation-list scroll dispatches; default6",min=0,max=12)
                 string("sessionId","Optional existing owned Google Messages private session; never closed by this recipe",maxLength=100)
-            },backend=g.privileged.kind,risk=RiskClass.HIGH_IMPACT,interaction=InteractionMode.ISOLATED_SCREEN,
-            timeoutMs=120_000,sideEffects=listOf("Private app navigation may mark a conversation read or trigger app-managed read receipts"))
+            },backend=kind,risk=RiskClass.HIGH_IMPACT,interaction=InteractionMode.ISOLATED_SCREEN,
+            timeoutMs=120_000,sideEffects=listOf("Private app navigation may mark a conversation read or trigger app-managed read receipts"))}
+        override val descriptor get()=memo()
         override fun availability()=when {
             Build.VERSION.SDK_INT<34->Availability.UNSUPPORTED
             !g.privileged.available()->Availability.PRIVILEGE_REQUIRED

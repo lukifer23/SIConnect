@@ -267,8 +267,7 @@ class RuntimeGraph(val context: Context) {
     /** Local owner UI only; callers authenticate the complete full-control decision before enabling. */
     fun setFullAccessFromOwner(agentId:String,enabled:Boolean) {
         require(!agentId.startsWith("local-")) {"Select a remote identity"}
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             require(record.grant.agentId==agentId) {"Agent identity no longer matches the selected record"}
             val previous=record.fullAccessPreviousGrant
@@ -291,8 +290,7 @@ class RuntimeGraph(val context: Context) {
                 events.emit(Event(System.currentTimeMillis(),eventType="grant.full_access.restored",agentId=agentId,deviceId=settings.deviceId,
                     detail="Local owner disabled full control and restored the saved custom permissions"))
             }
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
 
     /**
@@ -384,20 +382,17 @@ class RuntimeGraph(val context: Context) {
             val d=requireNotNull(registry.get(id)?.descriptor) {"Unknown capability $id"}
             require(d.id==id && !d.ownerOnly && !id.startsWith("shell.")) {"$id cannot be granted to local automations"}
         }
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val a=requireNotNull(agents.get("local-automation"))
             agents.put(a.copy(grant=a.grant.copy(scopes=(a.grant.scopes+ids).distinct())))
             events.emit(Event(System.currentTimeMillis(),eventType=eventType,agentId="local-automation",detail="$detail: ${ids.joinToString()}"))
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
     /** Owner-selected capability family; every invocation still passes the shared policy engine. */
     fun setCapabilityFamilyFromOwner(agentId:String,family:String,enabled:Boolean) {
         require(family.matches(Regex("[a-z][a-z0-9_]*")) && registry.statuses().any { it.descriptor.id.startsWith("$family.") }) { "Unknown capability family" }
         require(!agentId.startsWith("local-"))
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val agent=requireNotNull(agents.get(agentId))
             require(!agent.grant.revoked && (agent.grant.expiresAtMs?.let { it>System.currentTimeMillis() } ?: true)) { "Bot is revoked or expired" }
             requireCustomAccess(agent)
@@ -406,8 +401,7 @@ class RuntimeGraph(val context: Context) {
                 else agent.grant.copy(scopes=agent.grant.scopes.filterNot { it==pattern || it.startsWith(prefix) },denied=(agent.grant.denied+pattern).distinct())
             agents.put(agent.copy(grant=grant))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.family.changed",agentId=agentId,deviceId=settings.deviceId,detail="Local owner ${if(enabled) "allowed" else "denied"} $pattern"))
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
     /** Local owner only. A package allowance is separate from family scope and broad shell. */
     fun setSemanticPackagePermissionFromOwner(agentId:String,targetPackage:String,enabled:Boolean) {
@@ -416,8 +410,7 @@ class RuntimeGraph(val context: Context) {
         require(targetPackage!=context.packageName && !dev.siconnect.app.accessibility.SemanticUiRules.protectedPackage(targetPackage)) {"Owner, system permission and biometric surfaces are protected"}
         val ids=setOf("ui.click","ui.set_text")
         val constraints=mapOf("packageName" to JsonPrimitive(targetPackage))
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val a=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             require(!a.grant.revoked && (a.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
             requireCustomAccess(a)
@@ -426,8 +419,7 @@ class RuntimeGraph(val context: Context) {
             val added=if(enabled) ids.map {id->StandingGrant(id,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=BackendKind.ACCESSIBILITY,note="Owner-selected semantic app access")} else emptyList()
             agents.put(a.copy(grant=a.grant.copy(standing=retained+added)))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.semantic_app.changed",agentId=agentId,detail="Local owner ${if(enabled) "allowed" else "removed"} semantic clicks/text for $targetPackage"))
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
 
     /** One authenticated local-owner decision enables the family and this app's private allowance. */
@@ -438,8 +430,7 @@ class RuntimeGraph(val context: Context) {
         require(selectedBackend in setOf(BackendKind.ADB_SERVICE,BackendKind.SHIZUKU) && privileged.kind==selectedBackend) {
             "Selected backend changed during owner review; review the private allowance again"
         }
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             require(!record.grant.revoked && (record.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
             if(record.grant.fullControl && record.fullAccessPreviousGrant!=null) {
@@ -454,8 +445,7 @@ class RuntimeGraph(val context: Context) {
             require(privileged.kind==selectedBackend) {
                 "Selected backend changed during owner review; review the private allowance again"
             }
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
 
     /** Persist revocation and its audit event together; callers are local management screens only. */
@@ -465,8 +455,7 @@ class RuntimeGraph(val context: Context) {
         val ids=setOf("headless.open","headless.click","headless.set_text","headless.scroll","headless.close")
         val constraints=mapOf("packageName" to JsonPrimitive(targetPackage))
         if(enabled) require(privileged.kind==selected) {"Selected backend changed during owner review; review the private allowance again"}
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             require(!record.grant.revoked && (record.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true)) {"Agent is revoked or expired"}
             requireCustomAccess(record)
@@ -475,33 +464,28 @@ class RuntimeGraph(val context: Context) {
             val added=if(enabled) ids.map {StandingGrant(it,constraints,maxRisk=RiskClass.HIGH_IMPACT,backend=selected,note="Owner-selected private app workspace access")} else emptyList()
             agents.put(record.copy(grant=record.grant.copy(standing=retained+added)))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.private_app.changed",agentId=agentId,detail="Local owner ${if(enabled) "allowed" else "removed"} private app actions for $targetPackage"))
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
 
     fun setSharedScreenPermissionFromOwner(agentId:String,allowed:Boolean) {
         require(!agentId.startsWith("local-")) {"Select a remote identity"}
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val record=requireNotNull(agents.get(agentId)) {"Agent no longer exists"}
             requireCustomAccess(record)
             agents.put(record.copy(grant=record.grant.copy(allowSharedScreen=allowed)))
             events.emit(Event(System.currentTimeMillis(),eventType="grant.shared_screen.changed",agentId=agentId,
                 detail=if(allowed) "Local owner allowed shared-screen operations" else "Local owner restricted agent to background APIs and private displays"))
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
     }
 
     /** Persist revocation and its audit event together; callers are local management screens only. */
     fun revokeAgentFromOwner(agentId: String) {
         require(!agentId.startsWith("local-")) { "Local identities cannot be revoked as remote bots" }
-        val w=db.writableDatabase;w.beginTransaction()
-        try {
+        db.writableDatabase.writeTransaction {w->
             val agent=requireNotNull(agents.get(agentId)) { "Bot no longer exists" }
             agents.put(agent.copy(grant=agent.grant.copy(revoked=true)))
             events.emit(Event(System.currentTimeMillis(),eventType="agent.revoked",agentId=agentId,deviceId=settings.deviceId,detail="Local owner revoked bot"))
-            w.setTransactionSuccessful()
-        } finally {w.endTransaction()}
+        }
         gateway.refreshCatalog() // re-sends hello with the updated revocation list
     }
     fun authenticate(token: String): AgentRecord? {

@@ -60,7 +60,8 @@ export class DeviceBridge extends DurableObject<Env> {
     }
     const agent = new URL(request.url).searchParams.get('agent');
     if (agent && await this.revoked(agent)) return json({ error: 'AGENT_REVOKED', detail: 'The phone owner revoked this agent. Pair a new agent in SIConnect.' }, 403);
-    if (path === '/catalog') return json({ protocol: 2, online: !!await this.activeSocket(), capabilities: await this.ctx.storage.get('capabilities') ?? [] });
+    if (path === '/catalog') return json({ protocol: 2, online: !!await this.activeSocket(), revision: await this.ctx.storage.get<string>('catalogRevision') ?? null,
+      capabilities: await this.ctx.storage.get('capabilities') ?? [] });
     if (path === '/invoke') {
       const body = await request.json() as { agentId: string; agentToken: string; transportExpiresAtMs?: number; request: Record<string, unknown> };
       if (await this.revoked(body.agentId)) return json({ error: 'AGENT_REVOKED', executionDispatched: false }, 403);
@@ -132,6 +133,7 @@ export class DeviceBridge extends DurableObject<Env> {
           await this.ctx.storage.put('revokedAgents', body.revokedAgents);
         }
         await this.ctx.storage.put('capabilities', body.capabilities);
+        await this.ctx.storage.put('catalogRevision', crypto.randomUUID());
         socket.serializeAttachment({ ...attachment, ready: true } satisfies SocketState);
         socket.send(JSON.stringify({ type: 'hello_ack', protocol: 2 }));
       } else if (body.type === 'pairing') {
@@ -221,20 +223,37 @@ export default {
   }
 } satisfies ExportedHandler<Env>;
 
+type CompiledTool = { name: string; descriptor: Capability['descriptor']; inputSchema: z.ZodType };
+/** Per-isolate cache keyed by device and catalog revision; a new hello yields a new revision. */
+const compiledTools = new Map<string, CompiledTool[]>();
+function compileTools(capabilities: Capability[]): CompiledTool[] {
+  // One malformed or colliding phone descriptor must not take down the whole MCP endpoint.
+  const tools: CompiledTool[] = [];
+  const names = new Set(['siconnect_connection']);
+  for (const cap of capabilities) {
+    const name = cap.descriptor.id.replaceAll('.', '_');
+    if (names.has(name)) { console.warn('skipping colliding tool name', name); continue; }
+    try { tools.push({ name, descriptor: cap.descriptor, inputSchema: z.fromJSONSchema(invocationSchema(cap.descriptor.inputSchema)) }); names.add(name); }
+    catch (error) { console.warn('skipping tool with unsupported schema', name, (error as Error)?.name ?? 'Error'); }
+  }
+  return tools;
+}
+
 export async function serveMcp(request: Request, env: Env, authorization: PhoneAuthorization): Promise<Response> {
       const bridge = env.DEVICES.get(env.DEVICES.idFromName(authorization.deviceId));
       const catalogUrl = 'https://internal/catalog?agent=' + encodeURIComponent(authorization.agentId);
       const catalogResponse = await bridge.fetch(catalogUrl);
       if (catalogResponse.status === 403) return catalogResponse;
-      const catalog = await catalogResponse.json() as { online: boolean; capabilities: Capability[] };
-      // One malformed or colliding phone descriptor must not take down the whole MCP endpoint.
-      const tools: { name: string; descriptor: Capability['descriptor']; inputSchema: z.ZodType }[] = [];
-      const names = new Set(['siconnect_connection']);
-      for (const cap of catalog.capabilities) {
-        const name = cap.descriptor.id.replaceAll('.', '_');
-        if (names.has(name)) { console.warn('skipping colliding tool name', name); continue; }
-        try { tools.push({ name, descriptor: cap.descriptor, inputSchema: z.fromJSONSchema(invocationSchema(cap.descriptor.inputSchema)) }); names.add(name); }
-        catch (error) { console.warn('skipping tool with unsupported schema', name, (error as Error)?.name ?? 'Error'); }
+      const catalog = await catalogResponse.json() as { online: boolean; revision: string | null; capabilities: Capability[] };
+      const cacheKey = catalog.revision ? `${authorization.deviceId}:${catalog.revision}` : null;
+      let tools = cacheKey ? compiledTools.get(cacheKey) : undefined;
+      if (!tools) {
+        tools = compileTools(catalog.capabilities);
+        if (cacheKey) {
+          // Stateless MCP rebuilds the server per request; reuse compiled schemas for an unchanged catalog.
+          if (compiledTools.size >= 16) compiledTools.delete(compiledTools.keys().next().value!);
+          compiledTools.set(cacheKey, tools);
+        }
       }
       const handler = createMcpHandler(() => {
         const server = new McpServer({ name: 'SIConnect', version: '0.2.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });

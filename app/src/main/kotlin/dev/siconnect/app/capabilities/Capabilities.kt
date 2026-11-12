@@ -217,3 +217,15 @@ fun registerCapabilities(g: RuntimeGraph) {
         ShellRequest("", argv=listOf("/system/bin/cmd") + it.getValue("argv").jsonArray.map { v -> v.jsonPrimitive.content })
     }
 }
+
+/**
+ * Rebuilds a descriptor only when its backend key changes. Descriptors are read many times per
+ * request and on every catalog/hello; their schemas and texts are otherwise identical.
+ */
+internal fun backendDescriptor(backend:()->BackendKind,build:(BackendKind)->CapabilityDescriptor):()->CapabilityDescriptor {
+    val cache=java.util.concurrent.atomic.AtomicReference<Pair<BackendKind,CapabilityDescriptor>?>(null)
+    return {
+        val kind=backend()
+        cache.get()?.takeIf {it.first==kind}?.second ?: build(kind).also {cache.set(kind to it)}
+    }
+}

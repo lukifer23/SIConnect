@@ -59,3 +59,22 @@ Verification:
   - Durations and dates use readable, locale-aware formats.
 
 Physical, same signer: `ControlCenterDeviceTest` 1/1, `ProposalDeviceTest` 4/4, `AgentRenameDeviceTest` 3/3 and `ManualAutomationDeviceTest` 2/2 pass. A cover-screen capture in light mode shows dark status icons on the app background. Instrumentation disconnected the shared-screen Accessibility service, which is documented Android behavior; the owner restores it in Android settings.
+
+## Duplication and efficiency pass
+
+Applied, behavior-preserving:
+- **Gateway:** compiled tool schemas are cached per device and catalog revision. A new revision is written on every hello. Stateless MCP previously re-fetched and recompiled up to 128 JSON schemas on every request. `AGENTS_JSON` is parsed once per isolate.
+- **Phone hello:** bursts of `refreshCatalog()` calls (permission, backend, accessibility and Termux callbacks) are debounced to one send per 250 ms. An unchanged hello is not resent on the same socket.
+- **Descriptors:** the Headless, Commute route, Clock, Messages and bridge-maintenance descriptors are memoized per backend (`backendDescriptor`) instead of rebuilding their schemas on every engine read.
+- **SQLite:** a shared `writeTransaction {}` helper replaces 14 hand-written begin/commit/end blocks in owner grant mutators and the Termux/Clock journals. Sites with early commit-and-return keep their explicit form.
+- **Small fixes:**
+  - `ClockJournal` page and operation listing use one query instead of one per row.
+  - The Maps node-bounds regex is compiled once.
+  - The engine computes each action hash once.
+  - One `authIfEnabling` helper replaces five copies of the authenticate-only-when-expanding pattern.
+
+Deferred, with reasons:
+- **Shared capability builder.** About 10 local `op`/`register` builders and 20 standalone objects remain. The saving is about 4%, and every converted site would need re-verification on the device. The mutation-boundary opt-in is already explicit per builder. Convert opportunistically when touching each file.
+- **Shared UI action and request-follow holders.** The owner-request follow pattern repeats in Recovery, Private workspaces, Termux and Diagnostics. A `rememberOwnerRequest` holder is worth doing alongside a dedicated UI test.
+- **Android package-name validation.** Its variants differ: single-segment names and digit-leading segments are accepted at some sites and not others. Unifying them changes what is accepted, so it needs a deliberate decision.
+- **A shared Termux/Clock journal base.** The two have different orphan and phase semantics; only the transaction helper is shared.

@@ -1,5 +1,7 @@
 package dev.siconnect.app.termux
 
+import dev.siconnect.app.data.writeTransaction
+
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
@@ -38,16 +40,13 @@ internal class TermuxJournal(context:Context,name:String="termux.db"):SQLiteOpen
     }
     override fun onUpgrade(db:SQLiteDatabase,oldVersion:Int,newVersion:Int) {error("Unsupported Termux journal migration; preserving evidence")}
     fun recoverOrphans() {
-        val db=writableDatabase;db.beginTransaction()
-        try {
+        writableDatabase.writeTransaction {db->
             db.execSQL("UPDATE executions SET phase='NOT_DISPATCHED',wait_status='PROCESS_LOST' WHERE phase='PREPARED'")
             db.execSQL("UPDATE executions SET wait_status='PROCESS_LOST' WHERE phase='DISPATCHING' AND wait_status='WAITING'")
-            db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
+        }
     }
     fun prepare(id:String,agent:String,nonceHash:String,uid:Int,version:Long,installedAt:Long,now:Long,deadline:Long,maxOutput:Int) {
-        val db=writableDatabase;db.beginTransaction()
-        try {
+        writableDatabase.writeTransaction {db->
             // No automatic pruning: a late result may be the only outcome evidence for
             // a core request left UNKNOWN_OUTCOME by process death or cancellation.
             // Rows stay DISPATCHING so a late callback can still be recorded, but a dispatch whose
@@ -62,8 +61,7 @@ internal class TermuxJournal(context:Context,name:String="termux.db"):SQLiteOpen
                 put("created_at",now);put("deadline_at",deadline);put("max_output",maxOutput)
                 put("phase","PREPARED");put("wait_status","WAITING")
             })
-            db.setTransactionSuccessful()
-        } finally {db.endTransaction()}
+        }
     }
     fun entry(id:String):TermuxEntry?=readableDatabase.rawQuery("SELECT * FROM executions WHERE request_id=?",arrayOf(id)).use {c->
         if(!c.moveToFirst()) return@use null

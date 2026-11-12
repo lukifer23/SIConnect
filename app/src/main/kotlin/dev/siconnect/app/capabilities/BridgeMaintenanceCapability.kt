@@ -10,10 +10,11 @@ import java.util.UUID
 /** Fixed local-owner maintenance through the same policy/audit engine as other privileged work. */
 internal fun registerBridgeMaintenance(g:RuntimeGraph) {
     g.registry.register(object:Capability {
-        override val descriptor get()=CapabilityDescriptor("system.restore_bridge",title="Owner: restore the saved background bridge",
+        private val memo=backendDescriptor({g.privileged.kind}) {kind->CapabilityDescriptor("system.restore_bridge",title="Owner: restore the saved background bridge",
             description="Local-owner runtime only. Restores an already enabled gateway using the selected authorized backend and a ten-second Android startup allowance for SIConnect's own package. Does not enable a paused gateway or change persistent power exemptions. No caller package, duration or shell arguments. Foreground-service acceptance is separate from actual gateway acknowledgement.",
-            inputSchema=objectSchema(),backend=g.privileged.kind,risk=RiskClass.LOW_IMPACT,interaction=InteractionMode.BACKGROUND,timeoutMs=15_000,ownerOnly=true,
-            sideEffects=listOf("Requests a ten-second startup allowance for SIConnect only","Starts the already owner-enabled bridge service"))
+            inputSchema=objectSchema(),backend=kind,risk=RiskClass.LOW_IMPACT,interaction=InteractionMode.BACKGROUND,timeoutMs=15_000,ownerOnly=true,
+            sideEffects=listOf("Requests a ten-second startup allowance for SIConnect only","Starts the already owner-enabled bridge service"))}
+        override val descriptor get()=memo()
         override fun availability()=if(g.privileged.available()) Availability.IMPLEMENTED else Availability.PRIVILEGE_REQUIRED
         override fun availabilityDetail()="Local owner, saved gateway enabled, advanced control enabled and selected backend available. Remote agents cannot invoke this maintenance operation."
         override suspend fun execute(args:JsonObject,ctx:ExecutionContext):CapabilityResult {

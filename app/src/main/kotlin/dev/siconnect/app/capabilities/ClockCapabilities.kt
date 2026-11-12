@@ -12,16 +12,17 @@ import kotlinx.serialization.json.*
 fun registerClockCapabilities(g:RuntimeGraph) {
     val timers by lazy {ClockTimers(g)}
     g.registry.register(object:Capability {
-        override val descriptor get()=CapabilityDescriptor("clock.timer_start",title="Start an owned Clock timer",
+        private val memo=backendDescriptor({g.privileged.kind}) {kind->CapabilityDescriptor("clock.timer_start",title="Start an owned Clock timer",
             description="Start a1..86400-second timer in an installed SET_TIMER handler through the selected authorized backend. Currently supports Android's system user only; secondary/work profiles are refused before timer dispatch. Appends an exact unique SIConnect ownership marker to the label, records identity before dispatch, and requests skip UI. Requires connected notification access and no preexisting current-user Clock notifications, preserving other timers/alarms/alerts. Reserves the shared screen because Clock may open UI. Dispatch acceptance is distinct from exact-label notification or native countdown observation. Never replay an uncertain start; discover the original timer with clock.timer_status. Supports the observed Samsung Clock published-label format and exact standard labels from other Clock handlers; unsupported readback is reported honestly.",
             inputSchema=objectSchema {
                 integer("durationSeconds","Exact timer duration in seconds",true,min=1,max=86400)
                 string("label","Optional single-line label up to80 characters; unique ownership marker is appended",maxLength=80)
                 string("packageName","Optional exact installed SET_TIMER handler; otherwise Android's concrete default",maxLength=200)
                 string("leaseId","Optional owned shared-screen lease targeting that Clock package",maxLength=100)
-            },backend=g.privileged.kind,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN,timeoutMs=15000,
+            },backend=kind,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN,timeoutMs=15000,
             permissions=listOf("Owner-selected authorized shell backend","Owner-granted connected notification listener"),
-            sideEffects=listOf("Starts an audible Clock timer; the app may open its screen"))
+            sideEffects=listOf("Starts an audible Clock timer; the app may open its screen"))}
+        override val descriptor get()=memo()
         override fun availability()=timers.startAvailability()
         override fun availability(arguments:JsonObject)=timers.startAvailability(arguments)
         override fun availabilityDetail()="System-user-only managed timers: secondary/work profiles are unsupported. Requires selected authorized backend, connected notification access, an enabled Clock SET_TIMER handler and no existing Clock work. No fallback to global dismissal or arbitrary shell."

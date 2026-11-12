@@ -46,11 +46,12 @@ fun registerHeadlessCapabilities(g:RuntimeGraph) {
     fun register(id:String,title:String,schema:JsonObject,risk:RiskClass,operation:String,
                  interaction:InteractionMode=InteractionMode.ISOLATED_SCREEN,description:String="") {
         g.registry.register(object:Capability {
-            override val descriptor get()=CapabilityDescriptor("headless.$id",title=title,
+            private val memo=backendDescriptor({g.privileged.kind}) {kind->CapabilityDescriptor("headless.$id",title=title,
                 description="$description Uses the selected authorized shell backend and an agent-owned virtual display with its own focus and top-focus stealing disabled. No physical-display mirroring, default-display input or physical unlock. Software keyboard is hidden for this display; semantic text entry is supported. App storage/network are shared with the installed app; app compatibility and external outcomes must be verified. The physical phone must already be awake and unlocked; no wake or unlock is requested. Permissions, authentication and biometric surfaces stay protected. Sessions expire and disappear on app/backend restart; never replay an uncertain mutation.",
-                inputSchema=schema,backend=g.privileged.kind,risk=risk,interaction=interaction,timeoutMs=30_000,ownerOnly=operation=="close_all",
+                inputSchema=schema,backend=kind,risk=risk,interaction=interaction,timeoutMs=30_000,ownerOnly=operation=="close_all",
                 sideEffects=if(risk==RiskClass.READ_ONLY) emptyList() else listOf(if(operation=="open") "Starts the installed app on a private display" else if(operation.startsWith("close")) "Destroys owned private display tasks" else "Acts in the selected app, including possible external sends or deletes"),
-                permissions=listOf("Shell backend: android.permission.ADD_TRUSTED_DISPLAY","Shell backend: android.permission.INTERNAL_SYSTEM_WINDOW","Shell backend: android.permission.INJECT_EVENTS (private node touch)"))
+                permissions=listOf("Shell backend: android.permission.ADD_TRUSTED_DISPLAY","Shell backend: android.permission.INTERNAL_SYSTEM_WINDOW","Shell backend: android.permission.INJECT_EVENTS (private node touch)"))}
+            override val descriptor get()=memo()
             override fun availability()=when {Build.VERSION.SDK_INT<34->Availability.UNSUPPORTED;!g.privileged.available()->Availability.PRIVILEGE_REQUIRED;else->Availability.IMPLEMENTED}
             override fun availabilityDetail()="Android 14+ and the selected bundled/Shizuku service with actual trusted-display permissions. No shared-screen fallback. New headless scopes and per-app standing permissions are separate owner choices."
             override fun assess(args:JsonObject)=RiskAssessment(risk,title,target=args["packageName"]?.jsonPrimitive?.content,sideEffects=descriptor.sideEffects)
