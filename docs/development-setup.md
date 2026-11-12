@@ -1,8 +1,7 @@
 # Development setup
 
-Current installed source: Android **0.6.0-dev.18 / code 26**, SQLite **12**, **104 phone tools / 105 MCP tools**. See [pass 21](engineering-pass-21.md) for current host/device validation and expanded UI acceptance, [project status](project-status.md) and [the build plan](build-plan.md). [Pass 20](engineering-pass-20.md) records the preceding native/private/recovery checkpoint; the [November 6 audit](source-audit-2026-11-06.md) describes historical code 21.
+Current version, verification and open acceptance work are kept in one place: [status](status.md).
 
-The [code-25 native/background checkpoint](engineering-pass-20.md) records 207 host tests, eight focused device cases, actual Termux timeout/PID-death recovery, native Codex sign-in verification and the existing Dot catalog refreshed to 105 tools.
 ## Host toolchain (macOS, Apple silicon)
 
 ```sh
@@ -101,6 +100,6 @@ Historical code 14 used a minified development-signed APK with the existing comp
 ./gradlew :app:assembleDebugAndroidTest -PinstallationCheckpoint=true
 ```
 
-Install that temporary test APK, invoke `dev.siconnect.app.test/dev.siconnect.app.InstallationCheckpointInstrumentation` with a private `installationExpectedRecords` object containing SHA-256 checkpoints for agents/reminders/automations/document_roots, then uninstall `dev.siconnect.app.test`. The optional `requestIds` array reads at most twenty records and exports request/state/backend/timing/execution-count metadata only. This runner requires the same installed signer and never exports arguments or result bodies. Without a checkpoint it fails. The normal runner remains the default when the property is omitted. See [pass 14](engineering-pass-14.md) for the actual failed harness attempts and successful corrected check.
+Install that temporary test APK, invoke `dev.siconnect.app.test/dev.siconnect.app.InstallationCheckpointInstrumentation` with a private `installationExpectedRecords` object containing SHA-256 checkpoints for agents/reminders/automations/document_roots, then uninstall `dev.siconnect.app.test`. The optional `requestIds` array reads at most twenty records and exports request/state/backend/timing/execution-count metadata only. This runner requires the same installed signer and never exports arguments or result bodies. Without a checkpoint it fails. The normal runner remains the default when the property is omitted. See [pass 14](history/engineering-pass-14.md) for the actual failed harness attempts and successful corrected check.
 
 The notification/semantic fixture is a disposable external test target, not a runtime companion. Remove `dev.siconnect.notificationfixture` after its opt-in tests. The main app, native APIs, saved gateway and bundled Binder daemon work without either test package. Preserve build caches for rapid iteration; run focused checks against the changed behavior rather than repeatedly running the whole acceptance matrix.

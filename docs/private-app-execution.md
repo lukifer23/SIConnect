@@ -1,6 +1,6 @@
 # Background and private app execution
 
-Updated November 6, 2026. Current source and installed debug build: **code 23 / 0.6.0-dev.15 / SQLite 11**. Explicit per-agent Full control now authorizes available private, shared-screen, native and shell actions without per-action SIConnect approval. Its persistent grant does not change the workspace, lock-state or daemon lifetimes below. The earlier [code-21 audit](source-audit-2026-11-06.md) records bounded private launch, actual Calculator/Maps, queued cancellation/revocation and normal caller/backend process-death checks; those remain code-21 evidence. Historical evidence also remains in [pass 17](engineering-pass-17.md) and [pass 18](engineering-pass-18.md).
+Explicit per-agent Full control now authorizes available private, shared-screen, native and shell actions without per-action SIConnect approval. Its persistent grant does not change the workspace, lock-state or daemon lifetimes below. The earlier [code-21 audit](source-audit-2026-11-06.md) records bounded private launch, actual Calculator/Maps, queued cancellation/revocation and normal caller/backend process-death checks; those remain code-21 evidence. Historical evidence also remains in [pass 17](history/engineering-pass-17.md) and [pass 18](history/engineering-pass-18.md).
 
 ## Execution surfaces
 

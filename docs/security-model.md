@@ -16,7 +16,7 @@ Code 21 adds actual-dispatch revalidation and caller-bounded workflow deadlines.
 
 ## Pass 9 checkpoint — October 21, 2026
 
-Inbox acceptance now revalidates original-agent policy, availability and emergency stop after authentication, before allocating a request link. Preflight is guidance, never a permission grant. Transient retry requires a successful missing-record lookup and reuses the same ID; unknown outcomes are reconciled. The optional debug Inbox harness has no acceptance endpoint, uses expiring isolated credentials and is excluded from the minified release. Existing credentials/grants were unchanged. See [pass 9](engineering-pass-9.md).
+Inbox acceptance now revalidates original-agent policy, availability and emergency stop after authentication, before allocating a request link. Preflight is guidance, never a permission grant. Transient retry requires a successful missing-record lookup and reuses the same ID; unknown outcomes are reconciled. The optional debug Inbox harness has no acceptance endpoint, uses expiring isolated credentials and is excluded from the minified release. Existing credentials/grants were unchanged. See [pass 9](history/engineering-pass-9.md).
 
 ## October 21, 2026 checkpoint
 
@@ -106,7 +106,7 @@ Requested semantic snapshots and explicit outgoing reply arguments may be sensit
 
 ## Phone-local ADB boundary
 
-The local bootstrap controller is reachable only from owner UI, with owner confirmation for pairing, startup/restart, identity removal and enabling saved recovery. It is not a registered capability, exported ADB server or gateway/MCP endpoint. Pairing codes remain transient on the phone; a nonexportable Android Keystore RSA key signs TLS. TLS/SPAKE2 authorizes the ADB host; actual ADB UID and a fresh Binder command are independently verified. Only the fixed installed-package bootstrap is available through this controller; existing authorized general shell remains powerful and separate. Broad shell can reach app/system surfaces beyond narrower structured-UI grants. Recovery reuses saved authorization and never toggles secure settings or changes backend. Physical local pairing/bootstrap passed; malicious/revoked-host acceptance remains open. See [pass 10](engineering-pass-10.md) and [third-party transport sources](../adb-bootstrap/README.md).
+The local bootstrap controller is reachable only from owner UI, with owner confirmation for pairing, startup/restart, identity removal and enabling saved recovery. It is not a registered capability, exported ADB server or gateway/MCP endpoint. Pairing codes remain transient on the phone; a nonexportable Android Keystore RSA key signs TLS. TLS/SPAKE2 authorizes the ADB host; actual ADB UID and a fresh Binder command are independently verified. Only the fixed installed-package bootstrap is available through this controller; existing authorized general shell remains powerful and separate. Broad shell can reach app/system surfaces beyond narrower structured-UI grants. Recovery reuses saved authorization and never toggles secure settings or changes backend. Physical local pairing/bootstrap passed; malicious/revoked-host acceptance remains open. See [pass 10](history/engineering-pass-10.md) and [third-party transport sources](../adb-bootstrap/README.md).
 
 ## Dispatch-time owner restrictions
 

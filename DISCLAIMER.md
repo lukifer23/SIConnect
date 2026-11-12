@@ -5,7 +5,7 @@ SIConnect is experimental personal software, provided under the MIT License **wi
 ## You are granting powerful access
 
 - SIConnect can be configured to let remote software agents read data from your device and change it: notifications, messages, calendars, files, installed applications and settings.
-- With a privileged backend (Shizuku) enabled, agents you authorize can run arbitrary commands as the Android `shell` user, which has ADB-level privileges. A broad shell grant can perform actions that narrower, feature-level restrictions would otherwise gate. No keyword filter or static analysis can reliably predict what an arbitrary command will do.
+- With a privileged backend (the bundled privileged service or Shizuku) enabled, agents you authorize can run arbitrary commands as the Android `shell` user, which has ADB-level privileges. A broad shell grant can perform actions that narrower, feature-level restrictions would otherwise gate. No keyword filter or static analysis can reliably predict what an arbitrary command will do.
 - AI agents can misinterpret instructions and can be manipulated by content they read (prompt injection in email, web pages, notifications or messages). SIConnect treats agent requests as untrusted and enforces your policy on the device, but a grant you give is a grant the agent can use.
 
 ## Your responsibilities
@@ -19,7 +19,7 @@ SIConnect is experimental personal software, provided under the MIT License **wi
 
 - It does not root your device, unlock the bootloader, exploit vulnerabilities or bypass Android security features (secure lock screen, biometrics, FLAG_SECURE, restricted settings).
 - It does not bypass authentication in third-party apps, payment systems or banking applications.
-- It does not guarantee uninterrupted background operation. Android, One UI battery management and reboots can stop it. On non-root devices, Shizuku must be restarted after each reboot unless its supported auto-start applies.
+- It does not guarantee uninterrupted background operation. Android, One UI battery management and reboots can stop it. On non-root devices, the bundled privileged service and Shizuku both end at reboot; the bundled service can be restored from the phone with saved Wireless debugging authorization when Android permits it, and Shizuku must be restarted unless its supported auto-start applies.
 - The gateway terminates TLS and can see request and result content in plaintext while routing it. SIConnect does not claim end-to-end encryption.
 
 ## Third parties

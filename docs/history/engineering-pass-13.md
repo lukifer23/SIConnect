@@ -8,7 +8,7 @@ The [source audit](source-audit-2026-10-26.md) records the implementation alread
 
 The gateway now advertises optional `_siconnectOperationKey` in MCP tool arguments. It strips that field before device invocation and hashes device/agent/key into a stable request/idempotency identity. The key is independent of credential refresh and scoped to the authenticated agent/device. An identical keyed retry resolves to the original execution; changing capability or arguments conflicts. Calls without a key retain fresh identities. Execution expiry is frozen by the phone at first admission; a separate transport deadline bounds each attempt. A concurrent duplicate returns `REQUEST_IN_FLIGHT` with original-request lookup guidance. No automatic mutation retry queue was added.
 
-Five new protocol tests cover both supported client generations, invalid keys, in-flight identity and lost-response recovery. The peer is a test fixture, not the physical phone. Hosted deployment/catalog refresh and a real phone keyed-mutation loss test remain pending. See [gateway usage](gateway-deployment.md#retry-identity-and-original-result-recovery).
+Five new protocol tests cover both supported client generations, invalid keys, in-flight identity and lost-response recovery. The peer is a test fixture, not the physical phone. Hosted deployment/catalog refresh and a real phone keyed-mutation loss test remain pending. See [gateway usage](../gateway-deployment.md#retry-identity-and-original-result-recovery).
 
 ## Verification
 
@@ -43,4 +43,4 @@ MainActivity was relaunched after instrumentation. Final inspection found the ap
 
 [Project status](project-status.md) and [next steps](next-steps.md) now provide a single current checkpoint/queue. Historical evidence stays in dated engineering reports. Setup, installation, device-testing, architecture, capability coverage and retry guidance link to the corresponding current state.
 
-See [repository hygiene](repository-hygiene.md) for the duplicate/artifact inventory, cleanup boundaries, retained recovery APK, process shutdown and rebuild instructions. Public documentation contains sanitized aggregate results only. Raw device/database captures, local credentials, serials, addresses, tokens and signing material are excluded from the Git tree.
+See [repository hygiene](../repository-hygiene.md) for the duplicate/artifact inventory, cleanup boundaries, retained recovery APK, process shutdown and rebuild instructions. Public documentation contains sanitized aggregate results only. Raw device/database captures, local credentials, serials, addresses, tokens and signing material are excluded from the Git tree.

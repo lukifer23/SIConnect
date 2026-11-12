@@ -1,6 +1,6 @@
 # Engineering pass 17 — real private app execution
 
-October 26, 2026. Installed Android **0.6.0-dev.11 / code 19**, SQLite **11**, **99 phone capabilities / 100 MCP tools** including gateway status. Existing retention and Maps/connection work remains in the working tree. See [the execution contract](private-app-execution.md) and [scope/gap review](build-plan.md).
+October 26, 2026. Installed Android **0.6.0-dev.11 / code 19**, SQLite **11**, **99 phone capabilities / 100 MCP tools** including gateway status. Existing retention and Maps/connection work remains in the working tree. See [the execution contract](../private-app-execution.md) and [scope/gap review](build-plan.md).
 
 ## Implemented
 

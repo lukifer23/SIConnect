@@ -1,16 +1,16 @@
 # Source review and implementation milestone — November 6, 2026
 
-Current source: **0.6.0-dev.13 / versionCode 21 / SQLite 11 / 100 phone capabilities plus gateway status**. The pass began without a device; the owner connected a test phone during final review and authorized physical checks. Code 21 is now installed in place with the matching development signer and focused device evidence below. No gateway deployment or production-signed publication was performed. Earlier code-20 evidence remains in [pass 18](engineering-pass-18.md).
+Reviewed source (historical, November 6): **0.6.0-dev.13 / versionCode 21 / SQLite 11 / 100 phone capabilities plus gateway status**. The pass began without a device; the owner connected a test phone during final review and authorized physical checks. Code 21 is now installed in place with the matching development signer and focused device evidence below. No gateway deployment or production-signed publication was performed. Earlier code-20 evidence remains in [pass 18](history/engineering-pass-18.md).
 
 ## Scope and intended product
 
 SIConnect is an owner-controlled Android execution platform for external agents. The phone owns identity, grants, exact-action approvals, deterministic execution, verification and durable history. Its outbound gateway connection removes the development computer from the runtime path. Native APIs handle background work; authorized shared-screen tools and real private displays cover app-only jobs. Private displays currently require an awake, unlocked phone on the tested Samsung platform.
 
-The end goal is dependable daily use: explicit access, reviewable outcomes, recoverable interruptions without duplicate effects, understandable setup/recovery and sustainable resource use. It is not yet a generally validated unattended phone operator or a production-distributed release. See [the scope and build plan](build-plan.md).
+The end goal is dependable daily use: explicit access, reviewable outcomes, recoverable interruptions without duplicate effects, understandable setup/recovery and sustainable resource use. It is not yet a generally validated unattended phone operator or a production-distributed release. See [the scope and build plan](status.md).
 
 The review began at `04d828a` on `main`, whose committed Android version was code 16. The existing working tree already contained the code-18 retention, code-19 private displays and code-20 caller-lifetime/recovery increments, tests and reports. Those changes were preserved and included in this milestone. Their original implementation predates this pass; selected physical regressions were rerun on code 21 as recorded below. Publishing is directly to `main` at the owner's request, without a side branch or force push.
 
-The live GitHub query for open repository items returned no open issues or pull requests. That does not imply an empty engineering backlog: the concrete backlog is documented here and in [next steps](next-steps.md).
+The live GitHub query for open repository items returned no open issues or pull requests. That does not imply an empty engineering backlog: the concrete backlog is documented here and in [next steps](status.md).
 
 ## Review coverage
 

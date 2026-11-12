@@ -18,7 +18,7 @@ The existing phone-local recovery observer already responds to lost Binder autho
 
 Before the final central owner-role refinement, a **33-case locked-safe code-20 batch passed without skips**: 24 foundation cases, seven private/bridge policy cases, real managed-file round trip and the previously unmet unplugged health check. The health case uses actual native readings and a deliberately high test threshold; its clearly labeled disposable notification is observed once, suppressed on repeat and removed. The actual battery was unplugged at 71%; no battery state was faked. The two owner-maintenance cases also pass separately: real selected UID-2000 execution without wake/control/grant changes, and rejection of a remote principal/caller-supplied package/duration. The central owner-role change is followed by a fresh verification run; consult current status for its final counts.
 
-The reproducible [recovery harness](../tools/private_workspace_recovery.py) uses a real expiring principal, authenticated existing debug endpoint, actual process death and production SQLite/Binder services. It restores only its disposable resources and the saved owner-enabled bridge. It does not launch a physical Activity, dismiss keyguard or force-stop/uninstall the main application.
+The reproducible [recovery harness](../../tools/private_workspace_recovery.py) uses a real expiring principal, authenticated existing debug endpoint, actual process death and production SQLite/Binder services. It restores only its disposable resources and the saved owner-enabled bridge. It does not launch a physical Activity, dismiss keyguard or force-stop/uninstall the main application.
 
 Completed code-20 scenarios while the phone was locked and noninteractive:
 

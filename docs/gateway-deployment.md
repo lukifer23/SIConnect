@@ -51,7 +51,7 @@ Pass 4 deployment: version `5cf1038d-015a-42bf-bb54-ca74e2d8ecdd`, same Worker e
 
 ## Retry identity and original-result recovery
 
-The October 26 gateway source adds optional `_siconnectOperationKey` to advertised tool arguments. It is now deployed to the existing endpoint/bindings in the previously verified account, with actual same-principal phone read/write acceptance. Refresh client tool discovery; see [pass 14](engineering-pass-14.md). Use this field only when the discovered schema advertises it. Existing OAuth/bearer enrollment and calls without a key remain compatible.
+The October 26 gateway source adds optional `_siconnectOperationKey` to advertised tool arguments. It is now deployed to the existing endpoint/bindings in the previously verified account, with actual same-principal phone read/write acceptance. Refresh client tool discovery; see [pass 14](history/engineering-pass-14.md). Use this field only when the discovered schema advertises it. Existing OAuth/bearer enrollment and calls without a key remain compatible.
 
 For one intended mutation, generate and retain a unique operation key before its first call. For example:
 

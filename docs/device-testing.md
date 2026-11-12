@@ -1,28 +1,27 @@
 # Device testing
 
-## Current source and next acceptance — November 6, 2026
+## Current
 
-Code 21 / schema 11 is installed with the compatible signer. The [source audit](source-audit-2026-11-06.md) records 215 passing host tests plus focused physical native/storage/Calculator/Maps and normal-process recovery checks. Wider device acceptance remains open; older code-20 evidence is in [pass 18](engineering-pass-18.md).
+Current version, verification and open acceptance work are kept in one place: [status](status.md). Run focused instrumentation classes that cover the code you changed (see the commands below), keep the existing signer, and restore the shared-screen Accessibility service afterwards if Android disconnects it.
 
-The compatible code-21 update preserved the signer, enrollment and saved records. Twenty-four focused physical cases plus three process-death scenarios now pass, including commute authentication cancellation/recreation, Calculator/Maps private launch and caller-lifetime/queued-open/revocation behavior. Next prioritize genuine authenticated commute success with the original stored request, policy-routed location consent, deferred startup failure presentation and deliberately stalled private-launch cleanup. Then use the [device acceptance queue](next-steps.md#device-acceptance). Do not reset data or change grants to make a test pass.
 
 ## Historical code-18 checkpoint
 
-See [pass 16](engineering-pass-16.md) for its retention/migration/large-record/retry/UI checks and then-current host totals. That pass used code 18/schema 11. Retention tests target disposable databases and leave the owner's policy disabled. UI tests must explicitly retrieve interactive accessibility windows; use all-display window discovery on the Fold. Genuine owner authentication and the full Fold/font/lifecycle matrix remain separate acceptance work. Historical checkpoints below describe their original installed artifacts.
+See [pass 16](history/engineering-pass-16.md) for its retention/migration/large-record/retry/UI checks and then-current host totals. That pass used code 18/schema 11. Retention tests target disposable databases and leave the owner's policy disabled. UI tests must explicitly retrieve interactive accessibility windows; use all-display window discovery on the Fold. Genuine owner authentication and the full Fold/font/lifecycle matrix remain separate acceptance work. Historical checkpoints below describe their original installed artifacts.
 
 ## October 26 code-14 checkpoint
 
-[Pass 14](engineering-pass-14.md) records seven focused physical passes, the corrected framework-only minified-installation checkpoint, twelve independently correlated successful live Grok/SDK request records, and actual keyed read/write deduplication with exact-file cleanup. The final installation is an optimized code-14 APK with the existing development signer; both disposable test packages are absent. The earlier mixed Grok baseline and failed test-runner attempts are retained as limits, not silently counted as passes. General connection/owner UI acceptance remains incomplete. Prefer checks tied to a specific defect or change; avoid repeating the entire device matrix.
+[Pass 14](history/engineering-pass-14.md) records seven focused physical passes, the corrected framework-only minified-installation checkpoint, twelve independently correlated successful live Grok/SDK request records, and actual keyed read/write deduplication with exact-file cleanup. The final installation is an optimized code-14 APK with the existing development signer; both disposable test packages are absent. The earlier mixed Grok baseline and failed test-runner attempts are retained as limits, not silently counted as passes. General connection/owner UI acceptance remains incomplete. Prefer checks tied to a specific defect or change; avoid repeating the entire device matrix.
 
 ## October 26 code-13 checkpoint
 
-[Pass 13](engineering-pass-13.md) records an in-place compatible-signer update to 0.6.0-dev.5 / code 13 / schema 10. The 21-case physical batch had 20 passes and one explicit unplugged-phone precondition failure because USB was charging the phone; it is not a full-suite pass. Native execution/idempotency, managed files, exact reminder delivery/reconciliation, scheduler/manual-run, screen-lease and isolated SQLite/alert cases were exercised. All five original agents/grants, three reminders, two automations and the selected document-root row matched before/after; SQLite integrity passed.
+[Pass 13](history/engineering-pass-13.md) records an in-place compatible-signer update to 0.6.0-dev.5 / code 13 / schema 10. The 21-case physical batch had 20 passes and one explicit unplugged-phone precondition failure because USB was charging the phone; it is not a full-suite pass. Native execution/idempotency, managed files, exact reminder delivery/reconciliation, scheduler/manual-run, screen-lease and isolated SQLite/alert cases were exercised. All five original agents/grants, three reminders, two automations and the selected document-root row matched before/after; SQLite integrity passed.
 
 Calendar writes, new SAF writes, genuine owner authentication cancellation, the concurrent reminder cancellation matrix and network/reboot/Fold acceptance were not added by this batch. Read the exact selection and limits in the report. Gateway retry-key protocol tests use a local fixture; hosted deployment and physical keyed-result recovery remain pending. Host development shutdown and regenerable-artifact cleanup are described in [repository hygiene](repository-hygiene.md).
 
 ## Pass 12 fresh evidence
 
-See [the pass 12 report](engineering-pass-12.md) for three actual future scheduled health runs (first screen-off/locked), two genuine owner Inbox acceptances, eleven distinct passing physical alert/migration/retention/SAF cases and final seven-call hosted native/Binder smoke. The selected disposable SAF root completed create/write/read/hash/rename/delete/absence. Its fixture identity is root-constrained and removed after the run. Cancellation was not verified because both Inbox prompts were approved. Calendar still requires a dedicated writable test resource.
+See [the pass 12 report](history/engineering-pass-12.md) for three actual future scheduled health runs (first screen-off/locked), two genuine owner Inbox acceptances, eleven distinct passing physical alert/migration/retention/SAF cases and final seven-call hosted native/Binder smoke. The selected disposable SAF root completed create/write/read/hash/rename/delete/absence. Its fixture identity is root-constrained and removed after the run. Cancellation was not verified because both Inbox prompts were approved. Calendar still requires a dedicated writable test resource.
 
 A real hosted client-abort test also retrieved the original successful disposable shell result with exactly one side effect and exact-file cleanup. This does not prove a Durable Object restart. The test schedule is now disabled and its history retained. A failed initial SAF harness and a cleanup-runner initialization error are recorded alongside their corrected results. Instrumentation-induced foreground-service restrictions remain separate from ordinary process recovery. Final background APK replacement restored the saved gateway without launching an Activity. These results do not establish a fresh reboot, network-transition matrix, full Fold/font QA, provider application regression or quiet battery study.
 
@@ -30,9 +29,9 @@ Earlier sections below are historical evidence, with their original versions and
 
 ## October 21, 2026 checkpoint
 
-Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](engineering-pass-8.md) for limitations and preserved initial failures.
+Fresh update: the normal-process semantic fixture passed in 3.393 seconds after owner restoration, including text/readback, click, checkbox, scroll, waits/cancellation, stale/protected/password exclusion, back/home and lease checks. The service remained bound. Grokbot and Hermes completed fresh native/shell read-only pairs; Dots remains pending safe client access. See [pass 8](history/engineering-pass-8.md) for limitations and preserved initial failures.
 
-Latest verification: [pass 8](engineering-pass-8.md) records 44 core, 36 Android JVM, 13 Python and ten gateway tests, two new physical Inbox/migration cases and seven fresh hosted checks. The initial pending semantic sequence subsequently passed; real owner-authenticated diagnostics form-save/readback also passed. The remaining authentication/lifecycle matrix, Inbox owner acceptance and selected Calendar/SAF writes remain separate pending checks. Android instrumentation start/finish force-stopped the app and left enabled accessibility in Android’s crashed set. Batch instrumentation before owner restores special access, then prefer `tools/semantic_ui_smoke.py` in the normal process. Its screen preflight fails before creating credentials when locked/off/unknown. Do not count that refusal as a passing semantic test. Historical sections below are not fresh reruns.
+Latest verification: [pass 8](history/engineering-pass-8.md) records 44 core, 36 Android JVM, 13 Python and ten gateway tests, two new physical Inbox/migration cases and seven fresh hosted checks. The initial pending semantic sequence subsequently passed; real owner-authenticated diagnostics form-save/readback also passed. The remaining authentication/lifecycle matrix, Inbox owner acceptance and selected Calendar/SAF writes remain separate pending checks. Android instrumentation start/finish force-stopped the app and left enabled accessibility in Android’s crashed set. Batch instrumentation before owner restores special access, then prefer `tools/semantic_ui_smoke.py` in the normal process. Its screen preflight fails before creating credentials when locked/off/unknown. Do not count that refusal as a passing semantic test. Historical sections below are not fresh reruns.
 
 Target physically exercised October 20, 2026: Galaxy Z Fold 7 SM-F966U, Android 17/API 37, One UI 9. Always select the current authorized serial from `adb devices -l`; do not copy a private serial into documentation.
 
@@ -154,7 +153,8 @@ For the remaining real owner flow, unlock the phone and leave its screen availab
 Use the actual authorized serial from `adb devices -l`:
 
 ```sh
-python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owner-inbox.json setup
+# The state file holds a session token: keep it in a private directory, e.g. PRIVATE_DIR=$(mktemp -d) (mode 0700).
+python3 tools/inbox_owner_smoke.py --serial <serial> --state "$PRIVATE_DIR/siconnect-owner-inbox.json" setup
 ```
 
 This debug-only setup creates a random expiring principal scoped to `proposals.*` and `device.status`, then submits two real safe proposals through authenticated loopback. It returns to SIConnect. Credentials remain in the temporary session file and app-private session record; no token is printed. It does not approve anything.
@@ -165,13 +165,22 @@ This debug-only setup creates a random expiring principal scoped to `proposals.*
 4. Read authoritative proposal status, then remove only the disposable credentials/principal and withdraw any unaccepted fixtures:
 
 ```sh
-python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owner-inbox.json status
-python3 tools/inbox_owner_smoke.py --serial <serial> --state /tmp/siconnect-owner-inbox.json cleanup
+python3 tools/inbox_owner_smoke.py --serial <serial> --state "$PRIVATE_DIR/siconnect-owner-inbox.json" status
+python3 tools/inbox_owner_smoke.py --serial <serial> --state "$PRIVATE_DIR/siconnect-owner-inbox.json" cleanup
 ```
 
-Accepted proposal/request history is retained for investigation. Expired credentials do not prevent exact local session cleanup; any failed withdrawal is reported separately. A locked/off/unknown-screen setup refuses before creating credentials or changing tasks. Pass 9 encountered that precondition and did **not** execute the human accept/cancel flow. Calendar/SAF tests still require explicit disposable resources; the managed-file folder is not an SAF substitute. Full evidence and initial failures: [engineering pass 9](engineering-pass-9.md).
+Accepted proposal/request history is retained for investigation. Expired credentials do not prevent exact local session cleanup; any failed withdrawal is reported separately. A locked/off/unknown-screen setup refuses before creating credentials or changing tasks. Pass 9 encountered that precondition and did **not** execute the human accept/cancel flow. Calendar/SAF tests still require explicit disposable resources; the managed-file folder is not an SAF substitute. Full evidence and initial failures: [engineering pass 9](history/engineering-pass-9.md).
 
 
 ## Pass 10 verification boundary
 
-Targeted physical instrumentation: 11 passed (retention 3, proposal/migration 4, SPAKE2 crypto 3, nonexportable-Keystore TLS/exporter 1). The TLS test uses a disposable local TLS peer and is not adbd pairing. Two initial TLS attempts failed due to Keystore padding incompatibility before the raw-signing fix passed. Native-only hosted calls succeeded; later seven hosted checks and four Grokbot calls proved restored original Binder shell UID 2000. After the initial unsuccessful report, actual owner-confirmed pairing passed. Raw shell v2 fixed the reproduced PTY daemon-start failure. Local bootstrap, repeated daemon recovery, ordinary process death and one explicitly authorized reboot passed with fresh hosted UID 2000. See the detailed report for Mac UI assistance and idle-transport limits. Owner Inbox authentication, designated Calendar/SAF CRUD and the broader lifecycle matrix remain open. See [pass 10](engineering-pass-10.md).
+Targeted physical instrumentation: 11 passed (retention 3, proposal/migration 4, SPAKE2 crypto 3, nonexportable-Keystore TLS/exporter 1). The TLS test uses a disposable local TLS peer and is not adbd pairing. Two initial TLS attempts failed due to Keystore padding incompatibility before the raw-signing fix passed. Native-only hosted calls succeeded; later seven hosted checks and four Grokbot calls proved restored original Binder shell UID 2000. After the initial unsuccessful report, actual owner-confirmed pairing passed. Raw shell v2 fixed the reproduced PTY daemon-start failure. Local bootstrap, repeated daemon recovery, ordinary process death and one explicitly authorized reboot passed with fresh hosted UID 2000. See the detailed report for Mac UI assistance and idle-transport limits. Owner Inbox authentication, designated Calendar/SAF CRUD and the broader lifecycle matrix remain open. See [pass 10](history/engineering-pass-10.md).
+
+## Termux recovery harness
+
+`tools/termux_recovery.py --serial <serial> [--output-dir <private dir>]` runs three finite real Termux cases against the installed debug app and test APK:
+- normal command execution as the Termux UID;
+- a timeout followed by a real late callback, retrieved by the same ID without replay;
+- death of SIConnect's own process while a Termux command is running, followed by normal-process restoration.
+
+It uses only a disposable fixture client and removes it unless `--keep-client` is given. It never force-stops Termux, kills the daemon, reads credentials or launches an Activity. Use `--only-process-death` to rerun just the third case. Keep its evidence outside the repository, and restore the Accessibility service afterwards if instrumentation disconnected it.

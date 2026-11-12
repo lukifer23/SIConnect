@@ -1,6 +1,6 @@
 # Current scope, gaps and build plan
 
-Updated November 7, 2026. Current installed checkpoint: **0.6.0-dev.19 / code 27 / main SQLite 12 / 112 observed phone capabilities**. Managed timers, private Messages reading, staged recovery, editable agent names and authenticated native Codex command execution now pass focused acceptance. Read [pass 22](engineering-pass-22.md) for the current result and limits, [project status](project-status.md) and [the preceding audit](source-audit-2026-11-06.md). Dedicated Codex phone-MCP pairing and fresh client catalog refresh remain separate.
+Updated November 7, 2026. Current installed checkpoint: **0.6.0-dev.19 / code 27 / main SQLite 12 / 112 observed phone capabilities**. Managed timers, private Messages reading, staged recovery, editable agent names and authenticated native Codex command execution now pass focused acceptance. Read [pass 22](../engineering-pass-22.md) for the current result and limits, [project status](project-status.md) and [the preceding audit](../source-audit-2026-11-06.md). Dedicated Codex phone-MCP pairing and fresh client catalog refresh remain separate.
 
 Historical code-26 host/device validation and expanded UI acceptance are recorded in [pass 21](engineering-pass-21.md).
 The [code-25 native/background checkpoint](engineering-pass-20.md) records 207 host tests, eight focused device cases, actual Termux timeout/PID-death recovery, native Codex sign-in verification and the existing Dot catalog refreshed to 105 tools.
@@ -41,7 +41,7 @@ Code 21 closes the dispatcher wait gap: current authority is rechecked when the 
 
 ## Background recovery and caller-lifetime increment
 
-Code 20 binds private resources to the actual calling process’s Binder token, with caller-generation checks and cleanup after interrupted launches. Owner-only capabilities require both the local-owner principal and trusted origin in the common policy engine. Fixed, policy-routed bridge maintenance can use a ten-second own-package startup allowance after Android rejects normal startup; it preserves saved enablement and advanced/backend controls. Existing phone-local recovery is now verified after actual daemon death without host bootstrap. Native controller recovery and cold bridge restoration also pass while locked. The private-window interruption rerun was still pending in [pass 18](engineering-pass-18.md); the awake/unlocked caller/backend-death cases now pass on code 21, as recorded in [the current audit](source-audit-2026-11-06.md#connected-device-acceptance).
+Code 20 binds private resources to the actual calling process’s Binder token, with caller-generation checks and cleanup after interrupted launches. Owner-only capabilities require both the local-owner principal and trusted origin in the common policy engine. Fixed, policy-routed bridge maintenance can use a ten-second own-package startup allowance after Android rejects normal startup; it preserves saved enablement and advanced/backend controls. Existing phone-local recovery is now verified after actual daemon death without host bootstrap. Native controller recovery and cold bridge restoration also pass while locked. The private-window interruption rerun was still pending in [pass 18](engineering-pass-18.md); the awake/unlocked caller/backend-death cases now pass on code 21, as recorded in [the current audit](../source-audit-2026-11-06.md#connected-device-acceptance).
 
 A retained five-minute background observation and the real unplugged native health/cooldown check close specific measurement/acceptance gaps, with no battery or broad reliability claim. Original owner data and permissions remain protected.
 
@@ -51,7 +51,7 @@ Code 19 adds nine real `headless.*` operations and `commute.route_private` throu
 
 Agents can now be restricted to native background and private-display tools. Arbitrary shell and all unspecified/shared-screen interaction modes are blocked before standing grants. Owner-authenticated private app allowances remain separate from scopes and existing shared-screen permissions. Existing grants are unchanged by the update.
 
-The actual Samsung platform keeps ordinary virtual displays in physical power group 0 even with the own-group flag. Broad locked/off UI needs a legitimate companion virtual device or OEM ComputerControl provisioning and acceptance. No extra manifest permission alone fixes it. The implementation refuses locked/sleeping private UI and never requests physical wake or a shared-screen fallback. See [the complete execution contract](private-app-execution.md) and [pass 17](engineering-pass-17.md) for actual acceptance rather than inferring it from source.
+The actual Samsung platform keeps ordinary virtual displays in physical power group 0 even with the own-group flag. Broad locked/off UI needs a legitimate companion virtual device or OEM ComputerControl provisioning and acceptance. No extra manifest permission alone fixes it. The implementation refuses locked/sleeping private UI and never requests physical wake or a shared-screen fallback. See [the complete execution contract](../private-app-execution.md) and [pass 17](engineering-pass-17.md) for actual acceptance rather than inferring it from source.
 
 ## Previous retention increment
 
@@ -63,7 +63,7 @@ This closes the first implementation item in the previous roadmap. It does not i
 
 ## Build order from here
 
-Without a device, prioritize retained owner-operation state, paged storage projections and restart/recovery fault coverage. These have concrete exit criteria in [the November 6 audit](source-audit-2026-11-06.md#remaining-work-and-build-order). The following device-dependent queue resumes when a phone is available; it is not a reason to stop host engineering.
+Without a device, prioritize retained owner-operation state, paged storage projections and restart/recovery fault coverage. These have concrete exit criteria in [the November 6 audit](../source-audit-2026-11-06.md#remaining-work-and-build-order). The following device-dependent queue resumes when a phone is available; it is not a reason to stop host engineering.
 
 | Priority | Concrete next increment | Exit evidence |
 | --- | --- | --- |

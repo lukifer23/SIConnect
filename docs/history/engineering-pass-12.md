@@ -42,7 +42,7 @@ Debug APK: 45,297,886 bytes. Unsigned minified release: 4,814,882 bytes; it is n
 
 A 60.741-second development-contaminated profile recorded app PSS 69,835–74,262 KiB and RSS 177,192–180,324 KiB. A process change invalidated the whole-interval app CPU estimate; three valid subintervals consumed 0.15 CPU seconds over 43.894 seconds. The privileged process consumed 0.01 CPU seconds over 59.923 seconds (0.0167% of one core). These are development observations, not a matched idle comparison, battery estimate or completed soak.
 
-No dependency was added or cryptographic implementation replaced. Strict Gradle checksums, restricted JitPack, pinned LibADB/SPAKE2, OkHttp 5.5.1 and Bouncy Castle 1.86 remain. Publisher sources were consulted; npm audit is not a complete native supply-chain or legal-compliance audit. LGPL relinking/distribution review and the broader advisory inventory remain release gates. See [embedded ADB source and notices](../adb-bootstrap/README.md).
+No dependency was added or cryptographic implementation replaced. Strict Gradle checksums, restricted JitPack, pinned LibADB/SPAKE2, OkHttp 5.5.1 and Bouncy Castle 1.86 remain. Publisher sources were consulted; npm audit is not a complete native supply-chain or legal-compliance audit. LGPL relinking/distribution review and the broader advisory inventory remain release gates. See [embedded ADB source and notices](../../adb-bootstrap/README.md).
 
 Broad authorized shell still carries shell-identity authority beyond narrow native UI grants. This pass adds no remote ADB bootstrap endpoint. Neither a network reconnect nor alert suppression authorizes replaying an uncertain mutation.
 

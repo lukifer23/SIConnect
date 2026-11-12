@@ -6,7 +6,7 @@ Code 21 uses the existing bounded process supervisor for private app launches, a
 
 ## Pass 18 background observation
 
-Code 20 recorded 301.074 seconds and 11 samples with continuous process/start/boot/version identity: app CPU 0.41 seconds over 299.955 valid seconds (0.1367% of one core), daemon 0.00 seconds at 100-Hz counter resolution, PSS 56,166–60,373 KiB. Foreground-service importance (125) and keyguard showing were observed throughout. This was an operator-annotated background development interval, with ADB observation and no issued app test jobs, not a matched comparison, battery study or long soak. The old power-dump bound truncated this OEM dump; unknown fields remain unknown. Methodology revision 3 raises only that bound to 256 KiB and records probe bounds. See [pass 18](engineering-pass-18.md).
+Code 20 recorded 301.074 seconds and 11 samples with continuous process/start/boot/version identity: app CPU 0.41 seconds over 299.955 valid seconds (0.1367% of one core), daemon 0.00 seconds at 100-Hz counter resolution, PSS 56,166–60,373 KiB. Foreground-service importance (125) and keyguard showing were observed throughout. This was an operator-annotated background development interval, with ADB observation and no issued app test jobs, not a matched comparison, battery study or long soak. The old power-dump bound truncated this OEM dump; unknown fields remain unknown. Methodology revision 3 raises only that bound to 256 KiB and records probe bounds. See [pass 18](history/engineering-pass-18.md).
 
 ## Pass 12 development observations
 
@@ -18,15 +18,15 @@ A 60.741-second development interval recorded app PSS 69,835–74,262 KiB and RS
 
 ## Pass 11 observations
 
-Code 10 Settings loads only the visible section's data, replacing its earlier all-subsystem refresh on every request. No numeric performance improvement is claimed without matched measurements. `device.runtime` now accepts optional `checkDatabase=true`; ordinary sampling omits SQLite integrity work. One debug snapshot measured 145,852 KiB PSS and no system low-memory condition. This is a development snapshot, not a quiet battery/idle study. See [pass 11](engineering-pass-11.md).
+Code 10 Settings loads only the visible section's data, replacing its earlier all-subsystem refresh on every request. No numeric performance improvement is claimed without matched measurements. `device.runtime` now accepts optional `checkDatabase=true`; ordinary sampling omits SQLite integrity work. One debug snapshot measured 145,852 KiB PSS and no system low-memory condition. This is a development snapshot, not a quiet battery/idle study. See [pass 11](history/engineering-pass-11.md).
 
 ## Pass 9 checkpoint — October 21, 2026
 
-Pass-9 agent-use observation: 61.011 seconds/five samples, app CPU 0.42 seconds over 59.983 valid seconds (0.7002% of one core), daemon 0.01/59.965 seconds (0.0167%), PSS 82,630–88,557 KiB. This was not a quiet-idle or before/after comparison. Metadata-only Inbox queries avoid decoding private argument payloads; no quantified speedup/token saving is claimed. The retained 24-hour soak is still incomplete; see [pass 9](engineering-pass-9.md) for interim counts and limitations.
+Pass-9 agent-use observation: 61.011 seconds/five samples, app CPU 0.42 seconds over 59.983 valid seconds (0.7002% of one core), daemon 0.01/59.965 seconds (0.0167%), PSS 82,630–88,557 KiB. This was not a quiet-idle or before/after comparison. Metadata-only Inbox queries avoid decoding private argument payloads; no quantified speedup/token saving is claimed. The retained 24-hour soak is still incomplete; see [pass 9](history/engineering-pass-9.md) for interim counts and limitations.
 
 ## October 21, 2026 checkpoint
 
-Pass 8 development sample: 61.423 seconds, five observations; app CPU 0.45 s / 60.347 valid seconds (0.7457% of one core), daemon 0.02 s / 60.382 s (0.0331%); app PSS 65,864–88,913 KiB and RSS 200,528–222,124 KiB. Hosted calls overlapped collection. This is not idle/battery evidence or a controlled before/after comparison. At that checkpoint, sparse collection was still running and unfinished; see [pass 8](engineering-pass-8.md).
+Pass 8 development sample: 61.423 seconds, five observations; app CPU 0.45 s / 60.347 valid seconds (0.7457% of one core), daemon 0.02 s / 60.382 s (0.0331%); app PSS 65,864–88,913 KiB and RSS 200,528–222,124 KiB. Hosted calls overlapped collection. This is not idle/battery evidence or a controlled before/after comparison. At that checkpoint, sparse collection was still running and unfinished; see [pass 8](history/engineering-pass-8.md).
 
 Measurements below are short development observations on the actual Fold. They are not a battery-life study or a guarantee of continuous Android background execution.
 
@@ -109,6 +109,6 @@ One fresh seven-call hosted sequence reported six native round trips of 276/295/
 
 ## Code-14 measured checkpoint
 
-[Pass 14](engineering-pass-14.md) separates native execution from network/client time. The initial real native status/battery lifecycles were 41/36 ms even while response delivery was interrupted. The final Grok native battery reads recorded 21/15 ms, actual shell identity 56 ms and runtime 80 ms. A separate official-SDK hosted sample measured ordinary calls at 141–206 ms and runtime with SQLite integrity checking at 517 ms. This small, uncontrolled sample is not a speedup percentage or latency percentile. Whole Grok conversation time included unrelated owner work and UI orchestration.
+[Pass 14](history/engineering-pass-14.md) separates native execution from network/client time. The initial real native status/battery lifecycles were 41/36 ms even while response delivery was interrupted. The final Grok native battery reads recorded 21/15 ms, actual shell identity 56 ms and runtime 80 ms. A separate official-SDK hosted sample measured ordinary calls at 141–206 ms and runtime with SQLite integrity checking at 517 ms. This small, uncontrolled sample is not a speedup percentage or latency percentile. Whole Grok conversation time included unrelated owner work and UI orchestration.
 
 Discovery now shares one provider-access measurement across nine document tools for the tested selected root; twenty metadata refreshes reuse the bounded UI snapshot. Execution-time authorization remains fresh. Validated-network callbacks wake timed reconnect backoff, but the cause of the baseline socket interruption and the full network/Doze matrix remain open. The optimized APK is 4,896,897 bytes; its smaller size is not proof of lower CPU, PSS or battery use. Next measure gateway catalog/schema construction, unavailable providers, connection transitions and matched quiet resource/database growth.

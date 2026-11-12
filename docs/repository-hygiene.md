@@ -1,11 +1,6 @@
 # Repository hygiene and shutdown
 
-The current control-center refresh is **0.6.0-dev.18 / code 26 / SQLite 12** with the existing compatible development signer. It restores the disabled package in place and preserves owner records and credentials. See [current status and verification](project-status.md). Code-21 evidence below describes the preceding backend milestone.
-
-Current code-26 host/device validation and expanded UI acceptance are recorded in [pass 21](engineering-pass-21.md).
-The [code-25 native/background checkpoint](engineering-pass-20.md) records 207 host tests, eight focused device cases, actual Termux timeout/PID-death recovery, native Codex sign-in verification and the existing Dot catalog refreshed to 105 tools.
-The earlier code-24 checkpoint fixed observed private scrolling/capture and added phone transport timing. See [pass 19](engineering-pass-19.md) for that historical evidence; code 26 is the current installed checkpoint.
-The preceding source and installed compatible debug milestone was **code 21 / schema 11**; see [the November 6 review](source-audit-2026-11-06.md) for current preservation, private-display/recovery and hosted readiness checks. Private checkpoints and device evidence stay outside Git. Earlier pass-14 optimized artifacts are historical and cannot downgrade the schema-12 database. The inventory/cleanup below records the earlier pass-13 cleanup; retain active incremental build caches.
+Current version, verification and open acceptance work are kept in one place: [status](status.md).
 
 October 26, 2026. This checkpoint covers SIConnect source, its generated local artifacts and its development processes. Other projects, owner applications and shared system caches are outside the cleanup scope.
 
@@ -30,7 +25,7 @@ Current project-specific `/tmp` validation databases/APK copies, expired screens
 
 One compatible **code-13 debug recovery APK** and private metadata (version, schema, APK SHA-256, Android source commit and installed-signer comparison) are retained at `/tmp/siconnect-recovery-20261026`. This directory is private and outside Git. `/tmp` is ephemeral: move that artifact to an owner-controlled private destination if long-term retention is needed. It is an APK recovery convenience, not a backup of device data or a production-signed release.
 
-Preserve `local.properties`, `gateway/.dev.vars`, Android Keystore/debug signing identity and any existing owner signing material. Build reports are summarized in [pass 13](engineering-pass-13.md); CI can regenerate them. Never clean active caches while builds are running.
+Preserve `local.properties`, `gateway/.dev.vars`, Android Keystore/debug signing identity and any existing owner signing material. Build reports are summarized in [pass 13](history/engineering-pass-13.md); CI can regenerate them. Never clean active caches while builds are running.
 
 ## Cleanup result
 

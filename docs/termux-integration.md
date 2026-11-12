@@ -14,7 +14,7 @@ Before IPC, a separate SQLite journal records the original engine request ID and
 
 A background Termux process may lack the interactive termux-exec path shim. A launcher whose shebang names /usr/bin/env can fail with exit 126 even though Codex works in the terminal. For npm JavaScript entrypoints, use Termux's node executable with the script path as its first argument; the owner saved-sign-in check handles that route. Standalone/custom native launchers remain supported. Saved sign-in is not a verified model request, and TLS/DNS configuration belongs to the owner's existing Termux environment. Authentication output is never printed by the owner check.
 
-[Code-25 physical acceptance and remaining limits](engineering-pass-20.md).
+[Code-25 physical acceptance and remaining limits](history/engineering-pass-20.md).
 
 ## Noninteractive Codex execution — build 27
 
@@ -34,6 +34,6 @@ The inspected phone Codex MCP configuration contained **zero servers**. Launchin
 
 ### Tested Android compatibility launcher
 
-The reviewed `tools/termux/codex-siconnect-android.sh` is bundled as `assets/codex-siconnect-android.sh`. It requires the owner’s existing Termux `proot`, Node, Codex npm installation, readable DNS file and trusted CA bundle. It binds Termux’s `etc/resolv.conf` to `/etc/resolv.conf`, preserves an existing `SSL_CERT_FILE` or selects Termux’s trusted `etc/tls/cert.pem`, and launches Node explicitly to avoid the npm shebang failure. TLS verification stays enabled. It neither installs dependencies nor changes PATH, global configuration, credentials or existing launchers.
+The reviewed repository script `tools/termux/codex-siconnect-android.sh` is packaged into the APK as the asset `codex-siconnect-android.sh` (`app/build.gradle.kts` adds `tools/termux` as an asset source); CI lints it with shellcheck. It requires the owner’s existing Termux `proot`, Node, Codex npm installation, readable DNS file and trusted CA bundle. It binds Termux’s `etc/resolv.conf` to `/etc/resolv.conf`, preserves an existing `SSL_CERT_FILE` or selects Termux’s trusted `etc/tls/cert.pem`, and launches Node explicitly to avoid the npm shebang failure. TLS verification stays enabled. It neither installs dependencies nor changes PATH, global configuration, credentials or existing launchers.
 
 On the accepted test phone the exact script was explicitly installed without overwriting differing files at `/data/data/com.termux/files/home/.siconnect/bin/codex-android`. Pass that path as `androidCompatibilityLauncher`, omitting `nodeEntrypoint`. APK updates bundle the asset but do not install/execute the script automatically. The first direct-Node model run’s late failure is retained; it was not replayed. The compatibility run’s actual command output verified the Termux UID and unique marker with native exit 0 and completed model turn in 10.04 seconds. This is acceptance on the tested device, not an official Android-support claim or a universal latency guarantee.

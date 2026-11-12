@@ -78,3 +78,24 @@ Deferred, with reasons:
 - **Shared UI action and request-follow holders.** The owner-request follow pattern repeats in Recovery, Private workspaces, Termux and Diagnostics. A `rememberOwnerRequest` holder is worth doing alongside a dedicated UI test.
 - **Android package-name validation.** Its variants differ: single-segment names and digit-leading segments are accepted at some sites and not others. Unifying them changes what is accepted, so it needs a deliberate decision.
 - **A shared Termux/Clock journal base.** The two have different orphan and phase semantics; only the transaction helper is shared.
+
+## Batch 4: documentation and CI
+
+- **Docs consolidated:**
+  - [status](status.md) is the single current status page.
+  - Passes 6–21, the October 26 audit and the superseded `project-status.md`, `next-steps.md` and `build-plan.md` moved unchanged to [history](history/README.md).
+  - All 252 internal links were rewritten and checked.
+  - Stale "current version" preambles (code 21–26) and the paragraph copied into seven docs were replaced by a pointer to status.
+  - The README index is regrouped (start here, reference, engineering record).
+  - README and DISCLAIMER describe both privileged backends and use the actual UI labels.
+  - SKILL.md lists the typed tools (`messages_recent`, Clock, Termux, Codex, headless, requests, recovery) and the new stop-and-report errors.
+  - Gateway deployment explains replacing the committed KV ID and origin before the first deploy.
+- **Build:** `core` no longer requests a JDK 17 toolchain with no resolver. It compiles on the Gradle JDK (21) and emits Java 17 bytecode, so a machine with only JDK 21 builds it.
+- **CI:**
+  - Actions are pinned to release commit SHAs.
+  - Workflows get concurrency groups and job timeouts.
+  - `py_compile` covers every tracked Python file, and shellcheck lints the Termux launcher shipped in the APK.
+  - The hygiene check also rejects `.p12`, `.pem`, `.key`, `signing.properties`, `local.properties` and `.dev.vars`.
+- **Tools:**
+  - `start_builtin.py` selects `base.apk` among split APKs, reports a missing UID clearly, and waits for the old daemon to exit before starting a new one.
+  - Device-testing docs keep the Inbox harness token in a private directory and document `termux_recovery.py`.

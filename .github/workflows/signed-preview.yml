@@ -3,22 +3,26 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: signed-apk
+  cancel-in-progress: false
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: android-signing
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: '21'
           check-latest: true
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - name: Load existing owner signing identity
         env:
@@ -61,7 +65,7 @@ jobs:
           report={'commit':os.environ['GITHUB_SHA'],'versionName':item['versionName'],'versionCode':item['versionCode'],'applicationId':metadata['applicationId'],'databaseVersion':int(schema_versions[0]),'signerSha256':digest,'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'bytes':apk.stat().st_size,'buildRun':os.environ['GITHUB_RUN_ID']}
           (out/'build-metadata.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: owner-signed-apk
           path: signed-artifact/

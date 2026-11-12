@@ -2,7 +2,7 @@
 
 ## Pass 9 checkpoint — October 21, 2026
 
-Proposal list metadata is stored transactionally alongside its immutable detail payload in SQLite v8. Recovery uses the existing maintenance loop and device execution identity, with no Cloudflare action queue or second execution engine. Current original-agent policy is checked before owner authentication and again on acceptance; the execution engine remains authoritative afterward. See [pass 9](engineering-pass-9.md).
+Proposal list metadata is stored transactionally alongside its immutable detail payload in SQLite v8. Recovery uses the existing maintenance loop and device execution identity, with no Cloudflare action queue or second execution engine. Current original-agent policy is checked before owner authentication and again on acceptance; the execution engine remains authoritative afterward. See [pass 9](history/engineering-pass-9.md).
 
 Short records of decisions and the alternatives that were rejected. Newest last.
 
@@ -97,7 +97,7 @@ Use the existing engine and authenticated privileged Binder for real virtual dis
 
 ## Caller-owned workspace lifetime and owner-only background maintenance — October 27, 2026
 
-The actual calling process supplies a Binder lifetime token. Session generations and queued admission use that caller lifetime rather than the provider attachment used for reconnecting authority. A running launch that completes after caller death releases its resources before the next operation. Owner-only capability metadata is enforced by the shared policy engine using both principal and origin. Background bridge assistance is a fixed, local-owner engine operation using a ten-second own-package startup allowance under existing controls; it changes no saved enablement or permanent power exemption. Phone-only daemon recovery was already implemented and now has real locked-phone acceptance without host bootstrap. See [pass 18](engineering-pass-18.md).
+The actual calling process supplies a Binder lifetime token. Session generations and queued admission use that caller lifetime rather than the provider attachment used for reconnecting authority. A running launch that completes after caller death releases its resources before the next operation. Owner-only capability metadata is enforced by the shared policy engine using both principal and origin. Background bridge assistance is a fixed, local-owner engine operation using a ten-second own-package startup allowance under existing controls; it changes no saved enablement or permanent power exemption. Phone-only daemon recovery was already implemented and now has real locked-phone acceptance without host bootstrap. See [pass 18](history/engineering-pass-18.md).
 
 ## Actual dispatch, caller deadlines and owner commute — November 6, 2026
 

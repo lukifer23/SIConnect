@@ -24,18 +24,28 @@ def main():
         parser.error('The selected phone is not connected and authorized.')
     def shell(command):
         return subprocess.check_output(['adb', '-s', serial, 'shell', command], text=True, timeout=20).strip()
-    apk = shell('pm path --user 0 dev.siconnect.app').splitlines()[0].removeprefix('package:')
+    # Split installs list several APKs; the daemon class lives in base.apk.
+    paths = [line.removeprefix('package:') for line in shell('pm path --user 0 dev.siconnect.app').splitlines() if line.startswith('package:')]
+    apk = next((p for p in paths if p.endswith('/base.apk')), paths[0] if paths else '')
     if not apk.startswith('/data/app/') or not apk.endswith('.apk'):
         raise RuntimeError('Install SIConnect first.')
     uid_lines = shell('cmd package list packages --user 0 -U dev.siconnect.app').splitlines()
     matches = [re.fullmatch(r'package:dev\.siconnect\.app uid:(\d+)', line) for line in uid_lines]
-    uid = next(int(m[1]) for m in matches if m)
+    uid = next((int(m[1]) for m in matches if m), None)
+    if uid is None:
+        raise RuntimeError('Could not read the SIConnect app UID from PackageManager.')
     running = shell('pidof siconnect_privileged || true')
     if running and args.restart:
         if not re.fullmatch(r'\d+(?: \d+)*', running):
             raise RuntimeError('Unexpected authority PID')
         shell('kill ' + running)
-        time.sleep(.3)
+        # The single-instance lock is released only when the old daemon exits.
+        for _ in range(25):
+            if not shell('pidof siconnect_privileged || true'):
+                break
+            time.sleep(.2)
+        else:
+            raise RuntimeError('The previous SIConnect authority did not exit; nothing was started.')
         running = ''
     if running:
         print('SIConnect authority is already started. Tap Check connection in SIConnect.')

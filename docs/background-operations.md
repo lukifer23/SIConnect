@@ -1,12 +1,12 @@
 # Background work and connection controls
 
-Current source and installed debug build are code 21. The [November 6 review](source-audit-2026-11-06.md) includes native original-result recovery, private caller/backend death and fresh hosted execution; older phone results below remain historical. Queued work now rechecks policy when its execution coroutine starts, and a workflow cannot extend its caller’s deadline. Cancellation before backend dispatch records a terminal no-effect outcome; effects already dispatched remain subject to verification/uncertainty.
+Current version, verification and open acceptance work are kept in one place: [status](status.md).
 
 SIConnect runs saved deterministic workflows through its existing scheduler, policy engine and device-side request store. A remote model or connected computer is not required to execute a saved native workflow. Android access, current local-automation grants and any required approval still apply to every step.
 
 ## Private app execution
 
-Native background APIs remain the first choice, including while locked when their platform permissions allow. Code 19 adds real app virtual displays with their own focus and no focus-stealing request. The owner can prohibit shared-screen actions for an agent, independently of private per-app permissions. The actual Samsung power grouping still requires the phone awake and unlocked for private UI. No wake, unlock or shared-screen fallback is requested. See [private app execution](private-app-execution.md) and [pass 17](engineering-pass-17.md) for tools, lifecycle and measured limits.
+Native background APIs remain the first choice, including while locked when their platform permissions allow. Code 19 adds real app virtual displays with their own focus and no focus-stealing request. The owner can prohibit shared-screen actions for an agent, independently of private per-app permissions. The actual Samsung power grouping still requires the phone awake and unlocked for private UI. No wake, unlock or shared-screen fallback is requested. See [private app execution](private-app-execution.md) and [pass 17](history/engineering-pass-17.md) for tools, lifecycle and measured limits.
 
 ## Device health scans
 
@@ -43,7 +43,7 @@ Native device readings do not require the privileged daemon. Remote calls requir
 
 Code 20 ties volatile private sessions to the actual caller process’s Binder lifetime. Provider reconnection does not restore a private session or replay its original request. Native original-result recovery and owner-enabled phone-local backend replacement have real locked-phone evidence. Code-21 private-window interruption now passes on the actual awake/unlocked phone, including real display removal and original-result no-replay checks.
 
-If Android refuses normal startup of an already enabled bridge, the local-owner runtime can submit fixed `system.restore_bridge` maintenance through the policy engine. With current advanced controls and the selected backend, it requests a ten-second startup allowance for SIConnect only, then requests service startup. Owner-only policy binds identity and origin; remote scopes cannot grant this role. The saved enablement preference is never changed. A service-start acknowledgement is separate from actual ONLINE state. See [pass 18](engineering-pass-18.md).
+If Android refuses normal startup of an already enabled bridge, the local-owner runtime can submit fixed `system.restore_bridge` maintenance through the policy engine. With current advanced controls and the selected backend, it requests a ten-second startup allowance for SIConnect only, then requests service startup. Owner-only policy binds identity and origin; remote scopes cannot grant this role. The saved enablement preference is never changed. A service-start acknowledgement is separate from actual ONLINE state. See [pass 18](history/engineering-pass-18.md).
 
 ## Connection history and remote access
 
@@ -63,6 +63,6 @@ After interrupted delivery, retrieve the original request outcome before decidin
 
 ## Verification scope
 
-See [engineering pass 12](engineering-pass-12.md) for the exact installed build, owner-interactive execution, hosted checks and remaining acceptance gaps. A future scheduled scan was observed with the screen off and locked, without manual Run now. Its six real readings succeeded and the next 15-minute slot advanced. A second scheduled run survived an in-place development update. These observations do not establish universal Doze timing or a new reboot result. The development update uses the original signing identity; public signed distribution remains a separate release milestone.
+See [engineering pass 12](history/engineering-pass-12.md) for the exact installed build, owner-interactive execution, hosted checks and remaining acceptance gaps. A future scheduled scan was observed with the screen off and locked, without manual Run now. Its six real readings succeeded and the next 15-minute slot advanced. A second scheduled run survived an in-place development update. These observations do not establish universal Doze timing or a new reboot result. The development update uses the original signing identity; public signed distribution remains a separate release milestone.
 
 Exact automations start their run directly from the exact alarm under a bounded wake lock, inside Android's idle allowlist window, instead of only enqueueing an ordinary WorkManager job that Doze can defer. A delayed WorkManager job remains as a durable watchdog if the process dies; a slot runs at most once.

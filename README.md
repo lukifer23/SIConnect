@@ -18,11 +18,9 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Current installed source: Android 0.6.0-dev.19 (versionCode 27), main SQLite schema 12, 112 observed phone capabilities.** The build adds managed native timers, bounded private Google Messages reading, a recovery center, editable agent names and noninteractive Codex execution through native Termux. All 234 host tests, 31 distinct physical cases, three normal-process recovery scenarios and real Messages/Codex command workflows pass. Existing enrollment and Full-control profiles are preserved. Dedicated Codex phone-MCP pairing and fresh client catalog refresh remain separate. See [current validation and limits](docs/engineering-pass-22.md), [Termux/Codex setup](docs/termux-integration.md) and [project status](docs/project-status.md).
+> **Current source: Android 0.6.0-dev.20 (versionCode 28), main SQLite schema 12, 112 observed phone capabilities.** Pass 23 fixes the November 11 audit findings: Termux admission lockout, honest outcomes for rejected writes, stranded requests, enrollment retry, exact automations under Doze, privileged-attach takeover, workflow command injection, gateway catalog robustness and revocation, and owner-screen issues. Existing enrollment and grants are preserved. The hosted gateway needs redeploying to pick up its part. See [status](docs/status.md) and [pass 23](docs/engineering-pass-23.md).
 
-The adaptive owner control center now includes an **Action Inbox** for agent-proposed follow-ups. Proposals stay inert until local acceptance; accepted actions still use the proposing agent's current permissions and the existing execution/approval engine. Agents can choose an installed app by name, package and version when configuring semantic standing access, with owner authentication required before expansion.
-
-Native semantic screen tools, Calendar Provider and SAF operations are implemented. Earlier physical checks passed the normal-process semantic workflow, owner-authenticated diagnostics save, two owner Inbox acceptances and a selected SAF round trip. Calendar CRUD, authentication cancellation and the remaining lifecycle/UI matrix stay open. Android instrumentation can leave an enabled Accessibility service disconnected or crashed; verify normal-process readiness and let the owner restore special access when required. No completed battery study or universal unattended privileged reboot recovery is claimed.
+Agent-proposed follow-ups appear in the **Action Inbox** and stay inert until the owner accepts them; accepted actions still use the proposing agent's current permissions. Native semantic screen tools, Calendar Provider, SAF documents, managed Clock timers, private Google Messages reading and native Termux/Codex execution are implemented; open physical acceptance is listed in [status](docs/status.md). Android instrumentation can leave the shared-screen Accessibility service disconnected; the owner restores it in Android settings. No battery study or universal unattended privileged reboot recovery is claimed.
 
 ## Design principles
 
@@ -35,13 +33,13 @@ Native semantic screen tools, Calendar Provider and SAF operations are implement
 
 ## Using the phone
 
-1. Open Home for separate native and device-control readiness. **Access** opens Settings, where Android grants and connected services are shown separately. **Gateway** manages the existing connection without creating another agent. Enable only the access needed for your workflow.
-2. Open Agents to select the exact bot identity and allow its capability families. Standing screen access for a selected app and broad privileged shell are separate deliberate permissions.
-3. Open Home’s Action Inbox to review proposed follow-ups. Accepting is separate from granting an agent new permission.
-4. Open Automations to choose a reminder, device health scan or configured commute check, review timing/permissions and save. Workflow cards identify whether the screen is needed. A future health scan ran with the screen off and locked and advanced its saved recurrence. Health workflow v3 adds persisted warning cooldowns, recovery margins and readable notification outcomes through the existing scheduler. Existing snapshot workflows offer an owner-confirmed upgrade; schedules are never enabled automatically.
-5. Open Gateway → Connection history for locally retained connection/interruption events. Disconnect remote gateway preserves agents and credentials; connecting again uses the saved enrollment. Block new remote actions is a separate control and does not terminate already executing work. See [background work and connection controls](docs/background-operations.md). Activity retains request results; pending approvals remain reviewable until resolved or expired.
+1. Open **Home** for native and device-control readiness. **Review** buttons open the relevant settings; **Connection details** manages the existing gateway connection without creating another agent. Enable only the access your workflow needs.
+2. Open **Agents** to select the exact bot identity and allow its capability families. Shared-screen access, per-app private access, arbitrary shell and Full control are separate, deliberate permissions; expanding any of them requires owner authentication.
+3. Open the **Action Inbox** from Home to review proposed follow-ups and their history. Accepting is separate from granting an agent new permission.
+4. Open **Automations** to choose a reminder, device health scan, commute check or installed workflow, review timing and permissions, and save. A custom workflow can request the typed capabilities it needs (never shell) with owner authentication. Automations can be run now, disabled or deleted; deleting keeps run history.
+5. **Connection details → Connection history** shows retained connection events. **Disconnect remote gateway** preserves agents and credentials. **Pause agent actions** on Home blocks new remote actions without stopping work already executing. See [background work and connection controls](docs/background-operations.md).
 
-Remote agents still use the same authenticated MCP endpoint. Existing OAuth connections do not need to be replaced for this update. See [permissions and owner controls](docs/permissions.md) for the exact setup and approval behavior.
+Remote agents use the same authenticated MCP endpoint; existing OAuth connections do not need to be replaced. See [permissions and owner controls](docs/permissions.md).
 
 ## Repository layout
 
@@ -56,10 +54,10 @@ Remote agents still use the same authenticated MCP endpoint. Existing OAuth conn
 
 ## Requirements
 
-- macOS or Linux with JDK 21 (the Gradle daemon is pinned to 21 via `gradle/gradle-daemon-jvm.properties`).
+- macOS or Linux with JDK 21 (the Gradle daemon is pinned to 21 via `gradle/gradle-daemon-jvm.properties`; all modules emit Java 17 bytecode, so no separate JDK 17 is needed).
 - Android SDK with platform `android-37.0` and build-tools 37.
 - An Android 12+ device (developed on a Galaxy Z Fold 7, Android 17 / One UI 9).
-- Optional: [Shizuku](https://shizuku.rikka.app/) for shell-uid privileged execution. No root required.
+- Optional advanced control: the **bundled privileged service** (started once per boot through phone-local Wireless debugging pairing or `tools/start_builtin.py`) or [Shizuku](https://shizuku.rikka.app/). Both run as the Android shell identity; no root required.
 - Optional: a Cloudflare account for the gateway.
 
 ## Quick start (host)
@@ -74,31 +72,20 @@ Device setup, gateway deployment and agent pairing are covered in [docs/developm
 
 ## Documentation
 
-- [Pass 23: audit fixes for liveness, outcome honesty and recovery](docs/engineering-pass-23.md)
-- [Pass 22: typed phone workflows, recovery UI and real Codex execution](docs/engineering-pass-22.md)
+Start here:
+- [Status: current build, verification and open work](docs/status.md)
+- [Development setup](docs/development-setup.md), [installation and signing](docs/installation.md), [phone setup](docs/phone-setup.md) and [gateway deployment](docs/gateway-deployment.md)
+- [Permissions and owner controls](docs/permissions.md), [security model](docs/security-model.md) and [troubleshooting](docs/troubleshooting.md)
 
-- [November 6 project review, implemented fixes and verification](docs/source-audit-2026-11-06.md)
-- [Current scope, completed foundation, gaps and build order](docs/build-plan.md)
-- [Private app execution, owner controls and platform limits](docs/private-app-execution.md)
-- [Pass 18: caller lifetime, locked background recovery and resource evidence](docs/engineering-pass-18.md)
-- [Pass 17: private displays and current acceptance](docs/engineering-pass-17.md)
-- [Pass 16: opt-in retention, replay protection and large-record reads](docs/engineering-pass-16.md)
-- [Pass 14: optimized single-app installation, live Grok results and performance fixes](docs/engineering-pass-14.md)
-- [Pass 13 device checkpoint, blockers and cleanup handoff](docs/engineering-pass-13.md)
-- [Repository hygiene, shutdown and rebuild](docs/repository-hygiene.md)
-- [October 26 source audit, implemented fixes and prioritized build plan](docs/source-audit-2026-10-26.md)
-- [Phone setup and recovery](docs/phone-setup.md) and [installation/signing](docs/installation.md)
-- [Pass 12 background scans, alert policy and owner verification](docs/engineering-pass-12.md)
-- [Pass 11 UI/recovery hardening and CI verification](docs/engineering-pass-11.md)
-- [Pass 10 evidence and open acceptance work](docs/engineering-pass-10.md)
-- [Architecture](docs/architecture.md)
-- [Architecture decisions](docs/architecture-decisions.md)
-- [Device audit (Galaxy Z Fold 7)](docs/adb-audit.md)
-- [Provider compatibility](docs/provider-compatibility.md)
-- [Security model](docs/security-model.md)
-- [Project status](docs/project-status.md) and [next steps](docs/next-steps.md)
-- [Gateway setup](docs/gateway-deployment.md), [owner permissions](docs/permissions.md) and [performance](docs/performance.md)
-- [Reusable Hermes phone-control skill](integrations/skills/siconnect/SKILL.md)
+Reference:
+- [Architecture](docs/architecture.md) and [architecture decisions](docs/architecture-decisions.md)
+- [Capability coverage](docs/capability-coverage.md), [private app execution](docs/private-app-execution.md), [background operations](docs/background-operations.md) and [Termux/Codex integration](docs/termux-integration.md)
+- [Provider compatibility](docs/provider-compatibility.md), [performance](docs/performance.md), [device testing](docs/device-testing.md), [device audit (Galaxy Z Fold 7)](docs/adb-audit.md) and [repository hygiene](docs/repository-hygiene.md)
+- [Reusable phone-control skill for agents](integrations/skills/siconnect/SKILL.md)
+
+Engineering record:
+- [Pass 23: November 11 audit fixes](docs/engineering-pass-23.md), [pass 22](docs/engineering-pass-22.md) and the [November 6 source review](docs/source-audit-2026-11-06.md)
+- [Earlier passes and superseded status documents](docs/history/README.md)
 
 Never include live credentials or personal device evidence in issues or commits.
 
