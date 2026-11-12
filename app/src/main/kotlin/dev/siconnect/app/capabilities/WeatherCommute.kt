@@ -120,7 +120,9 @@ object WeatherCommute {
             put("notifyEvening",evening);put("createMorningReminder",morning)
             put("morningReminderState",if(raining && plan.remindRain && plan.reminderAtMs<=nowMs) "WAKE_REMINDER_TIME_PASSED" else if(morning) "ELIGIBLE" else "NOT_NEEDED")
             put("notificationTitle","Commute weather for ${plan.targetDate}")
-            put("notificationText",if(winter) winterText else coldText)
+            // Only the alerts the owner opted into; both when both apply and are enabled.
+            put("notificationText",listOfNotNull(winterText.takeIf {winter && plan.notifyWinter},coldText.takeIf {cold && plan.notifyCold})
+                .joinToString(" ").ifEmpty {if(winter) winterText else coldText})
             put("reminderTitle","Commute rain reminder")
             put("reminderText","Rain is forecast during your commute. Bring a raincoat or umbrella." + if(cold) " Wear warm layers." else "")
             put("reminderAtMs",plan.reminderAtMs);put("exactReminder",plan.exactReminder)

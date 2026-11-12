@@ -163,7 +163,19 @@ fun registerCapabilities(g: RuntimeGraph) {
         JsonArray(NotificationListenerAccess.requireConnected(c).metadata().take(200).map { n -> buildJsonObject { put("key", n.key); put("package", n.packageName); put("postTime", n.postTime); put("ongoing", n.isOngoing) } })
     }
     op("notifications.dismiss", "Dismiss notification", objectSchema { string("key", "Exact notification key", true, maxLength=1000) }, RiskClass.MODERATE_IMPACT, listenerAvailable) { a, _ ->
-        NotificationListenerAccess.requireConnected(c).cancelNotification(a.str("key")); buildJsonObject { put("dispatched", true) }
+        val listener=NotificationListenerAccess.requireConnected(c)
+        val key=a.str("key")
+        val target=listener.metadata().firstOrNull {it.key==key}
+            ?: throw CapabilityException("NOTIFICATION_NOT_FOUND","No active notification has this key; list notifications again",noSideEffects=true)
+        // SIConnect's own reminders, approvals and bridge status are owner-facing and must not be cleared remotely.
+        if(target.packageName==c.packageName) throw CapabilityException("POLICY_DENIED","SIConnect's own notifications cannot be dismissed by an agent",noSideEffects=true)
+        if(target.user!=Process.myUserHandle()) throw CapabilityException("POLICY_DENIED","Notifications from another user or work profile are not dismissed",noSideEffects=true)
+        if(!target.isClearable) throw CapabilityException("NOT_CLEARABLE","This notification is ongoing or not clearable by the user",noSideEffects=true)
+        listener.cancelNotification(key)
+        // Android removes asynchronously; report what was actually observed.
+        var removed=false
+        repeat(10) {if(!removed) {kotlinx.coroutines.delay(100);removed=listener.metadata().none {it.key==key}}}
+        buildJsonObject {put("dispatched",true);put("removed",removed);put("package",target.packageName)}
     }
     // All privileged tools use the same explicitly selected backend.
     fun shell(id: String, title: String, schema: JsonObject, risk: RiskClass = RiskClass.HIGH_IMPACT,

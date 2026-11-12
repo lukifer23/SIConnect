@@ -20,14 +20,22 @@ class AndroidApprovals(private val c: Context) : ApprovalGate {
             .setData(Uri.parse("siconnect:deny/${record.requestId}"))
             .putExtra("requestId", record.requestId).putExtra("hash", record.argsHash), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val exact = record.assessment?.shellCommand ?: "${record.capabilityId} ${record.arguments}"
-        nm.notify(record.requestId.hashCode(), Notification.Builder(c, "approvals").setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle("Approval: ${record.agentId}").setContentText(exact)
+        // Tag by the full request ID: agents choose request IDs, so an int hash could be made to
+        // collide and replace (or later cancel) another agent's pending approval notification.
+        val agent = runCatching { c.graph.agents.get(record.agentId)?.grant?.label }.getOrNull() ?: record.agentId
+        nm.notify(TAG_PREFIX + record.requestId, NOTIFICATION_ID, Notification.Builder(c, "approvals").setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle("Approval: $agent").setContentText(exact)
             .setStyle(Notification.BigTextStyle().bigText("${record.assessment?.risk}: $exact\n${record.assessment?.sideEffects?.joinToString()}"))
             .setContentIntent(open).setAutoCancel(false).setOngoing(true).setTimeoutAfter(((record.approvalExpiresAtMs ?: record.expiresAtMs) - System.currentTimeMillis()).coerceAtLeast(1))
             .addAction(Notification.Action.Builder(null, "Review action", open).build())
             .addAction(Notification.Action.Builder(null, "Deny", deny).build()).build())
     }
-    override fun approvalClosed(record: RequestRecord) { c.getSystemService(NotificationManager::class.java).cancel(record.requestId.hashCode()) }
+    override fun approvalClosed(record: RequestRecord) {
+        val nm = c.getSystemService(NotificationManager::class.java)
+        nm.cancel(TAG_PREFIX + record.requestId, NOTIFICATION_ID)
+        nm.cancel(record.requestId.hashCode()) // notifications posted before tagging (code 28 and earlier)
+    }
+    private companion object { const val TAG_PREFIX = "approval:"; const val NOTIFICATION_ID = 7001 }
 }
 class ApprovalReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent) {

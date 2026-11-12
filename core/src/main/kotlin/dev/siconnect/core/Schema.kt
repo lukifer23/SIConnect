@@ -89,9 +89,11 @@ object Schema {
         }
         schema["enum"]?.jsonArray?.let { allowed -> if (value !in allowed) errors += "$path: not one of $allowed" }
         if (value is JsonPrimitive && !value.isString) {
-            value.doubleOrNull?.let { n ->
-                schema["minimum"]?.jsonPrimitive?.doubleOrNull?.let { if (n < it) errors += "$path: < minimum $it" }
-                schema["maximum"]?.jsonPrimitive?.doubleOrNull?.let { if (n > it) errors += "$path: > maximum $it" }
+            // Exact decimal comparison: Double loses integer precision above 2^53, which let
+            // values just past a large maximum validate.
+            value.content.toBigDecimalOrNull()?.let { n ->
+                schema["minimum"]?.jsonPrimitive?.content?.toBigDecimalOrNull()?.let { if (n < it) errors += "$path: < minimum ${it.toPlainString()}" }
+                schema["maximum"]?.jsonPrimitive?.content?.toBigDecimalOrNull()?.let { if (n > it) errors += "$path: > maximum ${it.toPlainString()}" }
             }
         }
         if (value is JsonPrimitive && value.isString) {

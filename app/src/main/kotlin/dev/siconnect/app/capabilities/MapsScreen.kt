@@ -103,7 +103,7 @@ internal class MapsScreen(private val g:RuntimeGraph,private val ctx:ExecutionCo
         if(workspace!=null || backend==BackendKind.ACCESSIBILITY) {
             val target=if(workspace!=null && privateTouch) node else labels.filter {it.clickable && it.left<=node.left && it.right>=node.right && it.top<=node.top && it.bottom>=node.bottom}
                 .minByOrNull {(it.right-it.left).toLong()*(it.bottom-it.top)}
-                ?: throw CapabilityException("MAPS_CONTROL_UNSUPPORTED","Maps control ${node.resourceId} [${node.text.take(80)} / ${node.description.take(80)}] has no accessible clickable parent")
+                ?: throw CapabilityException("MAPS_CONTROL_UNSUPPORTED","Maps control ${node.resourceId.ifBlank {"(no resource id)"}} has no accessible clickable parent") // on-screen text (addresses, places) stays out of stored errors
             if(workspace!=null) {
                 try {privateClient!!.call("click",buildJsonObject {
                     workspace.forEach {(k,v)->put(k,v)};put("snapshotId",target.snapshotId);put("nodeRef",target.nodeRef)

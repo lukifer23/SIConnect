@@ -99,3 +99,15 @@ Deferred, with reasons:
 - **Tools:**
   - `start_builtin.py` selects `base.apk` among split APKs, reports a missing UID clearly, and waits for the old daemon to exit before starting a new one.
   - Device-testing docs keep the Inbox harness token in a private directory and document `termux_recovery.py`.
+
+## Remaining lower-priority audit fixes
+
+- **Commute alert text:** the evening text now follows the owner's `notifyWinter` and `notifyCold` choices, and both texts are combined when both apply.
+- **Approval notifications:** these are tagged by the full request ID instead of `requestId.hashCode()`, so an agent-chosen ID cannot collide with and replace (or cancel) another agent's pending approval. The title shows the agent's name. Notifications posted before this update are still cancelled.
+- **Schema bounds:** `minimum`/`maximum` are compared exactly as decimals, so 2^53+1 no longer passes a 2^53 maximum.
+- **`notifications.dismiss`:** checks the key exists before acting, and refuses SIConnect's own notifications, other users or work profiles, and non-clearable notifications, with no side effects. It now reports whether removal was observed.
+- **Maps unsupported-control errors** no longer copy on-screen text (addresses, place names) into stored request errors.
+
+Not changed: the risk class of `ui.scroll`/`ui.back`/`ui.home` (LOW_IMPACT, while `headless.scroll` is HIGH_IMPACT). Raising it would add approval prompts for existing agents, so it is an owner policy decision.
+
+Verification: core 91, app unit 151, lint 0 errors. Physical: `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1.

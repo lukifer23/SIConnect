@@ -17,13 +17,13 @@ Latest work: [pass 23](engineering-pass-23.md) (November 11 audit fixes: livenes
 
 | Suite | Result |
 | --- | --- |
-| Core (JVM) | 89 pass |
+| Core (JVM) | 91 pass |
 | Android JVM unit | 151 pass |
 | Embedded ADB | 2 pass |
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 18 pass |
 | Lint | 0 errors |
-| Physical, code 28 | `RuntimeDeviceTest` 13, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
+| Physical, code 28 | `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
 
 The gateway test suite uses a local test peer and is never phone evidence. CI runs the host suites, lint, release debug-isolation, Python and gateway checks and a secret scan; it does not run instrumentation.
 
