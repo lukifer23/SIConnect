@@ -127,13 +127,14 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
         var approvalError by remember {mutableStateOf<String?>(null)}
         var busy by remember {mutableStateOf(false)}
         var removeSkill by remember {mutableStateOf<SkillDefinition?>(null)}
-        fun action(block: suspend ()->Unit) {
+        var reviewActionError by remember {mutableStateOf("")}
+        fun action(onError:(String)->Unit={message=it},block: suspend ()->Unit) {
             if(busy) return
             busy=true;message=""
             scope.launch {
                 try {withContext(Dispatchers.IO) {g.ready.await();block()};refresh++}
-                catch(e:CancellationException) {message="The action left this screen before its outcome was confirmed. Review current settings and Activity before repeating it.";throw e}
-                catch(e:Exception) {message=e.message ?: e.javaClass.simpleName}
+                catch(e:CancellationException) {onError("The action left this screen before its outcome was confirmed. Review current settings and Activity before repeating it.");throw e}
+                catch(e:Exception) {onError(e.message ?: e.javaClass.simpleName)}
                 finally {busy=false}
             }
         }
@@ -212,8 +213,9 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
                 if(expanded) Column(Modifier.width(190.dp).fillMaxHeight().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                     Text("PREFERENCES",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(12.dp))
                     listOf("Connections","Recovery","Termux","Android access","Connected folders","Background & timing","Appearance","Commute & weather","Storage & history","Private workspaces","Advanced connection","Developer tools").forEach {name->
-                        Surface(onClick={if(name=="Developer tools") {tab="Capabilities";settingsPage=null} else {tab="Settings";settingsPage=name}},
-                            shape=MaterialTheme.shapes.medium,color=if(settingsPage==name || (name=="Developer tools" && tab!="Settings")) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
+                        val isSelected=settingsPage==name || (name=="Developer tools" && tab!="Settings")
+                        Surface(selected=isSelected,onClick={if(name=="Developer tools") {tab="Capabilities";settingsPage=null} else {tab="Settings";settingsPage=name}},
+                            shape=MaterialTheme.shapes.medium,color=if(isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
                             Text(name,Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=14.dp),style=MaterialTheme.typography.titleSmall)
                         }
                     }
@@ -400,12 +402,7 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
                         }
 
                         }
-                        if(settingsPage=="Appearance") Panel {
-                            StatusPill("Live appearance",StatusTone.GOOD)
-                            Text("Your control center",style=MaterialTheme.typography.titleLarge)
-                            Text("Cards, status labels, and controls use your selected theme. System follows Android’s appearance.",style=MaterialTheme.typography.bodyMedium)
-                            OutlinedButton(onClick={g.settings.setAppearance("SYSTEM")}) {Text("Follow Android appearance")}
-                        }
+                        if(settingsPage=="Appearance") Text("System follows Android’s light or dark appearance.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         if(settingsPage=="Commute & weather") {
                             CommuteSettings()
 
@@ -422,10 +419,10 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
                         if(settingsPage=="Advanced connection") {
                             TextButton(onClick={showConnectionDetails=!showConnectionDetails}) {Text(if(showConnectionDetails) "Hide advanced connection settings" else "Advanced connection settings")}
                         if(showConnectionDetails) {
-                            Row(verticalAlignment=Alignment.CenterVertically) {Text("Route privileged requests",Modifier.weight(1f));Switch(controls.privilegedEnabled,{enabled->
+                            SwitchRow(controls.privilegedEnabled,{enabled->
                                 if(enabled) ownerAuthentication.authenticate("Enable privileged execution",{g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=true))},{message=it})
                                 else g.settings.setControls(g.settings.controls.value.copy(privilegedEnabled=false))
-                            })}
+                            }) {Text("Route privileged requests",Modifier.weight(1f))}
                             Text("Selected backend: ${if(g.settings.privilegeBackend=="direct") "Bundled service" else "Shizuku"}. Selection never changes automatically.")
                             if(g.settings.privilegeBackend!="direct") OutlinedButton(onClick={ownerAuthentication.authenticate("Select bundled authority",{action {g.settings.privilegeBackend="direct";g.privileged.refresh()}},{message=it})}) {Text("Use bundled service")}
                             if(g.settings.privilegeBackend!="shizuku") OutlinedButton(onClick={ownerAuthentication.authenticate("Select Shizuku authority",{action {g.settings.privilegeBackend="shizuku";g.privileged.refresh()}},{message=it})}) {Text("Use optional Shizuku")}
@@ -444,7 +441,8 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
                                     message="Connecting with saved configuration"
                                 }},{message=it})
                             },enabled=url.isNotBlank()) {Text("Save connection settings")}
-                            TextButton(onClick={g.settings.setGateway(g.settings.gateway.value.copy(enabled=false));stopService(Intent(this@Management,ConnectionService::class.java))}) {Text("Disconnect gateway")}
+                            // Same owner pause as Home: audited, keeps agents and credentials.
+                            TextButton(onClick={action {g.gateway.pauseFromOwner();withContext(Dispatchers.Main) {stopService(Intent(this@Management,ConnectionService::class.java))};message="Remote gateway disconnected. Agents and credentials are kept."}},enabled=!busy) {Text("Disconnect gateway")}
                             if(BuildConfig.DEBUG) TextButton(onClick={ownerAuthentication.authenticate("Rotate development credential",{action {g.createDevelopmentAgent();message="Development credential rotated"}},{message=it})}) {Text("Rotate development credential")}
                         }
 
@@ -467,11 +465,18 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
                 }},enabled=!busy) {Text("Remove workflow")}},
                 dismissButton={TextButton(onClick={removeSkill=null}) {Text("Keep workflow")}})
         }
-        approve?.let { r -> OwnerApprovalDialog(r,error=message,onClose={approvalId=null;approve=null},onDeny={action {g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
-            ownerAuthentication.authenticate("Approve ${r.capabilityId}",{
-                if(approvalId==r.requestId) action {g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
-            },{message=it})
-        }) }
+        approve?.let { r ->
+            val actionTitle=g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId
+            val agentLabel=g.agents.get(r.agentId)?.grant?.label ?: r.agentId
+            OwnerApprovalDialog(r,busy=busy,error=reviewActionError,agentLabel=agentLabel,actionTitle=actionTitle,
+                onClose={approvalId=null;approve=null;reviewActionError=""},
+                onDeny={reviewActionError="";action({reviewActionError=it}) {g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
+                reviewActionError=""
+                ownerAuthentication.authenticate("Approve: $actionTitle",{
+                    if(approvalId==r.requestId) action({reviewActionError=it}) {g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
+                },{reviewActionError=it})
+            })
+        }
         if(approvalId!=null && approve==null) AlertDialog(onDismissRequest={approvalId=null},title={Text("Saved owner review")},
             text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 if(approvalError==null) LinearProgressIndicator(Modifier.fillMaxWidth())

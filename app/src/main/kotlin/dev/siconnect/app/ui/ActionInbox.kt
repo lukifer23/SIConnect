@@ -16,6 +16,7 @@ import kotlinx.coroutines.*
 @Composable fun ActionInbox(g:RuntimeGraph,revision:Int,authenticate:(String,()->Unit,(String)->Unit)->Unit,
     onClose:()->Unit,onRequest:(String)->Unit) {
     val scope=rememberCoroutineScope()
+    val context=androidx.compose.ui.platform.LocalContext.current
     var selected by rememberSaveable {mutableStateOf<String?>(null)}
     var p by remember {mutableStateOf<ActionProposal?>(null)}
     var readiness by remember {mutableStateOf<ProposalReadiness?>(null)}
@@ -38,8 +39,10 @@ import kotlinx.coroutines.*
             catch(e:CancellationException) {throw e} catch(e:Exception) {error=e.message ?: "Could not update proposal"} finally {busy=false}}
     }
     LaunchedEffect(selected,revision,page,cursorMs,cursorId,oldest,filter,agent) {
-        loading=true;p=null;readiness=null
-        if(selected==null) rows=emptyList()
+        // Keep showing the current data while refreshing; only a different selection clears the detail.
+        // Clearing on every revision made the open proposal and its Accept button blink.
+        loading=true
+        if(selected==null || p?.proposalId!=selected) {p=null;readiness=null}
         try {
             val loaded=withContext(Dispatchers.IO) {
                 g.ready.await()
@@ -93,7 +96,7 @@ import kotlinx.coroutines.*
                         Text(row.title,style=MaterialTheme.typography.titleMedium)
                         Text(name(row.agentId),style=MaterialTheme.typography.bodySmall)
                         StatusPill(proposalStateLabel(row.state,row.requestState))
-                        Text("${row.risk.name.replace('_',' ')} · ${java.util.Date(row.createdAtMs)}",style=MaterialTheme.typography.bodySmall)
+                        Text("${row.risk.name.replace('_',' ')} · ${formatDateTime(context,row.createdAtMs)}",style=MaterialTheme.typography.bodySmall)
                         Text(row.summary,maxLines=3)
                     }
                 }}
@@ -106,7 +109,7 @@ import kotlinx.coroutines.*
                 Text("Reason supplied by agent: ${proposal.reason}")
                 Text("Source (${proposal.sourceType}): ${proposal.sourceReference ?: "No reference supplied"}",style=MaterialTheme.typography.bodySmall)
                 Text("Risk: ${proposal.assessment.risk} · Target: ${proposal.assessment.target ?: proposal.capabilityId}")
-                Text("Created ${java.util.Date(proposal.createdAtMs)}\nExpires ${java.util.Date(proposal.expiresAtMs)}",style=MaterialTheme.typography.bodySmall)
+                Text("Created ${formatDateTime(context,proposal.createdAtMs)}\nExpires ${formatDateTime(context,proposal.expiresAtMs)}",style=MaterialTheme.typography.bodySmall)
                 TextButton(onClick={advanced=!advanced}) {Text(if(advanced) "Hide exact arguments" else "Show exact action and arguments")}
                 if(advanced) {Text("${proposal.capabilityId} · version ${proposal.capabilityVersion}");Text(proposal.arguments.toString(),style=MaterialTheme.typography.bodySmall)}
                 proposal.errorCode?.let {Text(it,color=MaterialTheme.colorScheme.error)}

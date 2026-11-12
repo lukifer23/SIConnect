@@ -84,6 +84,25 @@ class Scheduler(private val g: RuntimeGraph) {
         return requireNotNull(get(a.id))
     }
     fun setEnabled(id: String, enabled: Boolean) { get(id)?.let { put(it.copy(enabled=enabled)) } }
+    /**
+     * Owner deletion of a saved schedule. Refused while a run is active so an executing workflow is
+     * never orphaned; cancel or finish it first. Past run history and audit events are retained.
+     */
+    fun delete(id:String,expectedRevision:Long) {
+        val w=g.db.writableDatabase;val old:Automation
+        w.beginTransaction()
+        try {
+            old=requireNotNull(get(id)) {"Automation no longer exists"}
+            require(old.revision==expectedRevision) {"Automation changed; reload before deleting"}
+            val active=w.rawQuery("SELECT count(*) FROM automation_runs WHERE automation_id=? AND state IN ('READY','RUNNING','AWAITING_APPROVAL')",arrayOf(id))
+                .use {it.moveToFirst();it.getInt(0)}
+            require(active==0) {"A run is still active. Cancel it or let it finish before deleting this automation."}
+            w.delete("automations","automation_id=? AND revision=?",arrayOf(id,old.revision.toString()))
+            g.events.emit(Event(System.currentTimeMillis(),eventType="automation.deleted",requestId=id,agentId="local-owner",detail="Owner deleted schedule; run history retained"))
+            w.setTransactionSuccessful()
+        } finally {w.endTransaction()}
+        cancelDispatch(old)
+    }
     suspend fun cancelRun(runId:String) {
         if(g.skillRuns.get(runId)==null) {
             val pending=g.db.readableDatabase.query("automation_runs",arrayOf("automation_id","automation_json","skill_json","started_at"),"run_id=?",arrayOf(runId),null,null,null,"1").use {cursor->

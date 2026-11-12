@@ -14,6 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -49,7 +51,7 @@ import kotlinx.coroutines.*
             Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 PageHeader("Set up SIConnect","Connect the access you need, one step at a time.")
                 Box {
-                    OutlinedButton(onClick={chooseStage=true}) {Text("Step ${stage+1} of 8 · ${stages[stage]} ▾")}
+                    OutlinedButton(onClick={chooseStage=true},modifier=Modifier.semantics {contentDescription="Step ${stage+1} of 8, ${stages[stage]}. Choose another step"}) {Text("Step ${stage+1} of 8 · ${stages[stage]} ▾")}
                     DropdownMenu(chooseStage,{chooseStage=false}) {
                         stages.forEachIndexed {index,label->DropdownMenuItem(text={Text("${index+1}. $label")},onClick={stage=index;result="";chooseStage=false})}
                     }

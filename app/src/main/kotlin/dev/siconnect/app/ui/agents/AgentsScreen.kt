@@ -73,7 +73,7 @@ import dev.siconnect.core.*
     onFullControl:(AgentRecord,Boolean)->Unit,onRename:(AgentRecord,String)->Unit,busy:Boolean) {
     var tab by rememberSaveable(a.grant.agentId) {mutableStateOf("Permissions")}
     var query by rememberSaveable(a.grant.agentId) {mutableStateOf("")}
-    var revoke by remember {mutableStateOf(false)}
+    var revoke by rememberSaveable(a.grant.agentId) {mutableStateOf(false)}
     var rename by rememberSaveable(a.grant.agentId) {mutableStateOf(false)}
     var renameDraft by rememberSaveable(a.grant.agentId) {mutableStateOf(a.grant.label)}
     var originalLabel by rememberSaveable(a.grant.agentId) {mutableStateOf(a.grant.label)}
@@ -104,9 +104,8 @@ import dev.siconnect.core.*
             Text("Choose what this agent can do.",style=MaterialTheme.typography.titleMedium)
             Text("Android access and your agent’s allowance work together. Actions that need approval still ask you.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Panel {
-                Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                SwitchRow(a.grant.allowSharedScreen,{onSharedScreen(a.grant.agentId,it)},enabled=editable) {
                     Column(Modifier.weight(1f)) {Text("Shared-screen actions",style=MaterialTheme.typography.titleMedium);Text("Allow this agent to work on your visible screen.",style=MaterialTheme.typography.bodySmall)}
-                    Switch(a.grant.allowSharedScreen,{onSharedScreen(a.grant.agentId,it)},enabled=editable)
                 }
                 if(!a.grant.allowSharedScreen) Text("Native background tools and permitted private displays remain available. Shared-screen launches and arbitrary shell are blocked.",style=MaterialTheme.typography.bodySmall)
             }
@@ -119,12 +118,11 @@ import dev.siconnect.core.*
                 val ready=caps.count {allowed(a,it.descriptor.id) && it.availability.isExecutable &&
                     (a.grant.allowSharedScreen || it.descriptor.interaction in setOf(InteractionMode.BACKGROUND,InteractionMode.ISOLATED_SCREEN))}
                 Panel {
-                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                    SwitchRow(count==caps.size && usable,{onFamily(a.grant.agentId,family,it)},enabled=editable) {
                         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                             Text(familyLabel(family),style=MaterialTheme.typography.titleMedium)
                             Text("$count of ${caps.size} allowed · $ready ready",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(count==caps.size && usable,{onFamily(a.grant.agentId,family,it)},enabled=editable)
                     }
                     caps.filter {allowed(a,it.descriptor.id) && !it.availability.isExecutable}.take(3).forEach {
                         Text("${it.descriptor.title}: ${it.availability.name.lowercase().replace('_',' ')}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
@@ -206,7 +204,7 @@ import dev.siconnect.core.*
                 Text("Current grant",style=MaterialTheme.typography.titleMedium)
                 StatusPill(agentState(a),if(usable) StatusTone.GOOD else StatusTone.NEUTRAL)
                 Text(if(fullControl) "Full control · automatic SIConnect actions" else "Custom permissions and approval policy",style=MaterialTheme.typography.bodyMedium)
-                Text("Grant expiry: ${a.grant.expiresAtMs?.let {java.util.Date(it).toString()} ?: "No expiry configured"}",style=MaterialTheme.typography.bodySmall)
+                Text("Grant expiry: ${a.grant.expiresAtMs?.let {formatDateTime(androidx.compose.ui.platform.LocalContext.current,it)} ?: "No expiry configured"}",style=MaterialTheme.typography.bodySmall)
             }
             if(!a.grant.revoked) Panel {
                 Text("Revoke access",style=MaterialTheme.typography.titleMedium)

@@ -39,7 +39,7 @@
         android:label="SIConnect"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.SIConnect">
 
         <service android:name=".accessibility.SemanticAccessibilityService"
             android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -62,7 +62,7 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleTop"
-            android:theme="@android:style/Theme.Material.NoActionBar" />
+            android:theme="@style/Theme.SIConnect" />
 
         <service
             android:name=".transport.ConnectionService"

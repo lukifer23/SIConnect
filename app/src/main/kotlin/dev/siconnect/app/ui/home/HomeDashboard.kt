@@ -82,7 +82,8 @@ import kotlinx.serialization.json.JsonObject
             }
         }
             @Composable fun review() {
-                SectionHeading("Needs your attention",if(state.pendingProposalCount>0) "Open inbox" else null,onInbox)
+                // Always reachable: completed and problem proposals and their linked executions live in the inbox too.
+                SectionHeading("Needs your attention",if(state.pendingProposalCount>0) "Open inbox" else "Inbox history",onInbox)
                 if(state.pending.isEmpty() && state.pendingProposalCount==0 && failedSchedules.isEmpty()) {
                     if(wide) Panel {StatusPill("All caught up",StatusTone.GOOD);Text("No approvals or suggestions waiting.",style=MaterialTheme.typography.bodySmall)}
                     else EmptyState("You’re all caught up","Requests that need approval and agent suggestions will appear here.",R.drawable.ic_nav_activity)

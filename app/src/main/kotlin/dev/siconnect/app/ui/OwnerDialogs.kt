@@ -29,7 +29,8 @@ import kotlinx.serialization.json.*
 
 /** Shared owner review: one path for Home and detailed management. */
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun OwnerApprovalDialog(r: RequestRecord,busy:Boolean=false,error:String="",onClose:()->Unit,onDeny:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
+@Composable internal fun OwnerApprovalDialog(r: RequestRecord,busy:Boolean=false,error:String="",agentLabel:String=r.agentId,actionTitle:String=r.capabilityId,
+    onClose:()->Unit,onDeny:()->Unit,onApprove:(Boolean,Boolean)->Unit) {
     val critical=r.assessment?.risk==RiskClass.CRITICAL
     val pending=r.state==RequestState.AWAITING_APPROVAL
     val deadline=r.approvalExpiresAtMs ?: r.expiresAtMs
@@ -44,10 +45,11 @@ import kotlinx.serialization.json.*
             Column(Modifier.fillMaxWidth().heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.85f).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 Text(if(!pending) "Action ${r.state.name.lowercase().replace('_',' ')}" else "Allow this action?",style=MaterialTheme.typography.headlineSmall)
                 Column(Modifier.weight(1f,fill=false).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                    Text(r.agentId)
+                    Text(agentLabel,style=MaterialTheme.typography.titleSmall)
                     Text("Review stays open until you close it.",style=MaterialTheme.typography.bodySmall)
                     if(pending) Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(r.approvalExpiresAtMs ?: r.expiresAtMs))}")
-                    Text(r.capabilityId,style=MaterialTheme.typography.titleMedium)
+                    Text(actionTitle,style=MaterialTheme.typography.titleMedium)
+                    if(actionTitle!=r.capabilityId) Text(r.capabilityId,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     if(r.payloadExpired) Text("Payload expired under your retention setting. The original outcome and retry identity are retained.")
                     else {
                         Text(r.assessment?.shellCommand ?: r.arguments.toString())
@@ -74,7 +76,7 @@ import kotlinx.serialization.json.*
 }
 
 @Composable internal fun ShellPermissionDialog(label: String,busy:Boolean=false,allowed:Boolean=false,error:String="",onClose:()->Unit,onReduce:()->Unit,onAllow:()->Unit) {
-    AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text("Always allow device control?")},
+    AlertDialog(onDismissRequest={},properties=androidx.compose.ui.window.DialogProperties(dismissOnBackPress=false,dismissOnClickOutside=false),title={Text(if(allowed) "Arbitrary shell is always allowed" else "Always allow arbitrary shell?")},
         text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.5f).verticalScroll(rememberScrollState())) {Text("$label will be allowed to run arbitrary shell commands and read its request results without asking each time. This can change apps, settings and data. Critical operations still require approval.\n\nThis choice is saved on your phone across app restarts. Emergency stop and agent revocation still apply. You can switch back to asking each time under Agents.")
             if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
         }},

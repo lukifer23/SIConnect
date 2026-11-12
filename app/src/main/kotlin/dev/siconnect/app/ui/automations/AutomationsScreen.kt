@@ -49,6 +49,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
     val scope=rememberCoroutineScope()
     val context=LocalContext.current
     val locale=LocalLocale.current.platformLocale
+    val clock24=android.text.format.DateFormat.is24HourFormat(androidx.compose.ui.platform.LocalContext.current)
     val lifecycle=LocalLifecycleOwner.current
     var refresh by remember {mutableIntStateOf(0)}
     var resourcesRefresh by remember {mutableIntStateOf(0)}
@@ -63,6 +64,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
     var listError by remember {mutableStateOf<String?>(null)}
     var skills by remember {mutableStateOf(emptyList<SkillDefinition>())}
     var selectedId by rememberSaveable {mutableStateOf<String?>(null)}
+    var confirmDeleteId by rememberSaveable {mutableStateOf<String?>(null)}
     var selectedAutomation by remember {mutableStateOf<Automation?>(null)}
     var selectionLoadedId by remember {mutableStateOf<String?>(null)}
     var draftJson by rememberSaveable {mutableStateOf<String?>(null)}
@@ -272,7 +274,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                 Row {Text("Timezone: ${draft.zoneId}",Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium);TextButton(onClick={changeZone=!changeZone}) {Text(if(changeZone) "Done" else "Change")}}
                 if(changeZone) OutlinedTextField(draft.zoneId,{edit(draft.copy(zoneId=it.take(100)))},label={Text("Timezone · e.g. Europe/London")},modifier=Modifier.fillMaxWidth(),singleLine=true)
                 Text("This timezone stays with the schedule when you travel. Clock changes and daylight saving use the saved recurrence.",style=MaterialTheme.typography.bodySmall)
-                Row {Text("Precise timing",Modifier.weight(1f));Switch(draft.exact,{edit(draft.copy(exact=it))})}
+                SwitchRow(draft.exact,{edit(draft.copy(exact=it))}) {Text("Precise timing",Modifier.weight(1f))}
                 Text(if(draft.exact) "Uses Android exact alarms. The native workflow may still wait for execution or owner approval." else "Deferrable work saves wakeups; Android may delay this run.",style=MaterialTheme.typography.bodySmall)
                 if(draft.exact && !exactAllowed) TextButton(onClick={settings(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)}) {Text("Allow precise timing in Android")}
                 var advancedSchedule by rememberSaveable(draft.id) {mutableStateOf(false)}
@@ -282,18 +284,23 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         mapOf("SKIP" to "Skip if more than one minute late","MARK_MISSED" to "Record as missed after one minute","RUN_ONCE_IF_STILL_RELEVANT" to "Run once within the maximum delay","COALESCE" to "Combine missed times into one relevant run"))
                     OutlinedTextField(draft.maxLatenessMinutes,{edit(draft.copy(maxLatenessMinutes=it.take(4)))},label={Text("Maximum delay · minutes (1–1440)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
                 }
-                Row {Text("Enable schedule",Modifier.weight(1f));Switch(draft.enabled,{edit(draft.copy(enabled=it))})}
+                SwitchRow(draft.enabled,{edit(draft.copy(enabled=it))}) {Text("Enable schedule",Modifier.weight(1f))}
             }
             @Composable fun reviewSchedule() {
                 HorizontalDivider()
                 SectionHeading("3. Review & save")
                 Text("Next runs",style=MaterialTheme.typography.titleSmall)
-                preview.onSuccess {times->times.forEach {Text(formatTime(it,draft.zoneId,locale))}}
+                preview.onSuccess {times->times.forEach {Text(formatTime(it,draft.zoneId,locale,clock24))}}
                     .onFailure {Text(it.message ?: "Check the schedule fields",color=MaterialTheme.colorScheme.error)}
                 if(inputErrors.isNotEmpty()) Text(inputErrors.take(3).joinToString("\n"),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
                 if(missing.isNotEmpty()) {
                     Text("Local automations need access to: ${missing.joinToString()}. Saving does not grant permission.",color=MaterialTheme.colorScheme.error)
                     if(definition.id=="weather.commute_check") Button(onClick={authenticate("Allow commute automation",{work {g.enableWeatherAutomationFromOwner();message="Local commute calculations and reminder creation allowed"}},{message=it})},enabled=!busy) {Text("Allow local weather automation")}
+                    else if(missing.none {it.startsWith("shell.")}) Button(onClick={
+                        val ids=missing.toList()
+                        authenticate("Allow ${ids.size} capabilities for local automations",{work {g.allowLocalAutomationFromOwner(ids);message="Allowed for local automations. Each run still follows your approval rules."}},{message=it})
+                    },enabled=!busy) {Text("Allow for local automations")}
+                    else Text("This workflow uses shell commands; allow local shell under Agents first.",style=MaterialTheme.typography.bodySmall)
                 }
                 if(unavailable.isNotEmpty()) Text("Android access: ${unavailable.joinToString()}",style=MaterialTheme.typography.bodySmall)
                 if(!notificationsAllowed && "notifications.post" in requestedCapabilities) TextButton(onClick={
@@ -327,7 +334,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                 item {
                     Text("${skills.firstOrNull {it.id==selected.skillId}?.let(AutomationTemplates::title) ?: selected.skillId}\n${selected.scheduleState.lowercase().replace('_',' ')}")
                     skills.firstOrNull {it.id==selected.skillId}?.let {Text(BackgroundExecution.description(it,capabilities),style=MaterialTheme.typography.bodySmall)}
-                    if(selected.enabled) Text("Next: ${formatTime(selected.nextAtMs,selected.zoneId,locale)}")
+                    if(selected.enabled) Text("Next: ${formatTime(selected.nextAtMs,selected.zoneId,locale,clock24)}")
                     else Text("Future runs are disabled. Existing active runs remain separate.")
                     selected.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -340,12 +347,25 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                                 inspectedRunId=idRun;message="Run queued. The saved schedule is unchanged."
                             }},{message=it})
                         },enabled=!busy) {Text("Run now")}
+                        TextButton(onClick={confirmDeleteId=selected.id},enabled=!busy) {Text("Delete",color=MaterialTheme.colorScheme.error)}
                     }
-                    Row {Text("Schedule enabled",Modifier.weight(1f));Switch(selected.enabled,{enabled->
+                    if(confirmDeleteId==selected.id) AlertDialog(onDismissRequest={confirmDeleteId=null},
+                        title={Text("Delete ${selected.label.ifBlank {"automation"}}?")},
+                        text={Text("Future runs stop and the schedule is removed. Past run history and audit records are kept. An active run must finish or be cancelled first.")},
+                        confirmButton={TextButton(onClick={
+                            val id=selected.id;val revision=selected.revision;confirmDeleteId=null
+                            authenticate("Delete ${selected.label.ifBlank {"automation"}}",{work {
+                                g.scheduler.delete(id,revision)
+                                withContext(Dispatchers.Main) {closeSelection()}
+                                message="Automation deleted. Its run history is kept."
+                            }},{message=it})
+                        }) {Text("Delete",color=MaterialTheme.colorScheme.error)}},
+                        dismissButton={TextButton(onClick={confirmDeleteId=null}) {Text("Cancel")}})
+                    SwitchRow(selected.enabled,{enabled->
                         val candidate=selected.copy(enabled=enabled)
                         val save={work {g.scheduler.put(candidate)}}
                         if(enabled) authenticate("Enable ${selected.label.ifBlank {"automation"}}",save,{message=it}) else save()
-                    },enabled=!busy)}
+                    },enabled=!busy) {Text("Schedule enabled",Modifier.weight(1f))}
                     HorizontalDivider()
                     Text("Run history",style=MaterialTheme.typography.titleMedium)
                     FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -361,13 +381,13 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                 items(runs,key={it.runId}) {run->
                     OutlinedCard(onClick={inspectedRunId=if(inspectedRunId==run.runId) null else run.runId}) {Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                         Text(run.state.lowercase().replace('_',' '),style=MaterialTheme.typography.titleSmall)
-                        Text(formatTime(run.slotAt,selected.zoneId,locale),style=MaterialTheme.typography.bodySmall)
+                        Text(formatTime(run.slotAt,selected.zoneId,locale,clock24),style=MaterialTheme.typography.bodySmall)
                         run.error?.let {Text(it,color=MaterialTheme.colorScheme.error)}
                         if(inspectedRunId==run.runId) {
                             val execution=inspectedRun?.takeIf {it.runId==run.runId}
                             if(execution!=null) {
                                 Text(if(execution.payloadExpired) "Result payload expired · original outcome retained" else "${execution.cursor} of ${execution.definition.steps.size} steps recorded",style=MaterialTheme.typography.bodySmall)
-                                Text("Started: ${formatTime(execution.startedAtMs,selected.zoneId,locale)}",style=MaterialTheme.typography.bodySmall)
+                                Text("Started: ${formatTime(execution.startedAtMs,selected.zoneId,locale,clock24)}",style=MaterialTheme.typography.bodySmall)
                                 Text("Dispatch delay: ${((execution.startedAtMs-run.slotAt).coerceAtLeast(0))/1000} seconds",style=MaterialTheme.typography.bodySmall)
                                 if(execution.state==SkillState.AWAITING_APPROVAL) Text("Waiting for owner review. Open pending approvals; this workflow is not complete.")
                                 if(execution.definition.id==AutomationTemplates.HEALTH_SKILL)
@@ -447,7 +467,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
                         Text(a.label.ifBlank {a.id},style=MaterialTheme.typography.titleMedium)
                         skills.firstOrNull {it.id==a.skillId}?.let {Text(BackgroundExecution.description(it,capabilities),style=MaterialTheme.typography.bodySmall)}
                         StatusPill(if(a.enabled) a.scheduleState.lowercase().replace('_',' ') else "Paused",if(a.enabled) StatusTone.GOOD else StatusTone.NEUTRAL)
-                        if(a.enabled) Text(a.nextAtMs?.let {"Next: ${formatTime(it,a.zoneId,locale)}"} ?: "Next run time unavailable",style=MaterialTheme.typography.bodyMedium)
+                        if(a.enabled) Text(a.nextAtMs?.let {"Next: ${formatTime(it,a.zoneId,locale,clock24)}"} ?: "Next run time unavailable",style=MaterialTheme.typography.bodyMedium)
                         a.lastState?.let {Text("Last run: ${it.lowercase().replace('_',' ')}",style=MaterialTheme.typography.bodySmall)}
                         a.error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
                     }}
@@ -465,6 +485,7 @@ fun AutomationsScreen(g:RuntimeGraph,authenticate:(String,()->Unit,(String)->Uni
     }
 }
 
-private fun formatTime(epoch:Long,zone:String,locale:java.util.Locale):String=runCatching {
-    Instant.ofEpochMilli(epoch).atZone(ZoneId.of(zone)).format(DateTimeFormatter.ofPattern("EEE, MMM d · h:mm a z",locale))
+/** Honors the phone's 12/24-hour setting. */
+private fun formatTime(epoch:Long,zone:String,locale:java.util.Locale,clock24:Boolean):String=runCatching {
+    Instant.ofEpochMilli(epoch).atZone(ZoneId.of(zone)).format(DateTimeFormatter.ofPattern(if(clock24) "EEE, MMM d · HH:mm z" else "EEE, MMM d · h:mm a z",locale))
 }.getOrElse {Instant.ofEpochMilli(epoch).toString()}

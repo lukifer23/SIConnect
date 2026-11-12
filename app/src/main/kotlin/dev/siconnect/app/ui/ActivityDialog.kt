@@ -114,13 +114,6 @@ import kotlinx.serialization.json.*
     }
 }
 
-@Composable internal fun ActivityDialog(store:SqlRequestStore,revision:Int,labels:Map<String,String>,title:(String)->String,onClose:()->Unit,onOpen:(String)->Unit) {
-    val bodyHeight=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*0.62f
-    AlertDialog(onDismissRequest=onClose,title={Text("Activity")},text={
-        ActivityContent(store,revision,labels,title,Modifier.heightIn(max=bodyHeight),onOpen)
-    },confirmButton={TextButton(onClick=onClose) {Text("Close")}})
-}
-
 internal fun actionStateLabel(state:RequestState):String = when(state) {
     RequestState.SUCCEEDED -> "Completed"
     RequestState.DENIED -> "Blocked"
@@ -147,12 +140,12 @@ internal fun actionStateLabel(state:RequestState):String = when(state) {
         r.errorMessage?.let {Notice(it,true)}
         if(events.any {it.durationMs!=null} || r.state.isTerminal) Panel {
             Text("Timing",style=MaterialTheme.typography.titleMedium)
-            if(r.state.isTerminal) Text("Saved request lifecycle: ${(r.updatedAtMs-r.createdAtMs).coerceAtLeast(0)} ms",style=MaterialTheme.typography.bodyMedium)
+            if(r.state.isTerminal) Text("Saved request lifecycle: ${formatDuration(r.updatedAtMs-r.createdAtMs)}",style=MaterialTheme.typography.bodyMedium)
             events.firstOrNull {it.eventType in setOf("execution.finished","execution.interrupted","request.failed") && it.durationMs!=null}?.durationMs?.let {
-                Text("Execution: $it ms",style=MaterialTheme.typography.bodyMedium)
+                Text("Execution: ${formatDuration(it)}",style=MaterialTheme.typography.bodyMedium)
             }
             events.firstOrNull {it.eventType in setOf("transport.result_queued","transport.result_queue_rejected")}?.let {event->event.durationMs?.let {
-                Text(if(event.eventType=="transport.result_queued") "Phone receipt to response queued: $it ms" else "Phone receipt to response queue rejection: $it ms",style=MaterialTheme.typography.bodyMedium)
+                Text(if(event.eventType=="transport.result_queued") "Phone receipt to response queued: ${formatDuration(it)}" else "Phone receipt to response queue rejection: ${formatDuration(it)}",style=MaterialTheme.typography.bodyMedium)
             }
             }
             Text("Phone timings exclude time before arrival and after the response enters the socket queue. Remote receipt and agent processing are not measured here.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -187,4 +180,20 @@ internal fun actionStateLabel(state:RequestState):String = when(state) {
         }
         Spacer(Modifier.height(12.dp))
     }
+}
+
+/** Human-readable elapsed time; sub-second values keep millisecond precision. */
+internal fun formatDuration(ms:Long):String {
+    val v=ms.coerceAtLeast(0)
+    return when {
+        v<1_000 -> "$v ms"
+        v<60_000 -> "%.1f s".format(v/1000.0)
+        else -> "${v/60_000} min ${(v%60_000)/1000} s"
+    }
+}
+
+/** Locale date plus the phone's 12/24-hour time setting. */
+internal fun formatDateTime(context:android.content.Context,ms:Long):String {
+    val date=java.util.Date(ms)
+    return android.text.format.DateFormat.getMediumDateFormat(context).format(date)+" "+android.text.format.DateFormat.getTimeFormat(context).format(date)
 }

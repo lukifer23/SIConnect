@@ -1,5 +1,7 @@
 package dev.siconnect.app.ui.automations
 
+import dev.siconnect.app.ui.SwitchRow
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,9 +26,8 @@ internal fun SchemaInputFields(schema:JsonObject,value:JsonObject,onChange:(Json
         fun update(next:JsonElement?) {onChange(JsonObject(value.toMutableMap().apply {if(next==null) remove(name) else put(name,next)}))}
         key(name) {
             when(field["type"]?.jsonPrimitive?.content) {
-                "boolean" -> Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                "boolean" -> SwitchRow(current?.jsonPrimitive?.booleanOrNull ?: false,{update(JsonPrimitive(it))}) {
                     Text(label,Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium)
-                    Switch(current?.jsonPrimitive?.booleanOrNull ?: false,{update(JsonPrimitive(it))})
                 }
                 "object" -> {
                     if(field["properties"] is JsonObject && depth<4) {

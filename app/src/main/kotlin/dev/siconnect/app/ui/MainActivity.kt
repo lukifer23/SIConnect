@@ -84,7 +84,9 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                         isAppearanceLightStatusBars=!dark;isAppearanceLightNavigationBars=!dark
                     }
                 }
-                Surface(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                // The Surface paints behind the transparent system bars; only its content is inset,
+                // so bar icons always sit on the app's own background in light and dark themes.
+                Surface(Modifier.fillMaxSize()) { Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                     var initialized by remember { mutableStateOf(false) }
                     var startupError by remember { mutableStateOf<String?>(null) }
                     LaunchedEffect(graph) {
@@ -115,7 +117,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                             Text("Failure: $startupError", style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                }
+                } }
             }
         }
     }
@@ -143,12 +145,10 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var destination by rememberSaveable {mutableStateOf(Destination.HOME)}
         var selectedAgentId by rememberSaveable {mutableStateOf<String?>(null)}
         LaunchedEffect(destination) {controlModel.refresh()}
-        var advanced by remember { mutableStateOf(false) }
         var changed by remember { mutableIntStateOf(0) }
         val pending=snapshot.pending
         val recent=snapshot.recent
 
-        var activity by rememberSaveable { mutableStateOf(false) }
         var inbox by rememberSaveable {mutableStateOf(false)}
         var note by remember { mutableStateOf("") }
         val snackbarHostState=remember {SnackbarHostState()}
@@ -166,7 +166,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         var controlHelp by rememberSaveable { mutableStateOf(false) }
         var nativeSetup by rememberSaveable {mutableStateOf(!getSharedPreferences("owner_setup",MODE_PRIVATE).getBoolean("reviewed",false) && g.settings.gateway.value.baseUrl.isBlank())}
         var connectionCode by remember { mutableStateOf("") }
-        var pairName by rememberSaveable { mutableStateOf("Dots") }
+        var pairName by rememberSaveable { mutableStateOf("") }
         var pairError by remember { mutableStateOf("") }
         var pairDialog by rememberSaveable { mutableStateOf(false) }
         var pairCode by remember { mutableStateOf<dev.siconnect.app.transport.PairingInvitation?>(null) }
@@ -186,7 +186,9 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                   catch(_:Exception) {historyError="Connection history is temporarily unavailable"}
             }
         }
-        var allowBot by remember { mutableStateOf<AgentRecord?>(null) }
+        // Saved by ID so fold/unfold or rotation keeps the dialog; the record reloads from the snapshot.
+        var allowBotId by rememberSaveable { mutableStateOf<String?>(null) }
+        val allowBot=allowBotId?.let {id->snapshot.agents.firstOrNull {it.grant.agentId==id}}
         var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
         var review by remember { mutableStateOf<RequestRecord?>(null) }
         var inspectedId by rememberSaveable {mutableStateOf<String?>(null)}
@@ -200,14 +202,17 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         val bots=snapshot.agents.filterNot {it.grant.agentId.startsWith("local-")}
         val labels=snapshot.agents.associate {it.grant.agentId to botDisplayName(it,snapshot.agents)}
         val reminders=snapshot.reminders
+        var reminderId by rememberSaveable { mutableStateOf<String?>(null) }
         var reminder by remember { mutableStateOf<dev.siconnect.app.capabilities.Reminder?>(null) }
         var exactAccess by remember { mutableStateOf(false) }
-        var notifications by remember { mutableStateOf(getSystemService(NotificationManager::class.java).areNotificationsEnabled()) }
-        fun work(block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: CancellationException) {throw e} catch(e: Exception) { note=e.message ?: "Action failed" } finally { busy=false } } }
+        // Errors from an action started inside a dialog must render in that dialog: the snackbar sits beneath modal dialogs.
+        var approvalError by remember {mutableStateOf("")}
+        var shellError by remember {mutableStateOf("")}
+        var reminderError by remember {mutableStateOf("")}
+        fun work(onError:(String)->Unit={note=it},block: suspend ()->Unit) { scope.launch { busy=true; try { withContext(Dispatchers.IO) { g.ready.await(); block() }; changed++ } catch(e: CancellationException) {throw e} catch(e: Exception) { onError(e.message ?: "Action failed") } finally { busy=false } } }
         LaunchedEffect(changed,permissionRevision) {
             controlModel.refresh();exactAccess=g.reminders.canScheduleExact()
-            notifications=getSystemService(NotificationManager::class.java).areNotificationsEnabled()
-            reminder=withContext(Dispatchers.IO) {reminder?.let {g.reminders.get(it.id)}}
+            reminder=withContext(Dispatchers.IO) {reminderId?.let {g.reminders.get(it)}}
         }
         LaunchedEffect(reviewId,changed) {
             review=withContext(Dispatchers.IO) { g.ready.await();reviewId?.let(g.requests::get) }
@@ -218,7 +223,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             if(target!=null) {
                 val stored=withContext(Dispatchers.IO) { g.ready.await();g.requests.get(target) }
                 if(stored!=null) {
-                    closeInspection();destination=Destination.HOME;advanced=false;reviewId=stored.requestId;review=stored
+                    closeInspection();destination=Destination.HOME;reviewId=stored.requestId;review=stored
                     // Consume this delivery, not the request identity: a later notification tap
                     // must reopen the same action, including its resolved/expired result.
                     intent.removeExtra("requestId")
@@ -290,7 +295,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             }
             key(r.requestId) {RequestDetails(r,labels[r.agentId] ?: "Agent",inspectedEvents,
                 r.state==RequestState.DENIED && r.policy?.rule in setOf("agent_scope","agent_denylist") && bots.any {it.grant.agentId==r.agentId},busy,
-                onPermissions={closeInspection();activity=false;note="";selectedAgentId=r.agentId;destination=Destination.AGENTS},
+                onPermissions={closeInspection();note="";selectedAgentId=r.agentId;destination=Destination.AGENTS},
                 onCancel={ownerAuthentication.authenticate("Cancel active request",{work {
                     val cancelled=g.engine.cancel(r.requestId,"local-owner")
                     withContext(Dispatchers.Main) {if(inspectedId==r.requestId) inspected=cancelled}
@@ -328,13 +333,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     onHealth={work {val r=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="device.runtime"),Origin.LOCAL_OWNER);require(r.state==RequestState.SUCCEEDED) {r.errorMessage ?: "Health unavailable"};measurements=r.result!!.output.jsonObject}},
                     onStop={g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=false))},
                     onResume={ownerAuthentication.authenticate("Resume remote requests",{g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=true))},{note=it})},
-                    onInbox={inbox=true},onSetup={destination=Destination.SETTINGS},onReminder={id->work {reminder=g.reminders.get(id)}})
+                    onInbox={inbox=true},onSetup={destination=Destination.SETTINGS},onReminder={id->reminderError="";reminderId=id;changed++})
                 Destination.AGENTS -> AgentsScreen(snapshot,wide,selectedAgentId,
                     onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
                     onFamily={id,family,enabled->
                         val apply={work {g.setCapabilityFamilyFromOwner(id,family,enabled)}}
                         if(enabled) ownerAuthentication.authenticate("Allow $family access",apply,{note=it}) else apply()
-                    },onShell={allowBot=it},onReconnect={bot->ownerAuthentication.authenticate("Reconnect selected identity",{work {pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label;pairDialog=true}},{note=it})},
+                    },onShell={shellError="";allowBotId=it.grant.agentId},onReconnect={bot->ownerAuthentication.authenticate("Reconnect selected identity",{work {pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label;pairDialog=true}},{note=it})},
                     onRevoke={bot->work {g.revokeAgentFromOwner(bot.grant.agentId)}},onRequest={id->inspectRequest(id)},
                     onSemanticApp={id,pkg,enabled->
                         val apply={work {g.setSemanticPackagePermissionFromOwner(id,pkg,enabled)}}
@@ -369,7 +374,6 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Destination.SETTINGS -> Management("Settings",onSetup={nativeSetup=true},onGateway={setup=true},onAdvancedControl={controlHelp=true})
             }
         }
-        if(activity) ActivityDialog(g.requests,snapshot.revision,labels,title={id -> g.registry.get(id)?.descriptor?.title ?: id},onClose={activity=false},onOpen={id -> inspectRequest(id)})
         if(inbox) ActionInbox(g,snapshot.revision,{title,yes,no->ownerAuthentication.authenticate(title,yes,no)},onClose={inbox=false},onRequest={id->work {
             val r=requireNotNull(g.requests.get(id));inbox=false
             if(r.state==RequestState.AWAITING_APPROVAL) {reviewId=id;review=r} else inspectRequest(id)
@@ -405,13 +409,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Text(config.baseUrl.trimEnd('/')+"/mcp",style=MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick={copyForBot(config.baseUrl.trimEnd('/')+"/mcp",false)}) {Text("Copy MCP address")}
                 if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE) Button(onClick={
-                    val reconnect={work {
+                    val reconnect={work({gatewayError=it}) {
                         g.gateway.stop();g.settings.setGateway(g.settings.gateway.value.copy(enabled=true))
                         withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
                     }}
                     if(config.enabled) reconnect() else ownerAuthentication.authenticate("Enable existing gateway",reconnect,{gatewayError=it})
                 },enabled=!busy) {Text("Connect saved gateway")}
-                if(config.enabled) OutlinedButton(onClick={work {
+                if(config.enabled) OutlinedButton(onClick={work({gatewayError=it}) {
                     g.gateway.pauseFromOwner()
                     withContext(Dispatchers.Main) {stopService(Intent(this@MainActivity,ConnectionService::class.java))}
                     gatewayError=""
@@ -426,7 +430,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 Button(onClick={
                     val parsed=runCatching {dev.siconnect.app.bootstrap.GatewaySetupCode.parse(connectionCode)}
                     if(parsed.isFailure) gatewayError=parsed.exceptionOrNull()?.message ?: "Invalid setup code"
-                    else ownerAuthentication.authenticate("Enroll with this gateway",{work {
+                    else ownerAuthentication.authenticate("Enroll with this gateway",{work({gatewayError=it}) {
                         val code=parsed.getOrThrow()
                         g.gateway.stop();g.settings.setEnrollToken(code.enrollment)
                         g.settings.setGateway(GatewayConfig(code.endpoint,true));g.settings.enrolled=false
@@ -440,7 +444,7 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 TextButton(onClick={legacyCredential=!legacyCredential}) {Text(if(legacyCredential) "Hide legacy credential" else "Advanced: existing bearer credential")}
                 if(legacyCredential) {
                     Text("This is the existing shared bearer identity. Manage its permissions in Agents. Copying it does not create another agent.",style=MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick={ownerAuthentication.authenticate("Copy existing bearer credential",{work {
+                    OutlinedButton(onClick={ownerAuthentication.authenticate("Copy existing bearer credential",{work({gatewayError=it}) {
                         val token=requireNotNull(g.botKeyForOwner()) {"Existing credential is unavailable; inspect Agents"}
                         withContext(Dispatchers.Main) {copyForBot(token,true)}
                     }},{gatewayError=it})},enabled=!busy) {Text("Copy existing credential")}
@@ -452,56 +456,65 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
             if(pairCode==null) {
                 Text("Creates a separate bot with its own permissions, even when another bot has the same name. To preserve an existing bot’s permissions, open its card and choose Reconnect this bot.")
-                OutlinedTextField(pairName,{pairName=it.take(60)},label={Text("Bot name")},singleLine=true)
+                OutlinedTextField(pairName,{pairName=it.take(60)},label={Text("Bot name")},placeholder={Text("For example, Work assistant")},singleLine=true)
                 Text("Add SIConnect’s MCP address in your bot, choose OAuth, and enter the temporary code on the SIConnect sign-in page.")
             } else {
                 Text("Bot ID: …${pairCode!!.agentId.takeLast(8)}")
                 Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(pairCode!!.expiresAt))}. Works once. Paste it only into your gateway’s SIConnect sign-in page.")
                 Text(pairCode!!.code,style=MaterialTheme.typography.bodySmall)
                 Text("Closing this screen preserves the invitation. Renewing an expired code preserves this exact bot and its permissions.")
-                TextButton(onClick={work {g.pairing.dismissInvitation(pairCode!!.agentId);pairCode=null;pairError=""}},enabled=!busy) {Text("Dismiss invitation (published code expires normally)")}
+                TextButton(onClick={work({pairError=it}) {g.pairing.dismissInvitation(pairCode!!.agentId);pairCode=null;pairError=""}},enabled=!busy) {Text("Dismiss invitation (published code expires normally)")}
             }
-        }},confirmButton={Button(onClick={work {
+        }},confirmButton={Button(onClick={
+            val unexpired=pairCode?.takeIf {it.expiresAt>System.currentTimeMillis()}
+            // A still-valid code is already published: copy it locally, no gateway round trip needed.
+            if(unexpired!=null) copyForBot(unexpired.code,true) else work({pairError=it}) {
             pairError=""
             try {
                 val current=pairCode
-                pairCode=if(current==null) g.pairing.create(pairName) else g.pairing.renew(current.agentId)
+                pairCode=if(current==null) g.pairing.create(pairName.trim()) else g.pairing.renew(current.agentId)
                 if(current!=null) withContext(Dispatchers.Main) {copyForBot(requireNotNull(pairCode).code,true)}
             } catch(e:Exception) {
                 pairCode=g.settings.pendingPairing()
                 pairError=if(e is TimeoutCancellationException) "Gateway did not confirm the code. Check connection and retry this invitation." else e.message ?: "Could not prepare invitation"
             }
         }},enabled=!busy && pairName.isNotBlank()) {Text(if(pairCode==null) "Create new bot" else if(pairCode!!.expiresAt<=System.currentTimeMillis()) "Renew and copy code" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
-        review?.let { r -> OwnerApprovalDialog(r,busy=busy,error=note,onClose={reviewId=null;review=null},onDeny={work {review=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
-            ownerAuthentication.authenticate("Approve ${r.capabilityId}",{
-                if(reviewId==r.requestId) work {review=g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
-            },{note=it})
-        }) }
+        review?.let { r ->
+            val actionTitle=g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId
+            OwnerApprovalDialog(r,busy=busy,error=approvalError,agentLabel=labels[r.agentId] ?: r.agentId,actionTitle=actionTitle,
+                onClose={reviewId=null;review=null;approvalError=""},onDeny={approvalError="";work({approvalError=it}) {review=g.engine.resolveApproval(r.requestId,false,"local-owner",r.argsHash)}},onApprove={always,broad ->
+                approvalError=""
+                ownerAuthentication.authenticate("Approve: $actionTitle",{
+                    if(reviewId==r.requestId) work({approvalError=it}) {review=g.approveFromOwner(r.requestId,r.argsHash,always,broad)}
+                },{approvalError=it})
+            })
+        }
         if((destination!=Destination.ACTIVITY || !activityUsesPane) && inspectedId!=null) {
             AlertDialog(onDismissRequest={closeInspection()},title={Text(inspected?.let {g.registry.get(it.capabilityId)?.descriptor?.title ?: it.capabilityId} ?: "Saved action")},
                 text={Box(Modifier.heightIn(max=480.dp)) {inspectionContent()}},confirmButton={TextButton(onClick={closeInspection()}) {Text("Close")}})
         }
-        allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,error=note,onClose={allowBot=null},onReduce={work {g.setShellPermissionFromOwner(a.grant.agentId,false);allowBot=g.agents.get(a.grant.agentId)}},onAllow={
-            ownerAuthentication.authenticate("Always allow device control",{
-                if(allowBot?.grant?.agentId==a.grant.agentId) work {g.setShellPermissionFromOwner(a.grant.agentId,true);allowBot=g.agents.get(a.grant.agentId);note="Always allowed. Saved on this phone until you revoke it."}
-            },{note=it})
+        allowBot?.let { a -> ShellPermissionDialog(botDisplayName(a,bots),busy=busy,allowed=a.grant.shellMode==ShellMode.BROAD,error=shellError,onClose={allowBotId=null;shellError=""},onReduce={work({shellError=it}) {g.setShellPermissionFromOwner(a.grant.agentId,false)}},onAllow={
+            ownerAuthentication.authenticate("Always allow arbitrary shell",{
+                if(allowBotId==a.grant.agentId) work({shellError=it}) {g.setShellPermissionFromOwner(a.grant.agentId,true)}
+            },{shellError=it})
         }) }
-        reminder?.let { r -> AlertDialog(onDismissRequest={reminder=null},title={Text(r.title)},
+        reminder?.takeIf {reminderId==it.id}?.let { r -> AlertDialog(onDismissRequest={reminderId=null;reminder=null},title={Text(r.title)},
             text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                 Text(r.text)
-                Text(java.time.Instant.ofEpochMilli(r.fireAtMs).atZone(java.time.ZoneId.systemDefault()).toString())
+                Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM,java.text.DateFormat.SHORT).format(java.util.Date(r.fireAtMs)))
                 Text(if(r.exact) "Precise timing through Android AlarmManager" else "Flexible timing through Android WorkManager")
                 r.error?.let {Text(it)}
+                if(reminderError.isNotBlank()) Text(reminderError,color=MaterialTheme.colorScheme.error)
             }},confirmButton={Column {
                 if(r.state in setOf("SCHEDULED","BLOCKED") && (!r.exact || r.state=="BLOCKED")) Button(onClick={
                     if(!exactAccess) startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))
-                    else work {
+                    else work({reminderError=it}) {
                         val result=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="reminders.update",arguments=buildJsonObject {put("id",r.id);put("exact",true)}),Origin.LOCAL_OWNER)
                         check(result.state==RequestState.SUCCEEDED) {result.errorMessage ?: "Could not schedule precise reminder"}
-                        note="Precise reminder saved. Its time and content are unchanged.";reminder=null
+                        note="Precise reminder saved. Its time and content are unchanged.";reminderId=null;reminder=null
                     }
                 }) {Text(if(exactAccess) "Use precise time" else "Enable precise reminders")}
-                TextButton(onClick={reminder=null}) {Text("Close")}
+                TextButton(onClick={reminderId=null;reminder=null;reminderError=""}) {Text("Close")}
             }}) }
 
     }

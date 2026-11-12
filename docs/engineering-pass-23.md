@@ -32,3 +32,30 @@ Verification:
   - The genuine daemon attached as uid 2000 after `--restart`, and re-attached after the app process was killed. One transient `Required value was null` attach failure was retried successfully a second later; it comes from the pre-existing service-binder check, not the new rule.
   - Instrumented runs passed: `RuntimeDeviceTest` 13/13, `TermuxJournalDeviceTest` 4/4, `SchedulerDeviceTest` 3/3, `CalendarDeviceTest` 2/2, `DocumentDeviceTest` 2/2, `ManualAutomationDeviceTest` 2/2.
   - `SchedulerDeviceTest` previously failed because its fixture generated an invalid skill ID (UUID hyphens); the fixture is fixed.
+
+## Batch 3: owner screens
+
+- **Light mode:** the app `Surface` paints behind the transparent system bars and only its content is inset. A new `Theme.SIConnect` window theme (light, with a `values-night` dark variant) replaces the always-dark `Theme.Material.NoActionBar`, which removes dark strips behind bar icons and the dark launch flash.
+- **Errors appear where the action was taken:** gateway, pairing, reminder, approval and shell dialogs show their own errors. Previously these went to a snackbar hidden under the modal dialog, and success text was shown in red as an approval "error".
+- **Readable approvals:** both approval dialogs (Home and Settings) show the bot's display name and the capability title, with the raw ID in small text. The biometric prompt names the action. The Settings approval dialog now shows its busy state.
+- **Action Inbox:** reloads keep the current proposal and list on screen instead of blanking on every revision. Home always offers "Inbox history", so completed and problem proposals stay reachable.
+- **Fold/rotation:** these survive Activity recreation:
+  - shell-permission and reminder dialogs (saved by ID);
+  - the agent revoke confirmation;
+  - the ADB pairing endpoint and code, held in a retained ViewModel and never written to the saved-instance Bundle.
+- **Automations:**
+  - Delete, with confirmation and owner authentication. It is refused while a run is active, and run history is kept.
+  - Custom workflows can request the typed capabilities they need through `allowLocalAutomationFromOwner`. That grant is owner-authenticated, limited to 32 entries, never includes shell, and each run still passes policy.
+  - Times follow the phone's 12/24-hour setting.
+- **Accessibility:**
+  - A shared `SwitchRow` makes each labelled switch row a single TalkBack switch with a full-row touch target. It is used at 8 sites.
+  - The Settings rail exposes its selected item.
+  - Decorative chevrons are hidden from TalkBack.
+- **Cleanup:**
+  - The unreachable `ActivityDialog` and unused state are removed.
+  - The pairing name no longer defaults to "Dots", and copying a still-valid pairing code works offline.
+  - Settings' "Disconnect gateway" uses the same audited owner pause as Home.
+  - The mock Appearance preview panel is removed.
+  - Durations and dates use readable, locale-aware formats.
+
+Physical, same signer: `ControlCenterDeviceTest` 1/1, `ProposalDeviceTest` 4/4, `AgentRenameDeviceTest` 3/3 and `ManualAutomationDeviceTest` 2/2 pass. A cover-screen capture in light mode shows dark status icons on the app background. Instrumentation disconnected the shared-screen Accessibility service, which is documented Android behavior; the owner restores it in Android settings.

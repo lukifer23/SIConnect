@@ -1,6 +1,7 @@
 package dev.siconnect.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
@@ -9,6 +10,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -77,7 +79,7 @@ enum class StatusTone { GOOD, NEUTRAL, ATTENTION, ERROR }
                 Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 status?.let {Text(it,style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.primary)}
             }
-            Text("›",style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("›",style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.clearAndSetSemantics {})
         }
     }
 }
@@ -111,4 +113,14 @@ internal fun requestTone(state:RequestState)=when(state) {
     RequestState.FAILED,RequestState.UNKNOWN_OUTCOME->StatusTone.ERROR
     RequestState.AWAITING_APPROVAL,RequestState.DENIED,RequestState.EXPIRED->StatusTone.ATTENTION
     else->StatusTone.NEUTRAL
+}
+
+/** The whole row is one accessible switch: TalkBack reads its label and the touch target spans the row. */
+@Composable internal fun SwitchRow(checked:Boolean,onCheckedChange:(Boolean)->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,
+    content:@Composable RowScope.()->Unit) {
+    Row(modifier.fillMaxWidth().toggleable(value=checked,enabled=enabled,role=androidx.compose.ui.semantics.Role.Switch,onValueChange=onCheckedChange),
+        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+        content()
+        Switch(checked=checked,onCheckedChange=null,enabled=enabled)
+    }
 }

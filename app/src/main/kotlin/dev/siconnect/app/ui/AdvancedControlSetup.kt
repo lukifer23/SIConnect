@@ -26,8 +26,11 @@ import kotlinx.coroutines.*
     val fingerprint by bootstrap.fingerprint.collectAsState()
     val lastFailure by bootstrap.lastFailure.collectAsState()
     val scope=rememberCoroutineScope()
-    var endpoint by remember {mutableStateOf<LocalAdbEndpoint?>(null)}
-    var code by remember {mutableStateOf("")}
+    // Retained across fold/unfold and split-screen resizing (the flow asks for split screen),
+    // without putting the pairing code into the saved-instance Bundle.
+    val drafts=androidx.lifecycle.ViewModelProvider(requireNotNull(androidx.activity.compose.LocalActivity.current) as androidx.activity.ComponentActivity)[AdbPairingDrafts::class.java]
+    var endpoint by drafts.endpoint
+    var code by drafts.code
     var advanced by rememberSaveable {mutableStateOf(false)}
     var port by rememberSaveable {mutableStateOf("")}
     var message by remember {mutableStateOf("")}
@@ -64,10 +67,10 @@ import kotlinx.coroutines.*
                 PageHeader("Device control","Connect once. Restore control from this phone.")
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                     if(bootstrap.pairedAt>0L) {
-                        Row {Text("Reconnect automatically",Modifier.weight(1f));Switch(recovery,{enabled->
+                        SwitchRow(recovery,{enabled->
                             if(enabled) authorize("Restore control using saved Android authorization") {bootstrap.setRecoveryFromOwner(true)}
                             else {bootstrap.setRecoveryFromOwner(false)}
-                        },enabled=!state.busy)}
+                        },enabled=!state.busy) {Text("Reconnect automatically",Modifier.weight(1f))}
                         Text("Reuses this phone’s saved pairing after connection or service loss. Android may still require you to enable Wireless debugging after reboot.",style=MaterialTheme.typography.bodySmall)
                     }
                     if(state.phase==BootstrapPhase.PRIVILEGED_READY && !configureRecovery && !pairAgain) {
@@ -131,4 +134,9 @@ import kotlinx.coroutines.*
             }
         }
     }
+}
+
+internal class AdbPairingDrafts:androidx.lifecycle.ViewModel() {
+    val endpoint=mutableStateOf<LocalAdbEndpoint?>(null)
+    val code=mutableStateOf("")
 }

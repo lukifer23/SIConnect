@@ -369,13 +369,26 @@ class RuntimeGraph(val context: Context) {
     }
 
     /** Explicit owner action, only low-impact native weather calculations/reminders; no shell authority. */
-    fun enableWeatherAutomationFromOwner() {
+    fun enableWeatherAutomationFromOwner() =
+        allowLocalAutomationFromOwner(listOf("weather.commute_plan","weather.commute_decide","reminders.create"),
+            "automation.weather.authorized","Local owner enabled native commute checks and reminder scheduling")
+    /**
+     * Owner-authenticated grant of exact typed capabilities to local schedules. Shell is never granted
+     * here (it has its own explicit control), and each run still passes the policy engine and approvals.
+     */
+    fun allowLocalAutomationFromOwner(capabilityIds:List<String>,eventType:String="automation.scope.authorized",
+        detail:String="Local owner allowed typed capabilities for local automations") {
+        val ids=capabilityIds.distinct()
+        require(ids.isNotEmpty() && ids.size<=32) {"Choose between 1 and 32 capabilities"}
+        ids.forEach {id->
+            val d=requireNotNull(registry.get(id)?.descriptor) {"Unknown capability $id"}
+            require(d.id==id && !d.ownerOnly && !id.startsWith("shell.")) {"$id cannot be granted to local automations"}
+        }
         val w=db.writableDatabase;w.beginTransaction()
         try {
             val a=requireNotNull(agents.get("local-automation"))
-            val needed=listOf("weather.commute_plan","weather.commute_decide","reminders.create")
-            agents.put(a.copy(grant=a.grant.copy(scopes=(a.grant.scopes+needed).distinct())))
-            events.emit(Event(System.currentTimeMillis(),eventType="automation.weather.authorized",agentId="local-automation",detail="Local owner enabled native commute checks and reminder scheduling"))
+            agents.put(a.copy(grant=a.grant.copy(scopes=(a.grant.scopes+ids).distinct())))
+            events.emit(Event(System.currentTimeMillis(),eventType=eventType,agentId="local-automation",detail="$detail: ${ids.joinToString()}"))
             w.setTransactionSuccessful()
         } finally {w.endTransaction()}
     }
