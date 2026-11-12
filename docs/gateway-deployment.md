@@ -49,6 +49,8 @@ Pass 3 deployed the same Worker endpoint to version `3103541b-0f0f-4acb-8e1c-c86
 
 Pass 4 deployment: version `5cf1038d-015a-42bf-bb54-ca74e2d8ecdd`, same Worker endpoint and durable bindings, after rechecking the expected personal account. No secret upload, OAuth resource change, credential rotation or replacement endpoint was required. Previous version `3103541b-0f0f-4acb-8e1c-c86989f19efe` remains the rollback reference. This deployment adds bounded UTF-8 envelopes, explicit HTTP-disconnect unknown-outcome handling and same-agent recent/output retrieval; the phone remains the authoritative result store. Post-deployment phone smoke results are recorded in device testing rather than inferred from upload success.
 
+Pass 23 deployment: version `ac8d435b-fbec-4f6a-b510-e4605e229f52` on November 11, 2026, to the same Worker endpoint and durable bindings. The personal account was checked first, and no secrets, OAuth resource or credentials changed. Rollback reference: `d458ed77-2118-4a13-9977-d55c7de606de`. After the Durable Object restart the phone reconnected without intervention. Health, unauthenticated `/mcp` (401) and protected-resource metadata were checked.
+
 ## Retry identity and original-result recovery
 
 The October 26 gateway source adds optional `_siconnectOperationKey` to advertised tool arguments. It is now deployed to the existing endpoint/bindings in the previously verified account, with actual same-principal phone read/write acceptance. Refresh client tool discovery; see [pass 14](history/engineering-pass-14.md). Use this field only when the discovered schema advertises it. Existing OAuth/bearer enrollment and calls without a key remain compatible.

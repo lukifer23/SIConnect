@@ -9,7 +9,7 @@ Updated November 11, 2026. This is the single current status page. Dated reports
 | Android app | **0.6.0-dev.20 / versionCode 28**, compatible development signer (in-place update preserves enrollment, agents, grants and records) |
 | Main SQLite schema | **12** (unchanged since code 26); Termux journal **1**; Clock journal **1** |
 | Phone capabilities | **112** observed on the installed build (code 27 count; no capabilities were added in code 28) |
-| Gateway | Source includes the pass-23 hardening; **the hosted Worker still runs the earlier deployment until it is redeployed** (see [gateway deployment](gateway-deployment.md)) |
+| Gateway | Pass-23 Worker deployed November 11 as version `ac8d435b-fbec-4f6a-b510-e4605e229f52` (rollback: `d458ed77-2118-4a13-9977-d55c7de606de`); the phone reconnected with its revocation list |
 
 Latest work: [pass 23](engineering-pass-23.md) (November 11 audit fixes: liveness and outcome honesty, trust boundaries, owner screens, duplication/efficiency, docs/CI). Previous checkpoint: [pass 22](engineering-pass-22.md) (managed Clock timers, private Messages reading, recovery center, editable agent names, native Codex execution).
 
@@ -23,7 +23,7 @@ Latest work: [pass 23](engineering-pass-23.md) (November 11 audit fixes: livenes
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 18 pass |
 | Lint | 0 errors |
-| Physical, code 28 | `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
+| Physical, code 28 | Exact automation in forced deep Doze (screen off, unplugged): started 10 ms after its slot and succeeded (`ExactDozeAcceptanceDeviceTest`); `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
 
 The gateway test suite uses a local test peer and is never phone evidence. CI runs the host suites, lint, release debug-isolation, Python and gateway checks and a secret scan; it does not run instrumentation.
 
@@ -31,11 +31,12 @@ The gateway test suite uses a local test peer and is never phone evidence. CI ru
 
 Run these on the physical phone with the existing signer. Do not reset data, broaden grants or repeat personal sends to make a check pass.
 
-- **Gateway redeploy.** Deploy the pass-23 Worker after checking the Wrangler account. Then verify against the hosted gateway:
+- **Hosted gateway behavior with a real client.** Use a real client credential to check, against the deployed Worker:
   - revocation (`AGENT_REVOKED`);
   - the per-agent cap;
   - a mistyped pairing code that keeps the consent page usable.
-- **Exact automation under Doze.** Schedule one exact automation with the screen off and the phone idle, and confirm it runs on time from the alarm.
+
+  Unauthenticated health, MCP 401 and OAuth metadata were checked after the deploy.
 - **Owner screens.** Check these by hand across folded/unfolded, rotation, split window, large font and light/dark:
   - the dialog error placement and approval labels;
   - Action Inbox stability;

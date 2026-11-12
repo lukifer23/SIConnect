@@ -111,3 +111,13 @@ Deferred, with reasons:
 Not changed: the risk class of `ui.scroll`/`ui.back`/`ui.home` (LOW_IMPACT, while `headless.scroll` is HIGH_IMPACT). Raising it would add approval prompts for existing agents, so it is an owner policy decision.
 
 Verification: core 91, app unit 151, lint 0 errors. Physical: `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1.
+
+## Deployment and Doze acceptance
+
+- **Gateway deployed** as version `ac8d435b-fbec-4f6a-b510-e4605e229f52`. The rollback reference is `d458ed77-…`, and the personal Wrangler account was confirmed before deploying. The phone reconnected on its own after the Durable Object restart.
+- **Exact automation under Doze.** `ExactDozeAcceptanceDeviceTest` is a two-phase harness:
+  - It creates a disposable exact automation of the built-in read-only `diagnostics.snapshot` workflow.
+  - The app restarts normally, which restores the alarm. The screen turns off, battery is simulated as unplugged and deep idle is forced (`dumpsys deviceidle force-idle`).
+  - After the slot, the battery and Doze overrides are reset and the check phase reads the run row.
+
+  Result: `SUCCEEDED`, started **10 ms** after its slot, while the phone was in deep idle. The fixture was removed.
