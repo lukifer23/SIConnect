@@ -2,7 +2,9 @@
 
 ## November 20, 2026 · build 30
 
-The owner removed the previous Dot and Grok Bot connectors. The phone revoked all four earlier remote identities. Earlier successes below describe those historical connections. The fresh SDK test replaces the OAuth client while the phone is offline, refreshes the grant, reconnects the phone, reconciles the spent invitation and completes a tool call against a test peer. A production client needs its own successful sign-in and a battery request matched to its phone identity. See [phone setup](phone-setup.md#connect-dot-or-grok-bot) and [current verification](status.md).
+Dot and Grok Bot each completed fresh OAuth consent against the same production Worker, using separate phone identities. Dot's custom MCP plugin is named **SIConnect**. Grok Bot's **Remote HTTPS** connector is also named **SIConnect**. The installed Grok Bot desktop client used Cursor's connector backend for OAuth. Both providers returned battery readings before and after a real Fold reboot and first unlock. Each of the four request IDs displayed by a provider matched a successful request under its own phone identity. The phone reopened its gateway connection in the background. The same ChatGPT and Grok Bot conversations invoked their existing connectors again without new OAuth consent. Four earlier remote identities remain revoked. Earlier checkpoints below describe those historical connections.
+
+The local SDK test also replaces its OAuth client while the phone is offline, refreshes the grant, reconnects the phone, reconciles the spent invitation and completes a tool call against a test peer. See [phone setup](phone-setup.md#connect-dot-or-grok-bot) and [physical restart verification](status.md#verification).
 
 ## Code 14 — October 26, 2026
 

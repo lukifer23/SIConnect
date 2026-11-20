@@ -10,13 +10,17 @@ Calendar access requires the appropriate runtime permissions. SAF access require
 
 ## Connect Dot or Grok Bot
 
-1. Open **Home → Connection details**. If an enrolled phone is offline, choose **Connect saved gateway** and wait for **Connected**. Choose **Copy MCP address**. For a tunnel deployment, verify that it uses the tunnel’s published hostname. Both providers use that HTTPS address.
+1. Open **Home → Connection details**. If an enrolled phone is offline, choose **Connect saved gateway** and wait for **Connected**. Choose **Copy MCP address**. On the project's Workers Free deployment the address ends in `siconnect-gateway.siconnect-gateway.workers.dev/mcp`. Both providers use the same HTTPS address. A separately published tunnel deployment has its own hostname.
 2. In the provider's custom MCP setup, name the connector **SIConnect**, enter that address and select OAuth if offered. In Dot, open **Plugins → Add → Add custom MCP server**. In Grok Bot, open **Connect Apps → Add a custom connector**. A client that offers only bearer authentication needs a separately provisioned credential. Pairing codes belong on the gateway's OAuth consent page.
 3. On the phone, open **Agents → Pair agent**, authenticate, enter a distinct name such as **Dot** or **Grok Bot**, then choose **Create new bot**. Once the gateway acknowledges the invitation, choose **Copy pairing code**. Enter it on the consent page for the same HTTPS origin within the displayed ten-minute window. Finish one connection before creating the second.
 4. In that client, run `siconnect_connection`, then `device_battery`. Check that **Agents → [agent] → Activity** shows the battery request for the intended identity. Repeat for the second provider. Native actions use Android permissions and can run with USB disconnected and debugging disabled.
 5. To sign an existing OAuth agent back in, open its **Connection** tab and choose **Reconnect this agent**. This preserves its permissions and request history. After **Revoke access**, a new pairing creates a new identity. **Disconnect all agents** revokes every remote identity on this phone.
 
 New OAuth agents can read device status, inspect apps and use a bounded set of native tools. Actions above read-only risk require approval. The owner can review each grant in **Agents**. For initial gateway enrollment or a deliberate gateway change, use the secure setup code issued by the gateway administrator. Check the HTTPS origin before owner authentication.
+
+### Verify after a phone restart
+
+Unlock Android once, leave SIConnect closed and ask each provider for a fresh `device_battery` result and request ID. Then open **Activity** to confirm two new successful requests under the expected agent names. On build 30 this passed on a physical Fold with the existing Dot and Grok Bot sessions. No one restarted the service manually or paired either bot again. See [verification](status.md#verification).
 
 ## Enable advanced device control
 

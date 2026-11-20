@@ -18,7 +18,11 @@ npm run deploy
 
 For an in-place upgrade, confirm the current account, Worker, deployment and namespace bindings. Run the gateway tests above, then deploy with `npx wrangler deploy --keep-vars`. Record the returned version ID. Check `/health`, the OAuth discovery endpoints and the HTTP 401 challenge from an unauthenticated request to `/mcp`. Confirm a new phone handshake separately.
 
-### Publishing through the named Cloudflare Tunnel
+### Current provider address
+
+Dot and Grok Bot both use `https://siconnect-gateway.siconnect-gateway.workers.dev/mcp`. The account dashboard shows **Workers Free** as the current plan. The phone opens its own outbound WebSocket to the Worker. The Mac can be off, and native actions require neither USB nor debugging. Keeping the same public origin also preserves the resource URL saved by both OAuth clients. Cloudflare applies plan limits to this deployment. See [Workers limits](https://developers.cloudflare.com/workers/platform/limits/).
+
+### Optional public hostname for the named tunnel
 
 In **Networking → Tunnels**, open **SIConnect** in the account that owns the gateway. Check **Connection Status** and its published hostname. A tunnel ID is available before a connector joins. Verify that its ingress service reaches the existing SIConnect gateway and supports the phone WebSocket. The tunnel connector must be on an always-available host for this topology to work while the development machine is off. Record the tunnel and public hostname in the deployment inventory. A Worker deployment ID alone identifies only a code version. See [Cloudflare Tunnel routing](https://developers.cloudflare.com/tunnel/concepts/routing/).
 

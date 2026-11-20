@@ -17,7 +17,9 @@ Build 29 puts individual and bulk revocation in **Agents**. Resetting all agents
 
 The phone records gateway confirmation for each invitation. A delayed receipt identifies the exact code. An interrupted enrollment that returns “already registered” is finalized after the saved device credential and gateway handshake succeed. Home distinguishes retry, authentication failure, and a connected gateway with zero authorized agents.
 
-The gateway still issues one-hour OAuth access tokens and sets a fixed 30-day refresh-token lifetime. A saved phone grant can outlive a provider login. The reset removed the old identities before any fresh provider sign-in was attempted. Native phone tools use the app’s Android permissions. The bundled shell backend still needs per-boot authorization.
+The gateway still issues one-hour OAuth access tokens and sets a fixed 30-day refresh-token lifetime. A saved phone grant can outlive a provider login. After revoking the four original identities, the owner paired Dot and Grok Bot separately over OAuth on Workers Free. Native phone tools use the app’s Android permissions. The bundled shell backend still needs per-boot authorization.
+
+The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**. Its Mac connector starts at boot. Both providers use the existing Worker directly on the verified Free plan. This deployment has no public tunnel hostname.
 
 ## Verification
 
@@ -30,6 +32,7 @@ The gateway still issues one-hour OAuth access tokens and sets a fixed 30-day re
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 21 pass |
 | Lint | 0 errors |
 | Physical, code 30 | Both Android Keystore enrollment tests passed on the Fold, including migration, process recreation and stale completion. After an in-place update the phone acknowledged the hosted gateway without opening the app. After killing the background process, a new process and acknowledgement were observed within 6.7 seconds. All four prior remote identities remained revoked. |
+| Physical, provider reboot test | Dot and Grok Bot each called `device_battery` before a full Fold reboot and again after the first Android unlock. The phone recorded a new gateway acknowledgement at 22:21:37 UTC before opening SIConnect. Grok Bot succeeded at 22:22:12 and Dot at 22:22:45. Both clients displayed new request IDs matching successful on-device records for their separate OAuth identities. The existing sessions and grants worked without a new sign-in. USB was attached for the reboot and read-only diagnostics. The provider calls used the public HTTPS Worker. |
 | Physical, code 29 | Single and bulk revoke confirmed on the Fold cover screen. Four of four remote grants revoked. Verified zero encrypted bot keys, zero pending invitations, and removal of both legacy development bearer files. An old phone bearer returned HTTP 401 on the hosted MCP endpoint. The phone recorded a fresh gateway acknowledgement after an in-place update and again after background process death. The foreground service returned in 1.2 seconds in the process-death check. Both checks ran before reopening the activity. |
 | Physical, code 28 | Exact automation in forced deep Doze (screen off, unplugged): started 10 ms after its slot and succeeded (`ExactDozeAcceptanceDeviceTest`); `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
 
@@ -39,7 +42,6 @@ The gateway test suite uses a local test peer and is never phone evidence. CI ru
 
 Run these on the physical phone with the existing signer. Do not reset data, broaden grants or repeat personal sends to make a check pass.
 
-- **Tunnel cutover.** The November 20 hosted checks used the existing Worker address. The dashboard subsequently showed one named tunnel, **SIConnect**, **Healthy** with **No routes**. The Mac has a system cloudflared service configured to start at boot and restart on failure. A tunnel route through this machine would depend on its power and network. The account dashboard listed no domains. A public MCP hostname for this tunnel is still pending. Validate that hostname and OAuth discovery before saving fresh Dot and Grok Bot connections.
 - **Hosted gateway behavior with a real client.** Use a real client credential to check, against the deployed Worker:
   - revocation (`AGENT_REVOKED`);
   - the per-agent cap;
@@ -59,7 +61,7 @@ Run these on the physical phone with the existing signer. Do not reset data, bro
   - `codex.execute` with a real bounded request.
   - Recovery-center observations through recreation.
 - **Connectivity and recovery.** Reproduce these transitions while preserving original request IDs and checking stored outcomes:
-  - usable network, offline, captive portal, Doze and reboot;
+  - network loss and return, captive portal, deep Doze and a change of network across reboot;
   - socket replacement and enrollment retry.
 - **Private execution while locked or off** needs legitimate companion/OEM provisioning. Normal private displays require an awake, unlocked phone; nothing wakes or bypasses keyguard.
 - **Operating cost.** Collect matched quiet foreground/background/locked CPU, memory, network, wakeup and database-growth observations, then a long soak. No battery or availability improvement is established.
@@ -70,7 +72,7 @@ Instrumentation can force-stop the app and leave the shared-screen Accessibility
 
 ## Roadmap
 
-1. Complete provider sign-in, reboot and network-transition acceptance with separately authorized test identities.
+1. Extend the verified two-provider reboot to network changes and longer idle periods. Exercise expiry and re-consent on disposable identities.
 2. Introduce a shared capability builder, and owner-request/action UI holders, file by file with device re-verification. See the deferred list in [pass 23](engineering-pass-23.md#duplication-and-efficiency-pass).
 3. Decide on one Android package-name validation rule. Current call sites accept different forms.
 4. Measure representative retained-history workloads before designing quotas or archival. Retry identities and notification/slot claims are permanent correctness state.
