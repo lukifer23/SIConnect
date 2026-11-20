@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 internal fun SQLiteDatabase.removeExecutionRetentionSchema() {
     beginTransaction()
     try {
+        execSQL("DROP INDEX requests_agent_history")
         // Strip later schedule projections first. A version reset alone leaves current columns
         // behind and tests a duplicate-ALTER failure rather than the historical upgrade.
         execSQL("CREATE TABLE legacy_automations (automation_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL,next_run_at INTEGER,owner TEXT NOT NULL,json TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0)")

@@ -165,9 +165,13 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             }
             db.execSQL("CREATE INDEX countdowns_by_agent ON reminders(created_by,countdown_started_at DESC,reminder_id DESC) WHERE countdown_started_at IS NOT NULL")
         }
+        if (old < 14 && new >= 14) {
+            db.execSQL("CREATE INDEX requests_agent_history ON requests(agent_id, updated_at DESC, request_id DESC)")
+            db.execSQL("CREATE INDEX tombstones_agent_history ON request_tombstones(agent_id, updated_at DESC, request_id DESC)")
+        }
     }
 
-    companion object { const val VERSION = 13 }
+    companion object { const val VERSION = 14 }
 }
 
 /** Commits only when [block] completes; any exception (or non-local return path that throws) rolls back. */
@@ -182,6 +186,20 @@ inline fun <T> Cursor.mapAll(block: (Cursor) -> T): List<T> = use { c ->
 
 /** Small history projection: listing activity never decodes potentially large shell output. */
 data class RequestSummary(val requestId:String,val agentId:String,val capabilityId:String,val state:RequestState,val createdAtMs:Long,val updatedAtMs:Long,val payloadExpired:Boolean=false)
+
+private const val SUMMARY_FIELDS = "request_id,agent_id,capability_id,state,created_at,updated_at"
+
+// One index lookup in each history table per saved remote identity.
+private fun agentHistoryCandidates(table: String, expired: Int) = """
+    SELECT $SUMMARY_FIELDS, $expired AS payload_expired FROM $table
+    WHERE request_id IN (
+        SELECT (SELECT h.request_id FROM $table h WHERE h.agent_id = a.agent_id
+                ORDER BY h.updated_at DESC, h.request_id DESC LIMIT 1)
+        FROM agents a WHERE a.agent_id NOT GLOB 'local-*'
+    )
+"""
+internal val LATEST_AGENT_HISTORY = agentHistoryCandidates("requests", 0) + " UNION ALL " +
+    agentHistoryCandidates("request_tombstones", 1) + " ORDER BY updated_at ASC, request_id ASC"
 
 class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
     override fun <T> atomic(block:()->T):T {
@@ -239,6 +257,15 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
 
     fun recentSummaries(limit:Int=100):List<RequestSummary> = historyPage(limit=limit)
 
+    /** associateBy retains the newest candidate, including timestamp ties across both tables. */
+    fun latestByAgent(): Map<String, RequestSummary> =
+        db.readableDatabase.rawQuery(LATEST_AGENT_HISTORY, null).mapAll(::readSummary).associateBy { it.agentId }
+
+    private fun readSummary(c: Cursor) = RequestSummary(
+        c.getString(0), c.getString(1), c.getString(2), RequestState.valueOf(c.getString(3)),
+        c.getLong(4), c.getLong(5), c.getInt(6) == 1
+    )
+
     /** Distinct metadata only, for resolving owner-facing action titles during search. */
     fun historyCapabilityIds():Set<String> = db.readableDatabase.rawQuery(
         "SELECT capability_id FROM requests UNION SELECT capability_id FROM request_tombstones",null)
@@ -275,14 +302,14 @@ class SqlRequestStore(private val db: SIConnectDb) : RequestStore {
             where+="(${matches.joinToString(" OR ")})"
         }
         val direction=if(newest) "DESC" else "ASC"
-        val fields="request_id,agent_id,capability_id,state,created_at,updated_at"
+
         val selection=where.takeIf {it.isNotEmpty()}?.joinToString(" AND ")?.let {"WHERE $it"}.orEmpty()
         return db.readableDatabase.rawQuery("""SELECT * FROM (
-            SELECT $fields,0 AS payload_expired FROM requests
-            UNION ALL SELECT $fields,1 AS payload_expired FROM request_tombstones
+            SELECT $SUMMARY_FIELDS,0 AS payload_expired FROM requests
+            UNION ALL SELECT $SUMMARY_FIELDS,1 AS payload_expired FROM request_tombstones
             ) $selection ORDER BY updated_at $direction,request_id $direction LIMIT ?""",
             (args+limit.coerceIn(1,500).toString()).toTypedArray())
-            .mapAll {RequestSummary(it.getString(0),it.getString(1),it.getString(2),RequestState.valueOf(it.getString(3)),it.getLong(4),it.getLong(5),it.getInt(6)==1)}
+            .mapAll(::readSummary)
     }
 
     fun recentDeniedApps():List<RequestRecord> = db.readableDatabase.query("requests",arrayOf("request_id"),"state = ? AND capability_id LIKE ?",

@@ -7,6 +7,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import dev.siconnect.app.graph
+import dev.siconnect.app.data.RequestSummary
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.*
@@ -54,7 +60,7 @@ import dev.siconnect.core.*
                     StatusPill("Grant ${agentState(a).lowercase()}",if(agentState(a)=="Active") StatusTone.GOOD else StatusTone.NEUTRAL)
                     if(!a.grant.revoked) StatusPill(if(a.grant.fullControl) "Full control" else "Custom access",if(a.grant.fullControl) StatusTone.ATTENTION else StatusTone.NEUTRAL)
                 }
-                Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"Last request: ${actionStateLabel(it.state)}"} ?: "Saved identity · no recent request",style=MaterialTheme.typography.bodySmall)
+                Text(state.latestByAgent[a.grant.agentId]?.let {"Last request: ${actionStateLabel(it.state)}"} ?: "No recorded requests",style=MaterialTheme.typography.bodySmall)
             }
         }}
         if(confirmReset) AlertDialog(onDismissRequest={confirmReset=false},title={Text("Disconnect all remote agents?")},
@@ -195,10 +201,29 @@ import dev.siconnect.core.*
                     }
         }
         "Activity" -> {
-            val recent=state.recent.filter {it.agentId==a.grant.agentId}
-            if(recent.isEmpty()) EmptyState("No recent requests","This agent’s latest actions and results will appear here.")
-            recent.take(20).forEach {r->NavigationCard(state.capabilities.firstOrNull {it.descriptor.id==r.capabilityId}?.descriptor?.title ?: r.capabilityId,
-                actionStateLabel(r.state),{onRequest(r.requestId)},icon=R.drawable.ic_nav_activity)}
+            val context = LocalContext.current
+            val agentId = a.grant.agentId
+            var recent by remember(agentId) { mutableStateOf<List<RequestSummary>?>(null) }
+            var failed by remember(agentId) { mutableStateOf(false) }
+            var retry by remember(agentId) { mutableIntStateOf(0) }
+            LaunchedEffect(agentId, state.revision, retry) {
+                try {
+                    recent = withContext(Dispatchers.IO) { context.graph.requests.historyPage(limit = 20, agentId = agentId) }
+                    failed = false
+                } catch (e: CancellationException) { throw e }
+                  catch (_: Exception) { failed = true }
+            }
+            when {
+                failed -> TextButton(onClick = { retry++ }) { Text("Couldn’t refresh activity. Retry") }
+                recent == null -> Text("Loading activity…")
+                recent.isNullOrEmpty() -> EmptyState("No recorded requests", "Actions from this agent will appear here.")
+                else -> SectionHeading("Latest requests")
+            }
+            recent.orEmpty().forEach { r ->
+                NavigationCard(state.capabilities.firstOrNull { it.descriptor.id == r.capabilityId }?.descriptor?.title ?: r.capabilityId,
+                    "${actionStateLabel(r.state)} · ${formatDateTime(context, r.updatedAtMs)}",
+                    { onRequest(r.requestId) }, icon = R.drawable.ic_nav_activity)
+            }
         }
         "Connection" -> {
             Panel {

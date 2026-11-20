@@ -6,10 +6,12 @@ Updated November 20, 2026. This is the single current status page. Dated reports
 
 | Item | Value |
 | --- | --- |
-| Android app | **0.6.0-dev.24 / versionCode 32**, installed in place with the existing development signer |
-| Main SQLite schema | **13** (indexes agent-owned countdowns); Termux journal **1**; Clock journal **1** |
+| Android app | **0.6.0-dev.25 / versionCode 33**, installed in place with the existing development signer |
+| Main SQLite schema | **14** (indexes per-agent request history); Termux journal **1**; Clock journal **1** |
 | Phone capabilities | Build 31 had **112**. Build 32 adds one background countdown tool. |
 | Gateway | Worker version `644d4851-eb75-4748-a4f1-3d8cc219b46e` deployed November 20. Previous version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49`. |
+
+Build 33 shows each saved agent’s latest request on Home and in Agents. Its Activity tab reads up to 20 requests for that identity, including compacted outcomes. Home reads four global activity rows. Incoming updates can refresh the visible dashboard during sustained activity. Opening a saved OAuth invitation after leaving the app or recreating the activity requires owner authentication. The dialog hides expired codes.
 
 Build 32 adds a native background countdown with a visible chronometer and a dedicated Android alarm notification channel. The existing `clock.timer_start` tool starts it when given a duration and no external package. Existing reminders grants also cover `reminders.start_countdown`. The separate external Clock tool waits for owner review if SIConnect is in the background. It replaces the Clock timer shell command with Android’s native SET_TIMER intent. New pairings include start, status and cancel. Existing owners can search for **timer** in the agent’s permissions. An unobserved start records an uncertain outcome and retains its original timer identity.
 
@@ -35,6 +37,7 @@ The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**.
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 21 pass |
 | Lint | 0 errors |
+| Physical, code 33 | 14 targeted instrumentation tests passed on the Fold. A schema-13 fixture retained both credential records, a revoked grant and per-agent results across upgrade and reopen. The latest lookup used both per-agent indexes and returned a quiet agent’s compacted result behind 2,000 newer requests. Backgrounding and activity recreation invalidated outstanding pairing disclosure callbacks. After the in-place install, Home showed the gateway connected and both Dot and Grok Bot with active access. |
 | Hosted timer, code 32 | Grok Bot used its existing OAuth connector and `clock_timer_start` with a duration of 480 seconds. The phone recorded success under Grok’s identity and displayed the matching live SIConnect countdown while SIConnect was in the background. A separate short countdown test verified the expiry alert. |
 | Physical, code 32 | The Fold ran a real disposable Samsung Clock start, observation and cancellation test with the native intent path. Duplicate request IDs dispatched once, other agents could not cancel the timer, preexisting Clock work blocked a second start and the test observed removal of its own timer notification. |
 | Physical, code 31 | Installed in place on the Fold. The catalog showed 78 of 112 tools ready, including 72 native background tools. The private-display filter showed eight tools and zero ready with the current backend state. Combined filters, the empty state and clearing filters were verified on the cover screen. A synthetic Android provider test verified one calendar-list query per call and accurate overflow for calendars, attendees and reminders at 0, 1, 99, 100 and 101 rows. |

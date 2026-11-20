@@ -17,11 +17,11 @@ data class ControlCenterSnapshot(
     val proposals:List<ProposalSummary> = emptyList(),val pendingProposalCount:Int=0,
     val activeRequests:List<RequestSummary> = emptyList(),
     val attentionAutomations:List<AutomationSummary> = emptyList(),
+    val latestByAgent:Map<String,RequestSummary> = emptyMap(),
     val countdowns:List<dev.siconnect.app.automation.RunningCountdown> = emptyList(),
 )
 
 /** One retained metadata projection. No shell output is loaded to render overview screens. */
-@OptIn(FlowPreview::class)
 class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
     private val schedules=ScheduleProjectionStore(g.db)
     private val refreshes=MutableSharedFlow<Unit>(extraBufferCapacity=1)
@@ -41,17 +41,20 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
             discoveryUpdates(dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState),
             discoveryUpdates(dev.siconnect.app.termux.TermuxBridge.get(g.context).updates),
             discoveryUpdates(dev.siconnect.app.notifications.NotificationCaptureService.connectionState))
-            .onStart {g.registry.invalidateDiscovery();emit(Unit)}.debounce(100).collect {
-                try {mutable.value=ControlCenterSnapshot(mutable.value.revision+1,g.agents.all(),g.requests.recentSummaries(50),
+            .onStart {g.registry.invalidateDiscovery();emit(Unit)}.conflate().collect {
+                try {mutable.value=ControlCenterSnapshot(mutable.value.revision+1,g.agents.all(),g.requests.recentSummaries(4),
                     g.requests.listByStates(setOf(RequestState.AWAITING_APPROVAL)),
                     schedules.reminderPage(limit=3),
                     schedules.automationPage(limit=3,filter=AutomationFilter.ENABLED),g.registry.statuses(maxAgeMs=5_000),semanticEnabledInSettings=android.provider.Settings.Secure.getString(g.context.contentResolver,android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
                         .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)},
                     proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount(),
                     activeRequests=g.requests.historyPage(limit=50,states=setOf(RequestState.EXECUTING,RequestState.VERIFYING)),
-                    attentionAutomations=schedules.automationPage(limit=3,filter=AutomationFilter.ATTENTION),countdowns=g.reminders.runningCountdowns()) }
+                    attentionAutomations=schedules.automationPage(limit=3,filter=AutomationFilter.ATTENTION),countdowns=g.reminders.runningCountdowns(),
+                    latestByAgent=g.requests.latestByAgent()) }
                 catch(e:CancellationException) {throw e}
                 catch(e:Exception) {mutable.value=mutable.value.copy(error="Could not refresh: ${e.javaClass.simpleName}")}
+                // Throttle after publishing so continuous activity cannot starve the visible UI.
+                delay(100)
             }
         }
     }}

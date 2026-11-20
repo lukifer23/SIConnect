@@ -142,7 +142,7 @@ import kotlinx.serialization.json.JsonObject
                             StatusPill(if(a.grant.fullControl) "Full control" else "Custom permissions")
                         }
                         if(a.grant.fullControl && a.grant.expiresAtMs==null) Text("Saved · no expiry · automatic SIConnect actions",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"${actionStateLabel(it.state)} · ${time(it.updatedAtMs)}"} ?: "Paired · waiting for its first request",style=MaterialTheme.typography.bodySmall)
+                        Text(state.latestByAgent[a.grant.agentId]?.let {"${actionStateLabel(it.state)} · ${time(it.updatedAtMs)}"} ?: "No recorded requests",style=MaterialTheme.typography.bodySmall)
                     }
                 }}
                 if(paired.isNotEmpty()) Text("${active.size} with active access. Pairing and saved permissions do not indicate a live client connection.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
