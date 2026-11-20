@@ -9,7 +9,7 @@ Updated November 20, 2026. This is the single current status page. Dated reports
 | Android app | **0.6.0-dev.25 / versionCode 33**, installed in place with the existing development signer |
 | Main SQLite schema | **14** (indexes per-agent request history); Termux journal **1**; Clock journal **1** |
 | Phone capabilities | Build 31 had **112**. Build 32 adds one background countdown tool. |
-| Gateway | Worker version `644d4851-eb75-4748-a4f1-3d8cc219b46e` deployed November 20. Previous version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49`. |
+| Gateway | Worker version `d540df34-ac5d-46eb-8b0c-164a58cb2c3e` deployed November 20. Previous version `644d4851-eb75-4748-a4f1-3d8cc219b46e`. |
 
 Build 33 shows each saved agent’s latest request on Home and in Agents. Its Activity tab reads up to 20 requests for that identity, including compacted outcomes. Home reads four global activity rows. Incoming updates can refresh the visible dashboard during sustained activity. Opening a saved OAuth invitation after leaving the app or recreating the activity requires owner authentication. The dialog hides expired codes.
 
@@ -23,7 +23,7 @@ Build 29 puts individual and bulk revocation in **Agents**. Resetting all agents
 
 The phone records gateway confirmation for each invitation. A delayed receipt identifies the exact code. An interrupted enrollment that returns “already registered” is finalized after the saved device credential and gateway handshake succeed. Home distinguishes retry, authentication failure, and a connected gateway with zero authorized agents.
 
-The gateway still issues one-hour OAuth access tokens and sets a fixed 30-day refresh-token lifetime. A saved phone grant can outlive a provider login. After revoking the four original identities, the owner paired Dot and Grok Bot separately over OAuth on Workers Free. Native phone tools use the app’s Android permissions. The bundled shell backend still needs per-boot authorization.
+The gateway issues one-hour OAuth access tokens. Each successful refresh now renews a 30-day idle window, including for an existing unexpired grant. A saved phone identity can outlive a provider login. After revoking the four original identities, the owner paired Dot and Grok Bot separately over OAuth on Workers Free. Native phone tools use the app’s Android permissions. The bundled shell backend still needs per-boot authorization.
 
 The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**. Its Mac connector starts at boot. Both providers use the existing Worker directly on the verified Free plan. This deployment has no public tunnel hostname.
 
@@ -37,6 +37,7 @@ The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**.
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 21 pass |
 | Lint | 0 errors |
+| OAuth renewal, November 20 | With the phone peer offline, the SDK rotated the token and the local Worker stored a new 30-day expiry. A subsequent owner revocation blocked refresh. Hosted health, MCP challenge and OAuth discovery agreed on the existing Worker origin after deployment. |
 | Physical, code 33 | 14 targeted instrumentation tests passed on the Fold. A schema-13 fixture retained both credential records, a revoked grant and per-agent results across upgrade and reopen. The latest lookup used both per-agent indexes and returned a quiet agent’s compacted result behind 2,000 newer requests. Backgrounding and activity recreation invalidated outstanding pairing disclosure callbacks. After the in-place install, Home showed the gateway connected and both Dot and Grok Bot with active access. |
 | Hosted timer, code 32 | Grok Bot used its existing OAuth connector and `clock_timer_start` with a duration of 480 seconds. The phone recorded success under Grok’s identity and displayed the matching live SIConnect countdown while SIConnect was in the background. A separate short countdown test verified the expiry alert. |
 | Physical, code 32 | The Fold ran a real disposable Samsung Clock start, observation and cancellation test with the native intent path. Duplicate request IDs dispatched once, other agents could not cancel the timer, preexisting Clock work blocked a second start and the test observed removal of its own timer notification. |

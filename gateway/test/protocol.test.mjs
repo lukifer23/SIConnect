@@ -5,7 +5,8 @@ import { randomBytes, createHash, createCipheriv } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { execFile, spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import { checkPublicOrigin } from '../scripts/check-public-origin.mjs';
 import { Client, StreamableHTTPClientTransport, auth } from '@modelcontextprotocol/client';
@@ -254,8 +255,23 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   await reconnectPeer();
   assert.equal(await pairingReceipt(code,agentId),'consumed');
   const callback=new URL(approved.headers.get('Location'));assert.equal(callback.searchParams.get('state'),'integration-state');
+  const exchangeStart = Math.floor(Date.now()/1000);
   assert.equal(await auth(provider,{serverUrl:base+'/mcp',authorizationCode:callback.searchParams.get('code'),iss:callback.searchParams.get('iss')}),'AUTHORIZED');
   assert.ok(tokens.access_token);assert.ok(tokens.refresh_token);
+  // Inspect only key expiry in this test worker's disposable local KV namespace.
+  async function storedGrantExpiry() {
+    const { stdout } = await promisify(execFile)(resolve('node_modules/.bin/wrangler'), [
+      'kv', 'key', 'list', '--local', '--config', join(dir, 'wrangler.json'),
+      '--binding', 'OAUTH_KV', '--prefix', 'grant:' + agentId + ':',
+    ], {env:{...process.env, WRANGLER_SEND_METRICS:'false'}});
+    const keys = JSON.parse(stdout);
+    assert.equal(keys.length, 1);
+    assert.ok(Number.isInteger(keys[0].expiration));
+    return keys[0].expiration;
+  }
+  const windowSeconds = 30 * 86400;
+  const initialExpiry = await storedGrantExpiry();
+  assert.ok(initialExpiry >= exchangeStart + windowSeconds && initialExpiry <= Math.floor(Date.now()/1000) + windowSeconds);
   const c=new Client({name:'OAuth SDK integration',version:'1'});
   try {await c.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{authProvider:provider}));assert.equal((await c.callTool({name:'test_echo',arguments:{value:'oauth'}})).structuredContent.result.output.value,'oauth');}
   finally {await c.close()}
@@ -263,7 +279,16 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   assert.equal((await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'})).status,401);
   const offline=new Promise(resolve=>socket.once('close',resolve));
   socket.close();await offline;
+  // KV measures in whole seconds. Cross one boundary before exercising an offline refresh.
+  const waitMs = (initialExpiry - windowSeconds + 1) * 1000 - Date.now();
+  if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
+  const refreshStart = Math.floor(Date.now()/1000);
+  const oldRefresh = tokens.refresh_token;
   const old=tokens.access_token;assert.equal(await auth(provider,{serverUrl:base+'/mcp'}),'AUTHORIZED');assert.notEqual(tokens.access_token,old);
+  assert.ok(tokens.refresh_token !== oldRefresh, 'Refresh token should rotate');
+  const renewedExpiry = await storedGrantExpiry();
+  assert.ok(renewedExpiry > initialExpiry);
+  assert.ok(renewedExpiry >= refreshStart + windowSeconds && renewedExpiry <= Math.floor(Date.now()/1000) + windowSeconds);
   const restarted=new Client({name:'Restarted OAuth client',version:'1'});
   try {
     await restarted.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{authProvider:provider}));

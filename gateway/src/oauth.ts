@@ -5,6 +5,7 @@ import { serveMcp } from './index.js';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const headers = { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', 'Referrer-Policy': 'no-referrer' };
+const refreshWindowSeconds = 30 * 24 * 60 * 60;
 type AuthorizedContext = ExecutionContext & { props: PhoneAuthorization; auth: { scope: string[] } };
 type OAuthEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
@@ -14,7 +15,10 @@ export async function oauthFetch(request: Request, env: Env, ctx: ExecutionConte
     apiRoute: '/mcp', authorizeEndpoint: '/authorize', tokenEndpoint: '/token', clientRegistrationEndpoint: '/oauth/register',
     scopesSupported: ['phone:control', 'offline_access'], requiredScopes: ['phone:control'],
     resourceMetadata: { resource: origin + '/mcp', resource_name: 'SIConnect phone' },
-    accessTokenTTL: 3600, refreshTokenTTL: 30 * 86400, clientIdMetadataDocumentEnabled: true,
+    accessTokenTTL: 3600,
+    refreshTokenTTL: refreshWindowSeconds,
+    refreshTokenIdleTTL: refreshWindowSeconds,
+    clientIdMetadataDocumentEnabled: true,
     async tokenExchangeCallback({ props, userId }) {
       const grant = props as PhoneAuthorization;
       if (!grant?.deviceId || grant.agentId !== userId) throw new OAuthError('invalid_grant', { description: 'Invalid phone authorization' });
