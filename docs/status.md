@@ -6,10 +6,12 @@ Updated November 20, 2026. This is the single current status page. Dated reports
 
 | Item | Value |
 | --- | --- |
-| Android app | **0.6.0-dev.22 / versionCode 30**, installed in place with the existing development signer |
+| Android app | **0.6.0-dev.23 / versionCode 31**, installed in place with the existing development signer |
 | Main SQLite schema | **12** (unchanged since code 26); Termux journal **1**; Clock journal **1** |
-| Phone capabilities | **112** last counted on build 27. Builds 28 through 30 add no capabilities. |
+| Phone capabilities | **112** observed in the Fold’s build 31 catalog. |
 | Gateway | Worker version `644d4851-eb75-4748-a4f1-3d8cc219b46e` deployed November 20. Previous version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49`. |
+
+Build 31 adds combined backend, display use and availability filters in the phone’s tool catalog. Native calendar listing reads calendar metadata in one provider query. Attendee and reminder reads report overflow only when another row exists. See the [phone guide](phone-setup.md#start-with-native-features).
 
 Build 30 fixes interrupted enrollment and reconciles pairing receipts missed while the phone was offline. Identical reconnects retain the gateway catalog revision. Fresh OAuth agents start with native scopes and read-only automatic approval. Existing agents keep their owner-selected permissions. See [connection recovery](troubleshooting.md#a-connection-stopped-working-after-restart).
 
@@ -31,6 +33,7 @@ The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**.
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 21 pass |
 | Lint | 0 errors |
+| Physical, code 31 | Installed in place on the Fold. The catalog showed 78 of 112 tools ready, including 72 native background tools. The private-display filter showed eight tools and zero ready with the current backend state. Combined filters, the empty state and clearing filters were verified on the cover screen. A synthetic Android provider test verified one calendar-list query per call and accurate overflow for calendars, attendees and reminders at 0, 1, 99, 100 and 101 rows. |
 | Physical, code 30 | Both Android Keystore enrollment tests passed on the Fold, including migration, process recreation and stale completion. After an in-place update the phone acknowledged the hosted gateway without opening the app. After killing the background process, a new process and acknowledgement were observed within 6.7 seconds. All four prior remote identities remained revoked. |
 | Physical, provider reboot test | Dot and Grok Bot each called `device_battery` before a full Fold reboot and again after the first Android unlock. The phone recorded a new gateway acknowledgement at 22:21:37 UTC before opening SIConnect. Grok Bot succeeded at 22:22:12 and Dot at 22:22:45. Both clients displayed new request IDs matching successful on-device records for their separate OAuth identities. The existing sessions and grants worked without a new sign-in. USB was attached for the reboot and read-only diagnostics. The provider calls used the public HTTPS Worker. |
 | Physical, code 29 | Single and bulk revoke confirmed on the Fold cover screen. Four of four remote grants revoked. Verified zero encrypted bot keys, zero pending invitations, and removal of both legacy development bearer files. An old phone bearer returned HTTP 401 on the hosted MCP endpoint. The phone recorded a fresh gateway acknowledgement after an in-place update and again after background process death. The foreground service returned in 1.2 seconds in the process-death check. Both checks ran before reopening the activity. |

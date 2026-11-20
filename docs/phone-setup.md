@@ -8,6 +8,8 @@ Install an APK signed with the certificate already trusted by the existing insta
 
 Calendar access requires the appropriate runtime permissions. SAF access requires an owner-selected folder. Weather requires an explicitly configured location. Native diagnostics and permitted native operations remain usable while advanced control is unavailable.
 
+Open **Settings → Developer tools → Capabilities** to see what the phone can run. Select **Native APIs**, **Background**, and **Ready to use** together to find native operations that run without opening an app screen. Choose **Private display** to inspect tools that use an isolated workspace. **Shared screen** includes tools that may open the foreground app. Expand a family to see each tool’s backend, display use, and availability.
+
 ## Connect Dot or Grok Bot
 
 1. Open **Home → Connection details**. If an enrolled phone is offline, choose **Connect saved gateway** and wait for **Connected**. Choose **Copy MCP address**. On the project's Workers Free deployment the address ends in `siconnect-gateway.siconnect-gateway.workers.dev/mcp`. Both providers use the same HTTPS address. A separately published tunnel deployment has its own hostname.

@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Android 0.6.0-dev.22 (build 30), SQLite schema 12.** In **Agents**, choose an agent and tap **Revoke access**, or choose **Disconnect all agents** above the list. Revoked identities remain available in activity history. The phone recovers missed OAuth pairing receipts after reconnecting. New OAuth agents start with scoped native access and read-only automatic approval. See [current device and gateway verification](docs/status.md).
+> **Android 0.6.0-dev.23 (build 31), SQLite schema 12.** Open **Settings → Developer tools → Capabilities** to find ready native, background, and private-display tools. In **Agents**, choose an agent and tap **Revoke access**, or choose **Disconnect all agents** above the list. Revoked identities remain available in activity history. The phone recovers missed OAuth pairing receipts after reconnecting. New OAuth agents start with scoped native access and read-only automatic approval. See [current device and gateway verification](docs/status.md).
 
 Agent-proposed follow-ups appear in the **Action Inbox** and stay inert until the owner accepts them; accepted actions still use the proposing agent's current permissions. Native semantic screen tools, Calendar Provider, SAF documents, managed Clock timers, private Google Messages reading and native Termux/Codex execution are implemented; open physical acceptance is listed in [status](docs/status.md). Android instrumentation can leave the shared-screen Accessibility service disconnected; the owner restores it in Android settings. No battery study or universal unattended privileged reboot recovery is claimed.
 

@@ -4,6 +4,10 @@ Current version, verification and open acceptance work are kept in one place: [s
 
 October 26, 2026. This checkpoint covers SIConnect source, its generated local artifacts and its development processes. Other projects, owner applications and shared system caches are outside the cleanup scope.
 
+## Device screenshots
+
+Keep phone and desktop captures outside the checkout or in an ignored `screenshots/` directory. Git also ignores common Android, macOS, and clipboard screenshot filenames. Before publishing, run `git ls-files -ci --exclude-per-directory=.gitignore`. An empty result means the index contains no files matched by repository ignore rules. CI repeats this check on the committed tree. A renamed image outside an ignored folder can still be tracked.
+
 ## Inventory
 
 The initial tracked tree contained 259 files totaling about 1.9 MiB; none exceeded 1 MiB. Exact-content hashing found four duplicate groups, all required license copies: module notices mirrored into APK assets, plus the SPAKE2 C license notice/full-license files. They remain intentional; removing them would weaken distribution notices. No accidental source duplicate was found. `.git` occupied about 7.1 MiB.

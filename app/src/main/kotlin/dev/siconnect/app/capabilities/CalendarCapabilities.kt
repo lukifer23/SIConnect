@@ -43,19 +43,39 @@ internal class CalendarOperations(private val context: Context) {
     private fun Cursor.number(name: String): Long? = getColumnIndex(name).takeIf { it >= 0 && !isNull(it) }?.let(::getLong)
     private fun JsonObject.id(name: String) = long(name, -1).also { if (it <= 0) throw CapabilityException("INVALID_ID", "$name must be positive") }
 
-    private fun calendar(id: Long, write: Boolean = false): JsonObject = query(calendars,
-        arrayOf("_id", "calendar_displayName", "account_name", "account_type", "calendar_access_level", "visible", "sync_events", "calendar_timezone", "allowedReminders", "maxReminders"), "_id=?", arrayOf(id.toString())).use { c ->
-        if (!c.moveToFirst()) throw CapabilityException("CALENDAR_NOT_FOUND", "Selected calendar is missing or inaccessible")
-        val access = c.number("calendar_access_level") ?: 0
-        if (write && access < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) throw CapabilityException("CALENDAR_READ_ONLY", "Selected calendar does not permit event changes")
-        buildJsonObject {
-            put("calendarId", id); put("displayName", c.text("calendar_displayName", 500) ?: "")
-            c.text("account_name", 500)?.let { put("accountName", it) }; c.text("account_type", 500)?.let { put("accountType", it) }
-            put("accessLevel", access); put("writable", access >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR)
-            put("visible", c.number("visible") == 1L); put("syncEnabled", c.number("sync_events") == 1L)
-            c.text("calendar_timezone", 100)?.let { put("timezone", it) }
-            c.text("allowedReminders", 100)?.let { put("allowedReminderMethods", it) }; c.number("maxReminders")?.let { put("maxReminders", it) }
+    private val calendarProjection = arrayOf(
+        "_id", "calendar_displayName", "account_name", "account_type", "calendar_access_level",
+        "visible", "sync_events", "calendar_timezone", "allowedReminders", "maxReminders"
+    )
+
+    private fun Cursor.calendarRow(write: Boolean = false): JsonObject {
+        val access = number("calendar_access_level") ?: 0
+        val writable = access >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR
+        if (write && !writable) throw CapabilityException("CALENDAR_READ_ONLY", "Selected calendar does not permit event changes")
+        return buildJsonObject {
+            put("calendarId", getLong(getColumnIndexOrThrow("_id")))
+            put("displayName", text("calendar_displayName", 500) ?: "")
+            text("account_name", 500)?.let { put("accountName", it) }
+            text("account_type", 500)?.let { put("accountType", it) }
+            put("accessLevel", access)
+            put("writable", writable)
+            put("visible", number("visible") == 1L)
+            put("syncEnabled", number("sync_events") == 1L)
+            text("calendar_timezone", 100)?.let { put("timezone", it) }
+            text("allowedReminders", 100)?.let { put("allowedReminderMethods", it) }
+            number("maxReminders")?.let { put("maxReminders", it) }
         }
+    }
+
+    private fun calendar(id: Long, write: Boolean = false): JsonObject =
+        query(calendars, calendarProjection, "_id=?", arrayOf(id.toString())).use { cursor ->
+            if (!cursor.moveToFirst()) throw CapabilityException("CALENDAR_NOT_FOUND", "Selected calendar is missing or inaccessible")
+            cursor.calendarRow(write)
+        }
+
+    private fun Cursor.page(limit: Int, row: Cursor.() -> JsonObject): Pair<JsonArray, Boolean> {
+        val rows = buildList { while (size < limit && moveToNext()) add(row()) }
+        return JsonArray(rows) to (rows.size == limit && moveToNext())
     }
 
     private fun event(calendarId: Long, eventId: Long): JsonObject = query(events, eventProjection,
@@ -141,8 +161,10 @@ internal class CalendarOperations(private val context: Context) {
         return listOf(
             op("calendar.list_calendars", "List accessible calendars", objectSchema { integer("limit", "Maximum rows", min = 1, max = 100) }) { a ->
                 val limit = a.long("limit", 50).toInt()
-                val ids = query(calendars, arrayOf("_id"), order = "_id ASC").use { c -> buildList { while (size <= limit && c.moveToNext()) add(c.getLong(0)) } }
-                read(buildJsonObject { put("calendars", JsonArray(ids.take(limit).map { calendar(it) })); put("hasMore", ids.size > limit) })
+                val (rows, hasMore) = query(calendars, calendarProjection, order = "_id ASC").use { cursor ->
+                    cursor.page(limit) { calendarRow() }
+                }
+                read(buildJsonObject { put("calendars", rows); put("hasMore", hasMore) })
             },
             op("calendar.list_events", "List calendar occurrences in a bounded date range", objectSchema {
                 integer("calendarId", "Explicit calendar identifier", true, min = 1); integer("startAtMs", "Inclusive range start", true, min = 0); integer("endAtMs", "Exclusive range end; maximum 31 days", true, min = 1)
@@ -165,13 +187,13 @@ internal class CalendarOperations(private val context: Context) {
             op("calendar.get_event", "Read event or recurring-series metadata and attendees", eventIds()) { a ->
                 val cid = a.id("calendarId"); val eid = a.id("eventId"); calendar(cid)
                 val row = event(cid, eid)
-                val attendees = query(CalendarContract.Attendees.CONTENT_URI, arrayOf("attendeeName", "attendeeEmail", "attendeeRelationship", "attendeeType", "attendeeStatus"), "event_id=?", arrayOf(eid.toString())).use { c ->
-                    buildList { while (size < 100 && c.moveToNext()) add(buildJsonObject {
+                val (attendees, hasMore) = query(CalendarContract.Attendees.CONTENT_URI, arrayOf("attendeeName", "attendeeEmail", "attendeeRelationship", "attendeeType", "attendeeStatus"), "event_id=?", arrayOf(eid.toString())).use { c ->
+                    c.page(100) { buildJsonObject {
                         c.text("attendeeName", 500)?.let { put("name", it) }; c.text("attendeeEmail", 500)?.let { put("email", it) }
                         c.number("attendeeRelationship")?.let { put("relationship", it) }; c.number("attendeeType")?.let { put("type", it) }; c.number("attendeeStatus")?.let { put("status", it) }
-                    }) }
+                    } }
                 }
-                read(buildJsonObject { put("event", row); put("attendees", JsonArray(attendees)); put("hasMore", attendees.size == 100) })
+                read(buildJsonObject { put("event", row); put("attendees", attendees); put("hasMore", hasMore) })
             },
             op("calendar.create_event", "Create and verify an event in an explicitly selected calendar", objectSchema {
                 integer("calendarId", "Explicit writable calendar identifier", true, min = 1); string("title", "Event title", true, maxLength = 1000)
@@ -237,10 +259,16 @@ internal class CalendarOperations(private val context: Context) {
             },
             op("calendar.list_reminders", "List local reminder offsets for selected event", eventIds()) { a ->
                 val cid = a.id("calendarId"); val eid = a.id("eventId"); calendar(cid); event(cid, eid)
-                val rows = query(reminders, arrayOf("_id", "minutes", "method"), "event_id=?", arrayOf(eid.toString()), "_id ASC").use { c -> buildList {
-                    while (size < 100 && c.moveToNext()) add(buildJsonObject { put("reminderId", c.number("_id")!!); put("minutesBefore", c.number("minutes")!!); put("method", c.number("method")!!) })
-                } }
-                read(buildJsonObject { put("reminders", JsonArray(rows)); put("hasMore", rows.size == 100) })
+                val (rows, hasMore) = query(reminders, arrayOf("_id", "minutes", "method"), "event_id=?", arrayOf(eid.toString()), "_id ASC").use { cursor ->
+                    cursor.page(100) {
+                        buildJsonObject {
+                            put("reminderId", number("_id")!!)
+                            put("minutesBefore", number("minutes")!!)
+                            put("method", number("method")!!)
+                        }
+                    }
+                }
+                read(buildJsonObject { put("reminders", rows); put("hasMore", hasMore) })
             },
             op("calendar.add_reminder", "Add a local Calendar Provider alert offset", objectSchema {
                 integer("calendarId", "Explicit calendar identifier", true, min = 1); integer("eventId", "Exact event identifier", true, min = 1); integer("minutesBefore", "Minutes before event; zero means event start", true, min = 0, max = 40320); boolean("applyToSeries", "Confirm reminder changes for entire recurring series")

@@ -116,9 +116,6 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
         var skills by remember { mutableStateOf<List<SettingsWorkflowRow>?>(null) }
         var roots by remember { mutableStateOf<List<DocumentRoot>?>(null) }
         var capabilities by remember { mutableStateOf<List<CapabilityStatus>?>(null) }
-        var toolSearch by rememberSaveable {mutableStateOf("")}
-        var readyToolsOnly by rememberSaveable {mutableStateOf(false)}
-        var toolsNeedingSetup by rememberSaveable {mutableStateOf(false)}
         var skillJson by drafts.workflow
         var url by drafts.url
         var gatewaySecret by drafts.credential
@@ -157,7 +154,8 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
         val loadGeneration=remember {intArrayOf(0)}
         val hasPageData=when(loadTarget) {"Folders"->roots!=null;"Skills"->skills!=null;"Capabilities"->capabilities!=null;"Diagnostics"->events!=null;else->true}
         val pageReady=hasPageData && !pageLoading && loadError?.first!=loadTarget
-        LaunchedEffect(refresh,loadTarget,permissionRevision,if(loadTarget=="Capabilities") health else "",if(loadTarget=="Capabilities") direct else "",if(loadTarget=="Capabilities") shizuku else "",if(loadTarget=="Capabilities") controls else null) {
+        LaunchedEffect(refresh,loadTarget,permissionRevision,if(loadTarget=="Capabilities") health else "",if(loadTarget=="Capabilities") direct else "",if(loadTarget=="Capabilities") shizuku else "",if(loadTarget=="Capabilities") controls else null,
+            loadTarget=="Capabilities" && semanticConnected, loadTarget=="Capabilities" && listenerConnected) {
             val generation=++loadGeneration[0]
             pageLoading=loadTarget!=null;loadError=null
             if(loadTarget==null) return@LaunchedEffect
@@ -224,36 +222,7 @@ internal fun MainActivity.openScreenControlSettings():Boolean {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 if(expanded) SectionHeading(if(tab=="Settings") settingsPage ?: "All settings" else tab)
                 when(tab) {
-                    "Capabilities" -> {
-                        Text("Tool availability",style=MaterialTheme.typography.titleMedium)
-                        Text("Browse by purpose. Availability reflects this phone; each agent’s access is managed separately in Agents.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedTextField(toolSearch,{toolSearch=it},label={Text("Search tools")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                        FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                            FilterChip(!readyToolsOnly && !toolsNeedingSetup,{readyToolsOnly=false;toolsNeedingSetup=false},label={Text("All tools")})
-                            FilterChip(readyToolsOnly,{readyToolsOnly=true;toolsNeedingSetup=false},label={Text("Ready to use")})
-                            FilterChip(toolsNeedingSetup,{toolsNeedingSetup=true;readyToolsOnly=false},label={Text("Needs setup")})
-                        }
-                        val shown=capabilities.orEmpty().filter {(!readyToolsOnly || it.availability.isExecutable) && (!toolsNeedingSetup || !it.availability.isExecutable) &&
-                            (it.descriptor.id+" "+it.descriptor.title+" "+it.descriptor.description).contains(toolSearch,true)}
-                        if(capabilities!=null) Text("${shown.size} matching tools · ${capabilities.orEmpty().count {it.availability.isExecutable}} ready on this phone",style=MaterialTheme.typography.labelMedium)
-                        shown.groupBy {it.descriptor.id.substringBefore('.')}.toSortedMap().forEach {(family,tools)->
-                            val title=mapOf("ui" to "Shared-screen interaction","headless" to "Private app workspaces","shell" to "Privileged shell","device" to "Device diagnostics","documents" to "Selected documents","files" to "Managed files","termux" to "Termux background commands","system" to "System operations","requests" to "Request results")[family]
-                                ?: family.replace('_',' ').replaceFirstChar {it.uppercase()}
-                            key(family,toolSearch.isNotBlank()) {
-                                ExpandablePanel(title,"${tools.count {it.availability.isExecutable}} of ${tools.size} ready",initiallyExpanded=toolSearch.isNotBlank()) {
-                                    tools.sortedWith(compareBy<CapabilityStatus> {it.availability.isExecutable}.thenBy {it.descriptor.title}).forEachIndexed {index,cap->
-                                        if(index>0) HorizontalDivider()
-                                        Text(cap.descriptor.title,style=MaterialTheme.typography.titleSmall)
-                                        StatusPill(if(cap.availability.isExecutable) "Ready" else cap.availability.name.lowercase().replace('_',' '),if(cap.availability.isExecutable) StatusTone.GOOD else StatusTone.ATTENTION)
-                                        Text(cap.detail ?: cap.descriptor.description,style=MaterialTheme.typography.bodySmall)
-                                        if(cap.descriptor.ownerOnly) Text("Local owner only",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(cap.descriptor.id,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            }
-                        }
-                        if(pageReady && shown.isEmpty()) EmptyState("No matching tools","Try another search or select All tools.")
-                    }
+                    "Capabilities" -> ToolCatalog(capabilities, pageReady)
                     "Skills" -> {
                         ExpandablePanel("Install a workflow","Paste a definition, then validate it before installation") {
                             OutlinedTextField(skillJson,{skillJson=it},label={Text("Workflow JSON")},modifier=Modifier.fillMaxWidth(),maxLines=10,enabled=!busy)

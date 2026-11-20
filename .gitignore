@@ -52,7 +52,18 @@ diagnostics/
 *.trace
 bugreport*.zip
 logcat*.txt
-screenshots/
+[Ss]creenshots/
+[Ss]creenshot*.png
+[Ss]creenshot*.jpg
+[Ss]creenshot*.jpeg
+[Ss]creenshot*.webp
+[Ss]creenshot*.heic
+[Ss]creen [Ss]hot*.png
+codex-clipboard-*.png
+*-ui-timeout.png
+*-ui-timeout.txt
+review-test-failure.png
+siconnect_audit.png
 pairing/
 
 # Python tool bytecode

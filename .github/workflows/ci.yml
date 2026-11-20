@@ -84,6 +84,9 @@ jobs:
         run: |
           python3 - <<'PY'
           import subprocess
+          ignored = subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--ignored', '--exclude-per-directory=.gitignore'])
+          if ignored:
+              raise SystemExit('Tracked files match repository ignore rules. Check git ls-files -ci --exclude-per-directory=.gitignore locally.')
           paths = subprocess.check_output(['git','ls-files'],text=True).splitlines()
           denied = [p for p in paths if p.endswith(('.db','.apk','.jks','.keystore','.token','.secret','.p12','.pem','.key')) or p.split('/')[-1] in ('signing.properties','local.properties','.dev.vars') or p.startswith(('pairing/','device-captures/','diagnostics/','gateway/.dev.vars'))]
           assert not denied, denied
