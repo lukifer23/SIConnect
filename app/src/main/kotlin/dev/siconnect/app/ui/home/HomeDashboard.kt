@@ -34,14 +34,21 @@ import kotlinx.serialization.json.JsonObject
             Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.fillMaxWidth().padding(if(wide) 20.dp else 24.dp),verticalArrangement=Arrangement.spacedBy(if(wide) 12.dp else 16.dp)) {
                     FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        StatusPill(if(paused) "Actions paused" else if(online) "Gateway connected" else "Gateway offline",if(paused) StatusTone.ATTENTION else if(online) StatusTone.GOOD else StatusTone.NEUTRAL)
+                        GatewayStatus(connection)
+                        if(paused) StatusPill("Actions paused",StatusTone.ATTENTION)
                         if(state.activeRequests.isNotEmpty()) StatusPill("${state.activeRequests.size} running")
                     }
-                    Text(when {paused->"You’re in control.";!nativeReady->"Getting things ready…";online->"Ready when you are.";else->"Your local tools are ready."},style=MaterialTheme.typography.headlineMedium)
-                    Text(if(paused) "New remote actions are paused. Local schedules and work already running continue." else if(online) if(wide) "Your agents can reach this phone securely." else "Your agents can securely reach this phone with the permissions you’ve chosen." else detail,
+                    Text(when {
+                        paused -> "Remote actions paused"
+                        !nativeReady -> "Starting local tools…"
+                        !online -> "Local tools ready"
+                        active.isEmpty() -> "No authorized agents"
+                        else -> "Agents with access · ${active.size}"
+                    },style=MaterialTheme.typography.headlineMedium)
+                    Text(if(paused) "New remote actions are paused. Local schedules and work already running continue." else if(online && active.isEmpty()) "Open Agents to pair a bot." else if(online) "Each request uses the agent’s saved permissions and the phone access available below." else detail,
                         style=MaterialTheme.typography.bodyMedium)
                     FlowRow(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                        Button(onClick=onConnect) {Text(if(online) "Connection details" else "Connect gateway")}
+                        Button(onClick=onConnect) {Text("Connection details")}
                         TextButton(onClick=if(paused) onResume else onStop) {Text(if(paused) "Resume agent actions" else "Pause agent actions")}
                     }
                 }
@@ -56,7 +63,7 @@ import kotlinx.serialization.json.JsonObject
                 }
                 HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {Text("Advanced device control",style=MaterialTheme.typography.titleSmall);Text(if(privilegedReady) "Selected backend available" else "Optional setup or recovery",style=MaterialTheme.typography.bodySmall)}
+                    Column(Modifier.weight(1f)) {Text("Advanced device control",style=MaterialTheme.typography.titleSmall);Text(if(privilegedReady) "Selected backend available" else "Unavailable · native tools work without this backend",style=MaterialTheme.typography.bodySmall)}
                     TextButton(onClick=onRestore) {Text(if(privilegedReady) "Manage" else "Set up")}
                 }
                 HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))

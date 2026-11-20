@@ -45,21 +45,25 @@ export class DeviceBridge extends DurableObject<Env> {
       if (!/^[a-f0-9]{64}$/.test(hash)) return json({ error: 'INVALID_PAIRING' }, 400);
       const invitation = await this.ctx.storage.transaction(async storage => {
         const item = await storage.get<Invitation>('pair:' + hash);
+        if (item && await storage.get<boolean>('revoked:' + item.agentId)) return undefined;
+        if (item && (await storage.get<string[]>('revokedAgents') ?? []).includes(item.agentId)) return undefined;
         if (item) { await storage.delete('pair:' + hash); await storage.put('used:' + hash, item.expiresAt); }
         return item;
       });
       if (!invitation || invitation.expiresAt <= Date.now()) return json({ error: 'INVALID_PAIRING' }, 401);
-      for (const socket of this.ctx.getWebSockets('device')) if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: invitation.agentId }));
+      for (const socket of this.ctx.getWebSockets('device')) if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: invitation.agentId, hash }));
       return json(invitation);
     }
     if (path === '/pairing/check') {
       // Non-consuming validity check so a mistyped code does not spend the browser's consent.
       const { hash } = await request.json() as { hash: string };
       const item = /^[a-f0-9]{64}$/.test(hash) ? await this.ctx.storage.get<Invitation>('pair:' + hash) : undefined;
-      return json({ valid: !!item && item.expiresAt > Date.now() }, item && item.expiresAt > Date.now() ? 200 : 401);
+      const valid = !!item && item.expiresAt > Date.now() && !await this.revoked(item.agentId);
+      return json({ valid }, valid ? 200 : 401);
     }
     const agent = new URL(request.url).searchParams.get('agent');
     if (agent && await this.revoked(agent)) return json({ error: 'AGENT_REVOKED', detail: 'The phone owner revoked this agent. Pair a new agent in SIConnect.' }, 403);
+    if (path === '/grant-status' && agent) return json({ active: true });
     if (path === '/catalog') return json({ protocol: 2, online: !!await this.activeSocket(), revision: await this.ctx.storage.get<string>('catalogRevision') ?? null,
       capabilities: await this.ctx.storage.get('capabilities') ?? [] });
     if (path === '/invoke') {
@@ -130,7 +134,15 @@ export class DeviceBridge extends DurableObject<Env> {
         if (body.revokedAgents !== undefined) {
           if (!Array.isArray(body.revokedAgents) || body.revokedAgents.length > 500 ||
               !body.revokedAgents.every((id: unknown) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id))) throw new Error('Invalid revocation list');
-          await this.ctx.storage.put('revokedAgents', body.revokedAgents);
+          // Preserve permanent revocations when the phone's bounded list rolls over.
+          const incoming = new Set<string>(body.revokedAgents);
+          await this.ctx.storage.transaction(async storage => {
+            const previous = await storage.get<string[]>('revokedAgents') ?? [];
+            for (const id of previous) {
+              if (!incoming.has(id)) await storage.put('revoked:' + id, true);
+            }
+            await storage.put('revokedAgents', [...incoming]);
+          });
         }
         await this.ctx.storage.put('capabilities', body.capabilities);
         await this.ctx.storage.put('catalogRevision', crypto.randomUUID());
@@ -172,7 +184,9 @@ export class DeviceBridge extends DurableObject<Env> {
     socket.close(code, reason);
   }
   private async revoked(agentId: string): Promise<boolean> {
-    return (await this.ctx.storage.get<string[]>('revokedAgents') ?? []).includes(agentId);
+    const entries = await this.ctx.storage.get<string[] | boolean>(['revokedAgents', 'revoked:' + agentId]);
+    const recent = entries.get('revokedAgents');
+    return entries.has('revoked:' + agentId) || (Array.isArray(recent) && recent.includes(agentId));
   }
   private async activeSocket(): Promise<WebSocket | undefined> {
     const epoch = await this.ctx.storage.get<string>('socketEpoch');

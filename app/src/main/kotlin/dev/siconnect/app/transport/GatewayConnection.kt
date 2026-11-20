@@ -70,12 +70,14 @@ class GatewayConnection(private val g: RuntimeGraph) {
     /** Refresh discovery after backend/permission changes using the same authoritative registry. */
     // Permission, backend, accessibility and Termux callbacks often fire together. Coalesce them
     // into one probe/encode/send, and skip resending an unchanged catalog on the same socket.
-    private val helloRequests=kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity=1,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    private val helloRequests=kotlinx.coroutines.flow.MutableSharedFlow<Unit>(replay=1,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    private val catalogChanges=java.util.concurrent.atomic.AtomicLong()
     @Volatile private var lastHello:Pair<WebSocket,String>?=null
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private val helloSender by lazy {g.scope.launch {helloRequests.debounce(250).collect {runCatching {sendHello()}}}}
     fun refreshCatalog() {
         g.registry.invalidateDiscovery()
+        catalogChanges.incrementAndGet()
         if(state.value!=ConnectionState.ONLINE) return
         helloSender
         helloRequests.tryEmit(Unit)
@@ -131,7 +133,9 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 if(!base.startsWith("https://") && !(dev.siconnect.app.BuildConfig.DEBUG && base.startsWith("http://127.0.0.1:"))) {
                     state.value=ConnectionState.AUTH_FAILED; detail.value="HTTPS gateway required"; break
                 }
+                detail.value="Connecting to the saved gateway…"
                 state.value=ConnectionState.CONNECTING
+                var existingEnrollment=false
                 if(!g.settings.enrolled && !g.settings.enrollToken().isNullOrBlank()) {
                     state.value=ConnectionState.AUTHENTICATING
                     val registration=withContext(Dispatchers.IO) {
@@ -141,7 +145,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     }
                     when(EnrollmentOutcome.of(registration)) {
                         EnrollmentOutcome.ENROLLED -> { g.settings.enrolled=true; g.settings.setEnrollToken(null) }
-                        EnrollmentOutcome.ALREADY_REGISTERED -> {}
+                        EnrollmentOutcome.ALREADY_REGISTERED -> existingEnrollment=true
                         EnrollmentOutcome.REJECTED -> { state.value=ConnectionState.AUTH_FAILED; detail.value="Gateway enrollment was rejected ($registration). Check the gateway address and enrollment token."; break }
                         EnrollmentOutcome.RETRY -> throw java.io.IOException("Gateway enrollment temporarily unavailable ($registration)")
                     }
@@ -159,9 +163,11 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 }
                 val request=Request.Builder().url(base.replaceFirst("https://","wss://").replaceFirst("http://","ws://")+"/device/${g.settings.deviceId}")
                     .header("Authorization","Bearer ${g.settings.deviceSecret()}").build()
+                val handshakeCatalog=catalogChanges.get()
                 val connectedSocket=client.newWebSocket(request,object:WebSocketListener() {
                     override fun onOpen(ws: WebSocket,r: Response) {
                         if(generation.get()!=epoch) {ws.cancel();done.complete(Unit);return}
+                        detail.value="Waiting for the gateway to confirm this phone…"
                         state.value=ConnectionState.AUTHENTICATING
                         val text=hello()
                         if(ws.send(text)) lastHello=ws to text
@@ -181,14 +187,39 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                 val type=msg["type"]?.jsonPrimitive?.content
                                 if(type=="hello_ack") {
                                     require(msg.getValue("protocol").jsonPrimitive.int>=2) { "Gateway update required" }
+                                    if(existingEnrollment) synchronized(this@GatewayConnection) {
+                                        if(generation.get()!=epoch) return@launch
+                                        if(g.settings.gateway.value==config && !g.settings.enrolled) {
+                                            g.settings.enrolled=true
+                                            g.settings.setEnrollToken(null)
+                                        }
+                                    }
                                     val reconnect=state.value!=ConnectionState.ONLINE
                                     state.value=ConnectionState.ONLINE;detail.value="Connected";attempt=0
-                                    if(reconnect) recordEvent(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                                    if(reconnect) {
+                                        // Reconcile changes made after the handshake catalog was sampled.
+                                        if(catalogChanges.get()!=handshakeCatalog) {
+                                            helloSender
+                                            helloRequests.tryEmit(Unit)
+                                        }
+                                        recordEvent(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                                    }
                                 } else if(type=="pairing_saved") {
                                     pairingAcks[msg.getValue("hash").jsonPrimitive.content]?.complete(Unit)
                                 } else if(type=="pairing_consumed") {
-                                    g.pairing.consumed(msg.getValue("agentId").jsonPrimitive.content)
-                                    msg["hash"]?.jsonPrimitive?.content?.let { pairingAcks[it]?.completeExceptionally(IllegalStateException("This code was already used. Create a new pairing code.")) }
+                                    val agentId=msg.getValue("agentId").jsonPrimitive.content
+                                    val hash=msg["hash"]?.jsonPrimitive?.content
+                                    if(hash!=null) {
+                                        // publishPairing waits while holding the pairing mutex.
+                                        pairingAcks[hash]?.completeExceptionally(IllegalStateException("This pairing code was already used."))
+                                        g.pairing.consumed(agentId,hash)
+                                    } else {
+                                        // Older gateways omit the hash on first consumption. Reannounce
+                                        // the current invitation to get an exact saved/used acknowledgement.
+                                        val pending=g.settings.pendingPairing()
+                                        if(pending?.agentId==agentId && pending.expiresAt>System.currentTimeMillis())
+                                            runCatching {publishPairing(pending)}
+                                    }
                                 } else if(type=="invoke") {
                                     val dispatchedAt=android.os.SystemClock.elapsedRealtimeNanos()
                                     val correlation=msg.getValue("id").jsonPrimitive.content

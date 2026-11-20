@@ -1,5 +1,7 @@
 package dev.siconnect.app.ui
 
+import dev.siconnect.app.transport.ConnectionState
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
@@ -56,6 +58,19 @@ enum class StatusTone { GOOD, NEUTRAL, ATTENTION, ERROR }
             Text(label,style=MaterialTheme.typography.labelMedium,color=color)
         }
     }
+}
+
+@Composable internal fun GatewayStatus(state:ConnectionState) {
+    val (label,tone)=when(state) {
+        ConnectionState.DISABLED -> "Gateway stopped" to StatusTone.NEUTRAL
+        ConnectionState.CONNECTING -> "Connecting to gateway" to StatusTone.NEUTRAL
+        ConnectionState.AUTHENTICATING -> "Verifying gateway connection" to StatusTone.NEUTRAL
+        ConnectionState.ONLINE -> "Gateway connected" to StatusTone.GOOD
+        ConnectionState.BACKOFF -> "Retrying gateway connection" to StatusTone.ATTENTION
+        ConnectionState.AUTH_FAILED -> "Review gateway credentials" to StatusTone.ERROR
+        ConnectionState.BACKGROUND_BLOCKED -> "Background start blocked" to StatusTone.ATTENTION
+    }
+    StatusPill(label,tone)
 }
 
 @Composable internal fun IconBadge(icon:Int,modifier:Modifier=Modifier) {

@@ -14,7 +14,10 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 @Serializable
-data class PairingInvitation(val code: String, val agentId: String, val expiresAt: Long, val sealed: String, val label: String = "Dots")
+data class PairingInvitation(val code: String, val agentId: String, val expiresAt: Long, val sealed: String, val label: String = "Dots",
+    val published: Boolean = false) {
+    fun readyToCopy(now: Long) = published && now < expiresAt
+}
 
 /** Owner UI only. Display labels never select or authenticate an identity. */
 class BotPairing(private val g: RuntimeGraph) {
@@ -66,6 +69,35 @@ class BotPairing(private val g: RuntimeGraph) {
         g.settings.setPendingPairing(null)
         // Preserve the identity and its grants. Previously published codes still expire normally.
     }
+    /** Serialize the owner reset with invitation publication and consumption. */
+    suspend fun disconnectAllFromOwner(): Int = lock.withLock {
+        g.ready.await()
+        val count=g.db.writableDatabase.writeTransaction {
+            val active=g.agents.all().filterNot { it.grant.agentId.startsWith("local-") || it.grant.revoked }
+            active.forEach { g.recordOwnerRevocation(it) }
+            active.size
+        }
+        g.gateway.refreshCatalog()
+        clearCredentials(null)
+        count
+    }
+
+    suspend fun disconnectFromOwner(agentId:String) = lock.withLock {
+        g.revokeAgentFromOwner(agentId)
+        clearCredentials(agentId)
+    }
+
+    private fun clearCredentials(agentId:String?) {
+        g.settings.clearRemotePairingSecrets(agentId)
+        // These files can survive a compatible update from a development build.
+        if(agentId==null || agentId==DEVELOPMENT_AGENT_ID) {
+            for(name in listOf("development-client.json","gateway-device.json")) {
+                val legacy=java.io.File(g.context.noBackupFilesDir,name)
+                check(!legacy.exists() || legacy.delete()) { "Access revoked. Retry to clear the saved development credentials." }
+            }
+        }
+    }
+
     private fun requireOnline() {
         require(g.gateway.state.value == ConnectionState.ONLINE) { "Connect the phone first" }
     }
@@ -81,7 +113,7 @@ class BotPairing(private val g: RuntimeGraph) {
     private suspend fun publish(invitation:PairingInvitation):PairingInvitation {
         g.gateway.publishPairing(invitation)
         g.events.emit(Event(System.currentTimeMillis(),eventType="agent.pairing.created",agentId=invitation.agentId,deviceId=g.settings.deviceId,detail="Owner prepared temporary OAuth invitation for selected identity"))
-        return invitation
+        return invitation.copy(published=true).also(g.settings::setPendingPairing)
     }
     private fun key(code:String)=SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(code.toByteArray()),"AES")
     private fun aad(agentId:String,expiry:Long)="${g.settings.deviceId}|$agentId|$expiry".toByteArray()
@@ -91,13 +123,13 @@ class BotPairing(private val g: RuntimeGraph) {
         cipher.init(Cipher.DECRYPT_MODE,key(invitation.code),GCMParameterSpec(128,bytes,0,12));cipher.updateAAD(aad(invitation.agentId,invitation.expiresAt))
         return Json.parseToJsonElement(String(cipher.doFinal(bytes,12,bytes.size-12))).jsonObject
     }
-    suspend fun consumed(agentId: String) = lock.withLock {
-        val pending=g.settings.pendingPairing()?.takeIf { it.agentId==agentId }
-        if(pending!=null) {
-            // Recover owner token for invitations created by earlier app versions before clearing.
-            if(g.settings.pairedBotToken(agentId)==null) g.settings.setPairedBotToken(agentId,decrypt(pending).getValue("agentToken").jsonPrimitive.content)
-            g.settings.setPendingPairing(null)
-        }
+    suspend fun consumed(agentId: String, hash: String) = lock.withLock {
+        val pending=g.settings.pendingPairing()?.takeIf {
+            it.agentId==agentId && Settings.sha256Hex(it.code)==hash
+        } ?: return@withLock
+        // Recover owner token for invitations created by earlier app versions before clearing.
+        if(g.settings.pairedBotToken(agentId)==null) g.settings.setPairedBotToken(agentId,decrypt(pending).getValue("agentToken").jsonPrimitive.content)
+        g.settings.setPendingPairing(null)
         g.events.emit(Event(System.currentTimeMillis(),eventType="agent.paired",agentId=agentId,deviceId=g.settings.deviceId,detail="OAuth invitation consumed; phone policy remains authoritative"))
     }
 }

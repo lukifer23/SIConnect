@@ -1,4 +1,4 @@
-import OAuthProvider, { AuthorizationError, CimdFetchError, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+import OAuthProvider, { OAuthError, AuthorizationError, CimdFetchError, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import type { Env } from './auth.js';
 import { consumeInvitation, invitationAvailable, type PhoneAuthorization } from './pairing.js';
 import { serveMcp } from './index.js';
@@ -15,6 +15,14 @@ export async function oauthFetch(request: Request, env: Env, ctx: ExecutionConte
     scopesSupported: ['phone:control', 'offline_access'], requiredScopes: ['phone:control'],
     resourceMetadata: { resource: origin + '/mcp', resource_name: 'SIConnect phone' },
     accessTokenTTL: 3600, refreshTokenTTL: 30 * 86400, clientIdMetadataDocumentEnabled: true,
+    async tokenExchangeCallback({ props, userId }) {
+      const grant = props as PhoneAuthorization;
+      if (!grant?.deviceId || grant.agentId !== userId) throw new OAuthError('invalid_grant', { description: 'Invalid phone authorization' });
+      const bridge = env.DEVICES.get(env.DEVICES.idFromName(grant.deviceId));
+      const status = await bridge.fetch('https://internal/grant-status?agent=' + encodeURIComponent(userId));
+      if (status.status === 403) throw new OAuthError('invalid_grant', { description: 'Phone owner revoked this agent' });
+      if (!status.ok) throw new OAuthError('temporarily_unavailable', { description: 'Could not verify current phone authorization', statusCode: 503 });
+    },
     apiHandler: {
       async fetch(req, bindings, execution) {
         const auth = execution as AuthorizedContext;
@@ -42,7 +50,7 @@ export async function oauthFetch(request: Request, env: Env, ctx: ExecutionConte
 <style>body{color:#edf9f6;background:#0d1218;font:17px system-ui;max-width:480px;margin:8vh auto;padding:24px}input,button{font:inherit;border-radius:12px;padding:14px;box-sizing:border-box}input{width:100%;background:#202d39;color:white;border:1px solid #6a807a}button{margin:14px 8px 0 0;background:#8adcc3;border:0}small{color:#bccdc8}label{display:block;margin:20px 0 8px}</style>
 <h1>Connect your phone</h1><h2>${escape(details.clientName)}</h2><p>${publisher} Access returns to <strong>${escape(details.redirectHost)}</strong>.</p>
 ${details.redirectIsLoopback ? '<p>This connects an app on your computer. Continue only if you started this connection.</p>' : ''}
-<p>In SIConnect on your phone, open <strong>Agents → Pair new agent</strong>. To keep an existing agent’s permissions, open its card and choose <strong>Reconnect this identity</strong>. Enter the temporary pairing code below.</p>
+<p>In SIConnect on your phone, open <strong>Agents → Pair agent</strong>. To keep an existing agent’s permissions, open its card and choose <strong>Reconnect this agent</strong>. Enter the temporary pairing code below.</p>
 <p>This grants phone control through your phone’s current permissions and approvals. Revoke this bot in SIConnect at any time.</p>
 <form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label for="code">Phone pairing code</label><input id="code" name="code" type="password" autocomplete="off" required maxlength="160"><p><small>Requested scopes: ${details.scope.map(escape).join(', ')}</small></p><button name="decision" value="approve">Connect</button><button name="decision" value="deny" formnovalidate>Cancel</button></form></html>`, { headers: consent.headers });
           }

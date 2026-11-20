@@ -273,9 +273,14 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 }
             }
         }
-        LaunchedEffect(pairDialog) { if(pairDialog) withContext(Dispatchers.IO) {
-            g.ready.await();pairCode=g.settings.pendingPairing();pairCode?.let {pairName=it.label}
-        } }
+        LaunchedEffect(pairDialog) {
+            if(pairDialog) g.settings.pairingRevision.collect {
+                val pending=withContext(Dispatchers.IO) {g.ready.await();g.settings.pendingPairing()}
+                if(pending==null && pairCode!=null) pairDialog=false
+                pairCode=pending
+                if(pending!=null) pairName=pending.label
+            }
+        }
         LaunchedEffect(setup,changed) { if(setup) withContext(Dispatchers.IO) { g.ready.await(); val key=g.botKeyForOwner(); hasBotKey=key!=null } }
         LaunchedEffect(setup) {if(setup) {replaceGateway=false;legacyCredential=false;gatewayError=""}}
         /** Expanding access requires owner authentication; reducing it never does. */
@@ -339,12 +344,13 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     onResume={ownerAuthentication.authenticate("Resume remote requests",{g.settings.setControls(g.settings.controls.value.copy(remoteExecutionEnabled=true))},{note=it})},
                     onInbox={inbox=true},onSetup={destination=Destination.SETTINGS},onReminder={id->reminderError="";reminderId=id;changed++})
                 Destination.AGENTS -> AgentsScreen(snapshot,wide,selectedAgentId,
-                    onPair={ownerAuthentication.authenticate("Pair new agent",{pairDialog=true},{note=it})},
+                    onPair={ownerAuthentication.authenticate("Pair new agent",{pairError="";pairName="";pairCode=null;pairDialog=true},{note=it})},
+                    onDisconnectAll={work { val count=g.pairing.disconnectAllFromOwner();note="Remote agents revoked: $count" }},
                     onFamily={id,family,enabled->
                         val apply={work {g.setCapabilityFamilyFromOwner(id,family,enabled)}}
                         authIfEnabling(enabled,"Allow $family access",apply)
-                    },onShell={shellError="";allowBotId=it.grant.agentId},onReconnect={bot->ownerAuthentication.authenticate("Reconnect selected identity",{work {pairCode=g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label;pairDialog=true}},{note=it})},
-                    onRevoke={bot->work {g.revokeAgentFromOwner(bot.grant.agentId)}},onRequest={id->inspectRequest(id)},
+                    },onShell={shellError="";allowBotId=it.grant.agentId},onReconnect={bot->ownerAuthentication.authenticate("Reconnect selected identity",{work {g.pairing.reconnect(bot.grant.agentId);pairName=bot.grant.label;pairError="";pairDialog=true}},{note=it})},
+                    onRevoke={bot->work {g.pairing.disconnectFromOwner(bot.grant.agentId)}},onRequest={id->inspectRequest(id)},
                     onSemanticApp={id,pkg,enabled->
                         val apply={work {g.setSemanticPackagePermissionFromOwner(id,pkg,enabled)}}
                         authIfEnabling(enabled,"Allow screen actions in $pkg",apply)
@@ -387,8 +393,8 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         if(setup) AlertDialog(onDismissRequest={setup=false;connectionCode=""},title={Text("Your connection")},text={Column(
             Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),
             verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            StatusPill(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Gateway connected" else "Gateway offline",if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) StatusTone.GOOD else StatusTone.ATTENTION)
-            Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "Your agents can securely reach this phone." else connectionDetail,style=MaterialTheme.typography.bodyLarge)
+            GatewayStatus(connection)
+            Text(if(connection==dev.siconnect.app.transport.ConnectionState.ONLINE) "The gateway acknowledged this phone. Manage each bot’s access in Agents." else connectionDetail,style=MaterialTheme.typography.bodyLarge)
             if(connection!=dev.siconnect.app.transport.ConnectionState.ONLINE && config.enabled)
                 Text("Native schedules continue using available Android access. Interrupted actions are not automatically resubmitted.",style=MaterialTheme.typography.bodySmall)
             TextButton(onClick={showConnectionHistory=!showConnectionHistory}) {Text(if(showConnectionHistory) "Hide connection history" else "Connection history")}
@@ -455,34 +461,41 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                 }
             }
         }},confirmButton={TextButton(onClick={setup=false;connectionCode="";gatewayError=""}) {Text("Done")}})
-        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(pairCode==null) "Pair an agent" else "Connect ${pairCode!!.label}")},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        val invitation=pairCode
+        if(pairDialog) AlertDialog(onDismissRequest={pairDialog=false;pairCode=null},title={Text(if(invitation==null) "Pair an agent" else "Connect ${invitation.label}")},text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
-            if(pairCode==null) {
-                Text("Creates a separate bot with its own permissions, even when another bot has the same name. To preserve an existing bot’s permissions, open its card and choose Reconnect this bot.")
+            if(invitation==null) {
+                Text("Creates a separate bot with its own permissions, even when another bot has the same name. To preserve an existing bot’s permissions, open its card and choose Reconnect this agent.")
                 OutlinedTextField(pairName,{pairName=it.take(60)},label={Text("Bot name")},placeholder={Text("For example, Work assistant")},singleLine=true)
                 Text("Add SIConnect’s MCP address in your bot, choose OAuth, and enter the temporary code on the SIConnect sign-in page.")
             } else {
-                Text("Bot ID: …${pairCode!!.agentId.takeLast(8)}")
-                Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(pairCode!!.expiresAt))}. Works once. Paste it only into your gateway’s SIConnect sign-in page.")
-                Text(pairCode!!.code,style=MaterialTheme.typography.bodySmall)
+                Text("Bot ID: …${invitation.agentId.takeLast(8)}")
+                Text("Expires at ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(invitation.expiresAt))}. Works once. Paste it only into your gateway’s SIConnect sign-in page.")
+                if(invitation.published) Text(invitation.code,style=MaterialTheme.typography.bodySmall)
+                else Text("Waiting for gateway confirmation. Retry this invitation to keep the same agent.")
                 Text("Closing this screen preserves the invitation. Renewing an expired code preserves this exact bot and its permissions.")
-                TextButton(onClick={work({pairError=it}) {g.pairing.dismissInvitation(pairCode!!.agentId);pairCode=null;pairError=""}},enabled=!busy) {Text("Dismiss invitation (published code expires normally)")}
+                TextButton(onClick={work({pairError=it}) {g.pairing.dismissInvitation(invitation.agentId);pairDialog=false;pairError=""}},enabled=!busy) {Text("Dismiss invitation (published code expires normally)")}
             }
         }},confirmButton={Button(onClick={
-            val unexpired=pairCode?.takeIf {it.expiresAt>System.currentTimeMillis()}
-            // A still-valid code is already published: copy it locally, no gateway round trip needed.
-            if(unexpired!=null) copyForBot(unexpired.code,true) else work({pairError=it}) {
-            pairError=""
-            try {
-                val current=pairCode
-                pairCode=if(current==null) g.pairing.create(pairName.trim()) else g.pairing.renew(current.agentId)
-                if(current!=null) withContext(Dispatchers.Main) {copyForBot(requireNotNull(pairCode).code,true)}
-            } catch(e:Exception) {
-                pairCode=g.settings.pendingPairing()
-                pairError=if(e is TimeoutCancellationException) "Gateway did not confirm the code. Check connection and retry this invitation." else e.message ?: "Could not prepare invitation"
+            work({pairError=it}) {
+                pairError=""
+                try {
+                    val pending=g.settings.pendingPairing()
+                    when {
+                        invitation==null -> g.pairing.create(pairName.trim())
+                        pending?.code!=invitation.code -> pairError="The invitation changed. Review the current pairing code."
+                        else -> {
+                            val confirmed=if(pending.readyToCopy(System.currentTimeMillis())) pending
+                                else g.pairing.renew(pending.agentId)
+                            withContext(Dispatchers.Main) {copyForBot(confirmed.code,true)}
+                        }
+                    }
+                } catch(e:TimeoutCancellationException) {
+                    pairError="Gateway did not confirm the code. Retry this invitation."
+                }
             }
-        }},enabled=!busy && pairName.isNotBlank()) {Text(if(pairCode==null) "Create new bot" else if(pairCode!!.expiresAt<=System.currentTimeMillis()) "Renew and copy code" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
+        },enabled=!busy && pairName.isNotBlank()) {Text(if(invitation==null) "Create new bot" else if(invitation.expiresAt<=System.currentTimeMillis()) "Renew and copy code" else if(!invitation.published) "Retry invitation" else "Copy pairing code")}},dismissButton={TextButton(onClick={pairDialog=false;pairCode=null}) {Text("Close")}})
         review?.let { r ->
             val actionTitle=g.registry.get(r.capabilityId)?.descriptor?.title ?: r.capabilityId
             OwnerApprovalDialog(r,busy=busy,error=approvalError,agentLabel=labels[r.agentId] ?: r.agentId,actionTitle=actionTitle,

@@ -123,14 +123,27 @@ class Settings(context: Context) {
     fun pendingPairing(): dev.siconnect.app.transport.PairingInvitation? = getSecret("oauth_pairing")?.let {
         runCatching { AppJson.decodeFromString(dev.siconnect.app.transport.PairingInvitation.serializer(),it) }.getOrNull()
     }
+    private val pairingChanges = MutableStateFlow(0L)
+    val pairingRevision: StateFlow<Long> = pairingChanges
     fun setPendingPairing(value: dev.siconnect.app.transport.PairingInvitation?) {
         if(value==null) check(secretPrefs.edit().remove("oauth_pairing").commit()) { "Could not clear consumed pairing" }
         else putSecret("oauth_pairing",AppJson.encodeToString(dev.siconnect.app.transport.PairingInvitation.serializer(),value))
+        pairingChanges.value++
+    }
+
+    internal fun clearRemotePairingSecrets(agentId:String?=null) {
+        val edit=secretPrefs.edit()
+        if(agentId==null || pendingPairing()?.agentId==agentId) edit.remove("oauth_pairing")
+        if(agentId==null || agentId==DEVELOPMENT_AGENT_ID) edit.remove("bot_token")
+        if(agentId==null) secretPrefs.all.keys.filter {it.startsWith("paired_")}.forEach { edit.remove(it) }
+        else edit.remove("paired_" + agentId)
+        check(edit.commit()) { "Access revoked. Retry to clear saved pairing credentials." }
+        pairingChanges.value++
     }
 
     var enrolled: Boolean
         get() = prefs.getBoolean("enrolled", false)
-        set(v) = prefs.edit().putBoolean("enrolled", v).apply()
+        set(v) { check(prefs.edit().putBoolean("enrolled", v).commit()) { "Could not persist gateway enrollment" } }
 
     private fun <T> read(key: String, s: kotlinx.serialization.KSerializer<T>): T? =
         prefs.getString(key, null)?.let { runCatching { AppJson.decodeFromString(s, it) }.getOrNull() }

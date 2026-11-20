@@ -18,7 +18,7 @@ SIConnect Android app
 
 The phone opens the connection outward, so the phone does not need a public address. The development Mac is not part of the runtime path.
 
-> **Current source: Android 0.6.0-dev.20 (versionCode 28), main SQLite schema 12, 112 observed phone capabilities.** Pass 23 fixes the November 11 audit findings: Termux admission lockout, honest outcomes for rejected writes, stranded requests, enrollment retry, exact automations under Doze, privileged-attach takeover, workflow command injection, gateway catalog robustness and revocation, and owner-screen issues. Existing enrollment and grants are preserved. The hosted gateway needs redeploying to pick up its part. See [status](docs/status.md) and [pass 23](docs/engineering-pass-23.md).
+> **Android 0.6.0-dev.21 (build 29), SQLite schema 12.** In **Agents**, choose an agent and tap **Revoke access**, or choose **Disconnect all agents** above the list. Revoked identities remain available in activity history. Home shows the gateway state, number of authorized agents and available phone controls. See [current device and gateway verification](docs/status.md).
 
 Agent-proposed follow-ups appear in the **Action Inbox** and stay inert until the owner accepts them; accepted actions still use the proposing agent's current permissions. Native semantic screen tools, Calendar Provider, SAF documents, managed Clock timers, private Google Messages reading and native Termux/Codex execution are implemented; open physical acceptance is listed in [status](docs/status.md). Android instrumentation can leave the shared-screen Accessibility service disconnected; the owner restores it in Android settings. No battery study or universal unattended privileged reboot recovery is claimed.
 
@@ -39,7 +39,7 @@ Agent-proposed follow-ups appear in the **Action Inbox** and stay inert until th
 4. Open **Automations** to choose a reminder, device health scan, commute check or installed workflow, review timing and permissions, and save. A custom workflow can request the typed capabilities it needs (never shell) with owner authentication. Automations can be run now, disabled or deleted; deleting keeps run history.
 5. **Connection details → Connection history** shows retained connection events. **Disconnect remote gateway** preserves agents and credentials. **Pause agent actions** on Home blocks new remote actions without stopping work already executing. See [background work and connection controls](docs/background-operations.md).
 
-Remote agents use the same authenticated MCP endpoint; existing OAuth connections do not need to be replaced. See [permissions and owner controls](docs/permissions.md).
+Remote agents use the same authenticated MCP endpoint. A gateway interruption can recover with the saved device enrollment. A revoked agent needs a new identity and owner authorization. See [permissions and owner controls](docs/permissions.md).
 
 ## Repository layout
 

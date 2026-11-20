@@ -1,28 +1,33 @@
 # Status
 
-Updated November 11, 2026. This is the single current status page. Dated reports in [history](history/) keep their original versions, measurements and limits; they are not re-verification of the current source.
+Updated November 20, 2026. This is the single current status page. Dated reports in [history](history/) keep their original versions, measurements and limits; they are not re-verification of the current source.
 
 ## Current build
 
 | Item | Value |
 | --- | --- |
-| Android app | **0.6.0-dev.20 / versionCode 28**, compatible development signer (in-place update preserves enrollment, agents, grants and records) |
+| Android app | **0.6.0-dev.21 / versionCode 29**, installed in place with the existing development signer |
 | Main SQLite schema | **12** (unchanged since code 26); Termux journal **1**; Clock journal **1** |
-| Phone capabilities | **112** observed on the installed build (code 27 count; no capabilities were added in code 28) |
-| Gateway | Pass-23 Worker deployed November 11 as version `ac8d435b-fbec-4f6a-b510-e4605e229f52` (rollback: `d458ed77-2118-4a13-9977-d55c7de606de`); the phone reconnected with its revocation list |
+| Phone capabilities | **112** last counted on build 27. Builds 28 and 29 add no capabilities. |
+| Gateway | Worker version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49` deployed November 20. Previous version `ac8d435b-fbec-4f6a-b510-e4605e229f52`. |
 
-Latest work: [pass 23](engineering-pass-23.md) (November 11 audit fixes: liveness and outcome honesty, trust boundaries, owner screens, duplication/efficiency, docs/CI). Previous checkpoint: [pass 22](engineering-pass-22.md) (managed Clock timers, private Messages reading, recovery center, editable agent names, native Codex execution).
+Build 29 puts individual and bulk revocation in **Agents**. Resetting all agents revokes their phone grants in one SQLite transaction, clears stored bot credentials and the pending invitation, and retains local automations, audit records and device enrollment. The Worker checks revocation during pairing and OAuth token exchange and retains previously reported revocations when the phone's recent list changes.
+
+The phone records gateway confirmation for each invitation. A delayed receipt identifies the exact code. An interrupted enrollment that returns “already registered” is finalized after the saved device credential and gateway handshake succeed. Home distinguishes retry, authentication failure, and a connected gateway with zero authorized agents.
+
+The gateway still issues one-hour OAuth access tokens and sets a fixed 30-day refresh-token lifetime. A saved phone grant can outlive a provider login. The reset removed the old identities before any fresh provider sign-in was attempted. Native phone tools use the app’s Android permissions. The bundled shell backend still needs per-boot authorization.
 
 ## Verification
 
 | Suite | Result |
 | --- | --- |
 | Core (JVM) | 91 pass |
-| Android JVM unit | 151 pass |
+| Android JVM unit | 152 pass |
 | Embedded ADB | 2 pass |
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 18 pass |
 | Lint | 0 errors |
+| Physical, code 29 | Single and bulk revoke confirmed on the Fold cover screen. Four of four remote grants revoked. Verified zero encrypted bot keys, zero pending invitations, and removal of both legacy development bearer files. An old phone bearer returned HTTP 401 on the hosted MCP endpoint. The phone recorded a fresh gateway acknowledgement after an in-place update and again after background process death. The foreground service returned in 1.2 seconds in the process-death check. Both checks ran before reopening the activity. |
 | Physical, code 28 | Exact automation in forced deep Doze (screen off, unplugged): started 10 ms after its slot and succeeded (`ExactDozeAcceptanceDeviceTest`); `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
 
 The gateway test suite uses a local test peer and is never phone evidence. CI runs the host suites, lint, release debug-isolation, Python and gateway checks and a secret scan; it does not run instrumentation.
@@ -61,7 +66,7 @@ Instrumentation can force-stop the app and leave the shared-screen Accessibility
 
 ## Roadmap
 
-1. Redeploy the gateway and complete the acceptance items above.
+1. Complete provider sign-in, reboot and network-transition acceptance with separately authorized test identities.
 2. Introduce a shared capability builder, and owner-request/action UI holders, file by file with device re-verification. See the deferred list in [pass 23](engineering-pass-23.md#duplication-and-efficiency-pass).
 3. Decide on one Android package-name validation rule. Current call sites accept different forms.
 4. Measure representative retained-history workloads before designing quotas or archival. Retry identities and notification/slot claims are permanent correctness state.

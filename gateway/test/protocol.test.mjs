@@ -12,7 +12,7 @@ import { Client as LegacyClient } from '@modelcontextprotocol/sdk/client/index.j
 import { StreamableHTTPClientTransport as LegacyTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const secret=()=>randomBytes(32).toString('base64url');
-const agent=secret(), otherAgent=secret(), device=secret(), enrollment=secret();
+const agent=secret(), otherAgent=secret(), revokedAgent=secret(), device=secret(), enrollment=secret();
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const base='http://127.0.0.1:8788';
 let dir, worker, socket;
@@ -60,7 +60,7 @@ before(async()=>{
   const config={name:'siconnect-protocol-test',main:resolve('src/index.ts'),compatibility_date:'2026-10-20',compatibility_flags:['nodejs_compat','global_fetch_strictly_public','enable_request_signal'],
     kv_namespaces:[{binding:'OAUTH_KV',id:'00000000000000000000000000000000'}],
     durable_objects:{bindings:[{name:'DEVICES',class_name:'DeviceBridge'}]},migrations:[{tag:'v1',new_sqlite_classes:['DeviceBridge']}],
-    vars:{PUBLIC_ORIGIN:base,DEVICE_ENROLL_TOKEN:enrollment,AGENTS_JSON:JSON.stringify([{id:'test-agent',deviceId:'test-device',tokenSha256:hash(agent),expiresAt:Date.now()+3600000},{id:'second-agent',deviceId:'test-device',tokenSha256:hash(otherAgent),expiresAt:Date.now()+3600000}])}};
+    vars:{PUBLIC_ORIGIN:base,DEVICE_ENROLL_TOKEN:enrollment,AGENTS_JSON:JSON.stringify([{id:'test-agent',deviceId:'test-device',tokenSha256:hash(agent),expiresAt:Date.now()+3600000},{id:'revoked-agent',deviceId:'test-device',tokenSha256:hash(revokedAgent),expiresAt:Date.now()+3600000},{id:'second-agent',deviceId:'test-device',tokenSha256:hash(otherAgent),expiresAt:Date.now()+3600000}])}};
   await writeFile(join(dir,'wrangler.json'),JSON.stringify(config),{mode:0o600});
   worker=spawn(resolve('node_modules/.bin/wrangler'),['dev','--config',join(dir,'wrangler.json'),'--port','8788','--ip','127.0.0.1','--local'],{env:{...process.env,WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe']});
   worker.stdout.on('data',b=>{output+=b}); worker.stderr.on('data',b=>{output+=b});
@@ -215,8 +215,16 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   const form=new URLSearchParams({handle,code,decision:'approve'});
   // A forged browser cannot consume the valid phone invitation.
   assert.equal((await fetch(base+'/authorize',{method:'POST',body:form,redirect:'manual'})).status,400);
+  const consumed = new Promise(resolve => {
+    const listener = raw => {
+      const message = JSON.parse(raw);
+      if (message.type === 'pairing_consumed') { socket.off('message', listener); resolve(message); }
+    };
+    socket.on('message', listener);
+  });
   const approved=await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'});
   assert.equal(approved.status,302,await approved.text());
+  assert.equal((await consumed).hash,hash(code));
   const callback=new URL(approved.headers.get('Location'));assert.equal(callback.searchParams.get('state'),'integration-state');
   assert.equal(await auth(provider,{serverUrl:base+'/mcp',authorizationCode:callback.searchParams.get('code'),iss:callback.searchParams.get('iss')}),'AUTHORIZED');
   assert.ok(tokens.access_token);assert.ok(tokens.refresh_token);
@@ -226,6 +234,11 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   // Replay is refused: the used code is rejected before the spent consent is even consulted.
   assert.equal((await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'})).status,401);
   const old=tokens.access_token;assert.equal(await auth(provider,{serverUrl:base+'/mcp'}),'AUTHORIZED');assert.notEqual(tokens.access_token,old);
+  await rehello({revokedAgents:[agentId]});
+  const rejected=await fetch(base+'/token',{method:'POST',body:new URLSearchParams({
+    grant_type:'refresh_token',client_id:registration.client_id,refresh_token:tokens.refresh_token
+  })});
+  assert.equal((await rejected.json()).error,'invalid_grant');
 });
 test('authenticated socket replacement rejects old in-flight ownership and requires hello',async()=>{
   const old=socket;
@@ -338,15 +351,17 @@ test('one malformed or colliding phone descriptor does not break the MCP endpoin
   } finally {await c.close();await rehello()}
 });
 
-test('a phone-revoked agent cannot list tools, probe the connection or invoke',async()=>{
-  await rehello({revokedAgents:['test-agent']});
-  try {
-    const mcp=await fetch(base+'/mcp',{method:'POST',headers:{Authorization:`Bearer ${agent}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},
-      body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})});
-    assert.equal(mcp.status,403);
-    assert.equal((await mcp.json()).error,'AGENT_REVOKED');
-    assert.equal((await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).status,403);
-  } finally {await rehello({revokedAgents:[]})}
+test('revocation survives a reconnect and rollover of the phone revocation list',async()=>{
+  await rehello({revokedAgents:['revoked-agent']});
+  const headers={Authorization:`Bearer ${revokedAgent}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'};
+  const list=()=>fetch(base+'/mcp',{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})});
+  const mcp=await list();
+  assert.equal(mcp.status,403);
+  assert.equal((await mcp.json()).error,'AGENT_REVOKED');
+  await reconnectPeer();
+  await rehello({revokedAgents:[]});
+  assert.equal((await list()).status,403);
+  assert.equal((await fetch(base+'/connection',{headers})).status,403);
   const c=await client();
   try {assert.ok((await c.listTools()).tools.length>0)} finally {await c.close()}
 });

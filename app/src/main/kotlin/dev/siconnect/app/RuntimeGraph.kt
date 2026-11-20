@@ -483,10 +483,14 @@ class RuntimeGraph(val context: Context) {
         require(!agentId.startsWith("local-")) { "Local identities cannot be revoked as remote bots" }
         db.writableDatabase.writeTransaction {w->
             val agent=requireNotNull(agents.get(agentId)) { "Bot no longer exists" }
-            agents.put(agent.copy(grant=agent.grant.copy(revoked=true)))
-            events.emit(Event(System.currentTimeMillis(),eventType="agent.revoked",agentId=agentId,deviceId=settings.deviceId,detail="Local owner revoked bot"))
+            if(!agent.grant.revoked) recordOwnerRevocation(agent)
         }
         gateway.refreshCatalog() // re-sends hello with the updated revocation list
+    }
+    internal fun recordOwnerRevocation(agent:AgentRecord) {
+        agents.put(agent.copy(grant=agent.grant.copy(revoked=true)))
+        events.emit(Event(System.currentTimeMillis(),eventType="agent.revoked",agentId=agent.grant.agentId,
+            deviceId=settings.deviceId,detail="Local owner revoked bot"))
     }
     fun authenticate(token: String): AgentRecord? {
         if (token.length !in 20..300) return null
@@ -497,7 +501,6 @@ class RuntimeGraph(val context: Context) {
     suspend fun remoteInvoke(body: JsonObject, token: String): RequestRecord {
         ready.await()
         val agent = authenticate(token) ?: throw SecurityException("Invalid or revoked agent credential")
-        if(settings.pendingPairing()?.agentId==agent.grant.agentId) pairing.consumed(agent.grant.agentId)
         require(body.keys.all { it in setOf("requestId", "traceId", "capabilityId", "arguments", "idempotencyKey", "expiresAtMs") }) { "Unsupported invocation field" }
         return engine.submit(InvocationRequest(
             requestId=(body["requestId"] as? JsonPrimitive)?.content ?: java.util.UUID.randomUUID().toString(),

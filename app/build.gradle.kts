@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 28
-        versionName = "0.6.0-dev.20"
+        versionCode = 29
+        versionName = "0.6.0-dev.21"
         testInstrumentationRunner = if (providers.gradleProperty("installationCheckpoint").orNull == "true")
             "dev.siconnect.app.InstallationCheckpointInstrumentation" else "androidx.test.runner.AndroidJUnitRunner"
     }

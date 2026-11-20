@@ -16,7 +16,7 @@ import dev.siconnect.app.data.AgentRecord
 import dev.siconnect.app.data.AgentStore
 import dev.siconnect.core.*
 
-@Composable fun AgentsScreen(state:ControlCenterSnapshot,wide:Boolean,initialAgentId:String?,onPair:()->Unit,
+@Composable fun AgentsScreen(state:ControlCenterSnapshot,wide:Boolean,initialAgentId:String?,onPair:()->Unit,onDisconnectAll:()->Unit,
     onFamily:(String,String,Boolean)->Unit,onShell:(AgentRecord)->Unit,onReconnect:(AgentRecord)->Unit,
     onRevoke:(AgentRecord)->Unit,onRequest:(String)->Unit,onSemanticApp:(String,String,Boolean)->Unit,onHeadlessApp:(String,String,Boolean)->Unit,onSharedScreen:(String,Boolean)->Unit,
     onFullControl:(AgentRecord,Boolean)->Unit,onRename:(AgentRecord,String)->Unit,busy:Boolean=false,onInitialAgentConsumed:()->Unit={}) {
@@ -24,13 +24,21 @@ import dev.siconnect.core.*
     var query by rememberSaveable {mutableStateOf("")}
     LaunchedEffect(initialAgentId) {if(initialAgentId!=null) {selected=initialAgentId;onInitialAgentConsumed()}}
     val agents=state.agents.filterNot {it.grant.agentId.startsWith("local-")}
+    var showRevoked by rememberSaveable { mutableStateOf(false) }
+    var confirmReset by rememberSaveable { mutableStateOf(false) }
+    val revokedCount=agents.count {it.grant.revoked}
     val current=agents.firstOrNull {it.grant.agentId==selected}
     BackHandler(current!=null) {selected=null}
     @Composable fun list() {
         OutlinedTextField(query,{query=it},label={Text("Find an agent")},singleLine=true,modifier=Modifier.fillMaxWidth())
-        val filtered=agents.filter {"${botDisplayName(it,agents)} ${it.grant.agentId} ${credentialType(it)}".contains(query,true)}
-        if(filtered.isEmpty()) EmptyState(if(agents.isEmpty()) "Your agents belong here" else "No matching agents",
-            if(agents.isEmpty()) "Pair a bot and give it access to the tools you choose." else "Try a different name.",R.drawable.ic_nav_agents)
+        if(agents.size>revokedCount || showRevoked) TextButton(onClick={confirmReset=true},enabled=!busy) {Text("Disconnect all agents")}
+        if(revokedCount>0) TextButton(onClick={showRevoked=!showRevoked}) {
+            Text(if(showRevoked) "Hide revoked agents" else "Show revoked agents ($revokedCount)")
+        }
+        val visible=if(showRevoked) agents else agents.filterNot {it.grant.revoked}
+        val filtered=visible.filter {"${botDisplayName(it,agents)} ${it.grant.agentId} ${credentialType(it)}".contains(query,true)}
+        if(filtered.isEmpty()) EmptyState(if(visible.isEmpty()) "No agents with access" else "No matching agents",
+            if(visible.isEmpty()) "Pair a bot and give it access to the tools you choose." else "Try a different name.",R.drawable.ic_nav_agents)
         filtered.forEach {a->Card(onClick={selected=a.grant.agentId},modifier=Modifier.fillMaxWidth(),
             colors=CardDefaults.cardColors(containerColor=if(selected==a.grant.agentId) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)) {
             Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -44,12 +52,15 @@ import dev.siconnect.core.*
                 }
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                     StatusPill("Grant ${agentState(a).lowercase()}",if(agentState(a)=="Active") StatusTone.GOOD else StatusTone.NEUTRAL)
-                    StatusPill(if(a.grant.fullControl) "Full control" else "Custom access",if(a.grant.fullControl) StatusTone.ATTENTION else StatusTone.NEUTRAL)
+                    if(!a.grant.revoked) StatusPill(if(a.grant.fullControl) "Full control" else "Custom access",if(a.grant.fullControl) StatusTone.ATTENTION else StatusTone.NEUTRAL)
                 }
                 Text(state.recent.firstOrNull {it.agentId==a.grant.agentId}?.let {"Last request: ${actionStateLabel(it.state)}"} ?: "Saved identity · no recent request",style=MaterialTheme.typography.bodySmall)
             }
         }}
-        Text("Saved identities retain their permissions. A credential identity is separate from a currently connected client.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(confirmReset) AlertDialog(onDismissRequest={confirmReset=false},title={Text("Disconnect all remote agents?")},
+            text={Text("Revoke remote access for every saved agent and clear pairing codes and bot keys from this phone. Each bot will need a new connection. Local schedules and activity history stay available.")},
+            confirmButton={TextButton(onClick={confirmReset=false;selected=null;onDisconnectAll()},enabled=!busy) {Text("Disconnect all")}},
+            dismissButton={TextButton(onClick={confirmReset=false}) {Text("Cancel")}})
     }
     PageLayout {
         PageHeader("Agents","One place for your bots and their permissions.") {Button(onClick=onPair,enabled=!busy) {Text("Pair agent")}}
@@ -82,21 +93,24 @@ import dev.siconnect.core.*
     val editable=usable && !busy && !fullControl && a.fullAccessPreviousGrant==null
     Panel {
         Text(botDisplayName(a,state.agents),style=MaterialTheme.typography.headlineSmall)
-        TextButton(onClick={renameDraft=a.grant.label;originalLabel=a.grant.label;rename=true},enabled=!busy) {Text("Rename agent")}
+        if(!a.grant.revoked) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick={renameDraft=a.grant.label;originalLabel=a.grant.label;rename=true},enabled=!busy) {Text("Rename agent")}
+            OutlinedButton(onClick={revoke=true},enabled=!busy) {Text("Revoke access",color=MaterialTheme.colorScheme.error)}
+        }
         StatusPill("Grant ${agentState(a).lowercase()}",if(usable) StatusTone.GOOD else StatusTone.NEUTRAL)
         Text(credentialType(a),style=MaterialTheme.typography.titleSmall)
         Text("Identity …${a.grant.agentId.takeLast(8)}",style=MaterialTheme.typography.bodySmall)
     }
-    FullControlCard(a,botDisplayName(a,state.agents),usable,fullControl,busy,
+    if(!a.grant.revoked) FullControlCard(a,botDisplayName(a,state.agents),usable,fullControl,busy,
         state.pending.filter {it.agentId==a.grant.agentId},state.capabilities.associate {it.descriptor.id to it.descriptor.title},onFullControl)
-    if(!fullControl && a.fullAccessPreviousGrant!=null) Panel {
+    if(!a.grant.revoked && !fullControl && a.fullAccessPreviousGrant!=null) Panel {
         Text("An earlier broad-access profile is saved. Enable Full control above to upgrade it, or restore your custom permissions before editing individual options.",style=MaterialTheme.typography.bodyMedium)
         OutlinedButton(onClick={onFullControl(a,false)},enabled=!busy) {Text("Restore custom access")}
     }
     FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-        listOf("Permissions","App access","Activity","Connection").forEach {name->FilterChip(tab==name,{tab=name},label={Text(name)})}
+        (if(a.grant.revoked) listOf("Activity") else listOf("Permissions","App access","Activity","Connection")).forEach {name->FilterChip(a.grant.revoked || tab==name,{tab=name},label={Text(name)})}
     }
-    when(tab) {
+    when(if(a.grant.revoked) "Activity" else tab) {
         "Permissions" -> {
             if(fullControl) FullControlCoverage(a,busy,onFullControl)
             else {
@@ -206,11 +220,7 @@ import dev.siconnect.core.*
                 Text(if(fullControl) "Full control · automatic SIConnect actions" else "Custom permissions and approval policy",style=MaterialTheme.typography.bodyMedium)
                 Text("Grant expiry: ${a.grant.expiresAtMs?.let {formatDateTime(androidx.compose.ui.platform.LocalContext.current,it)} ?: "No expiry configured"}",style=MaterialTheme.typography.bodySmall)
             }
-            if(!a.grant.revoked) Panel {
-                Text("Revoke access",style=MaterialTheme.typography.titleMedium)
-                Text("Stop this identity from making further requests. You can pair a new identity later.",style=MaterialTheme.typography.bodyMedium)
-                TextButton(onClick={revoke=true},enabled=!busy) {Text("Revoke this agent",color=MaterialTheme.colorScheme.error)}
-            }
+
         }
     }
     if(revoke) AlertDialog(onDismissRequest={revoke=false},title={Text("Revoke ${botDisplayName(a,state.agents)}?")},

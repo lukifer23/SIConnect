@@ -98,6 +98,9 @@ class RuntimeDeviceTest {
             val renewed=g.pairing.renew(first.agentId)
             Assert.assertEquals(first.agentId,renewed.agentId)
             Assert.assertNotEquals(first.code,renewed.code)
+            Assert.assertTrue(renewed.readyToCopy(System.currentTimeMillis()))
+            g.pairing.consumed(first.agentId,dev.siconnect.app.data.Settings.sha256Hex(first.code))
+            Assert.assertEquals("A late receipt must preserve the new code",renewed,g.settings.pendingPairing())
             Assert.assertEquals(listOf("device.*"),g.agents.get(first.agentId)!!.grant.scopes)
             g.pairing.dismissInvitation(first.agentId)
             val second=g.pairing.create(first.label);created+=second.agentId
