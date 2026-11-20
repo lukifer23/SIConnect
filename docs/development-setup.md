@@ -84,7 +84,7 @@ npm audit --audit-level=high
 
 ## In-place update and recovery
 
-The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-12 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
+The application ID remains `dev.siconnect.app`. Verify certificate compatibility, then use `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`. Do not uninstall or clear data to resolve a signer mismatch. Do not downgrade an installed schema-13 database to an older schema. After an update, reattach the existing bundled backend with `python3 tools/start_builtin.py --serial <serial> --restart` when needed, launch MainActivity if instrumentation left the connection stopped, and verify a fresh native call and actual shell identity. Enrollment preservation alone is not proof of online readiness.
 
 ## Shutdown and generated files
 

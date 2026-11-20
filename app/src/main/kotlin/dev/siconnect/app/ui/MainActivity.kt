@@ -124,8 +124,14 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        graph.ownerScreenStarted()
         graph.gateway.refreshCatalog()
         ConnectionService.restoreOwnerEnabled(graph)
+    }
+
+    override fun onStop() {
+        graph.ownerScreenStopped()
+        super.onStop()
     }
 
     @Composable private fun Home() {

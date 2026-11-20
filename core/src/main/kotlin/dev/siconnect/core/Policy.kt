@@ -87,7 +87,9 @@ class PolicyEngine {
         if (agent.scopes.none { globMatches(it, descriptor.id) }) return deny("Capability outside agent scope", "agent_scope")
         if(descriptor.ownerOnly && (origin!=Origin.LOCAL_OWNER || agent.agentId!="local-owner"))
             return deny("Operation is restricted to the local owner runtime", "owner_only")
-        if(!agent.allowSharedScreen && descriptor.interaction !in setOf(InteractionMode.BACKGROUND,InteractionMode.ISOLATED_SCREEN))
+        val interaction = if (assessment.nativeBackgroundOnly && descriptor.backend==BackendKind.NATIVE &&
+            descriptor.interaction==InteractionMode.MAY_OPEN_SCREEN) InteractionMode.BACKGROUND else descriptor.interaction
+        if(!agent.allowSharedScreen && interaction !in setOf(InteractionMode.BACKGROUND,InteractionMode.ISOLATED_SCREEN))
             return deny("Owner restricted this agent to background APIs and private displays", "shared_screen_disabled")
         if (!availability.isExecutable)
             return PolicyDecision(PolicyOutcome.UNAVAILABLE, "Capability is $availability", "availability")
@@ -100,6 +102,9 @@ class PolicyEngine {
             return deny("Shell command assessment is required", "shell_assessment_missing")
         if (risk == RiskClass.CRITICAL && !agent.fullControl)
             return approval("CRITICAL operations require approval outside the owner-enabled full-control profile", "critical")
+
+        if (assessment.requiresForegroundReview)
+            return approval("Open the request on the phone to start Clock from a visible activity", "foreground_review")
 
         agent.standing.firstOrNull {
             (assessment.shellCommand == null || it.actionHash != null) && matchesStanding(it, descriptor, args, risk, nowMs)

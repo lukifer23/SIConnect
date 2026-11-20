@@ -94,6 +94,10 @@ data class RiskAssessment(
     val shellCommand: String? = null,
     val externalCommunication: Boolean = false,
     val affectedItems: Int = 1,
+    /** Android needs a visible owner activity to dispatch this particular request. */
+    val requiresForegroundReview: Boolean = false,
+    /** Trusted native implementation selected its background path for these exact arguments. */
+    val nativeBackgroundOnly: Boolean = false,
 )
 
 @Serializable

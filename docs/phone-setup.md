@@ -20,6 +20,12 @@ Open **Settings → Developer tools → Capabilities** to see what the phone can
 
 New OAuth agents can read device status, inspect apps and use a bounded set of native tools. Actions above read-only risk require approval. The owner can review each grant in **Agents**. For initial gateway enrollment or a deliberate gateway change, use the secure setup code issued by the gateway administrator. Check the HTTPS origin before owner authentication.
 
+### Start a Clock timer
+
+For a hands-free timer, ask the bot to use **SIConnect’s background countdown**. Use the existing `clock_timer_start` with no package name, or the background-only `reminders_start_countdown`. Send `durationSeconds: 480` for eight minutes. The phone computes the deadline, displays a countdown notification, and schedules an exact timer alert. Android’s **Precise reminders**, **Running countdowns**, and **Timer alerts** settings must be enabled. Sound follows the timer alert channel, phone volume, and Do Not Disturb settings. Read or cancel an owned countdown with `clock_timer_status` or `clock_timer_cancel` using its returned timer ID. Countdown records are also available through `reminders_list` and `reminders_cancel`.
+
+To use **Samsung Clock or another installed Clock app**, pass its exact installed package name to `clock_timer_start`. Android requires SIConnect to be visible when launching that app. If SIConnect is in the background, open its owner-review notification to continue the original request. For an existing bot, **Agents → [agent] → Permissions → Clock timers** controls access. New pairings include the three external Clock operations. Starting or cancelling can open Clock and requires shared-screen permission. Check an uncertain start with `clock_timer_status` before starting another timer. Samsung can publish the matching label without exposing remaining seconds.
+
 ### Verify after a phone restart
 
 Unlock Android once, leave SIConnect closed and ask each provider for a fresh `device_battery` result and request ID. Then open **Activity** to confirm two new successful requests under the expected agent names. On build 30 this passed on a physical Fold with the existing Dot and Grok Bot sessions. No one restarted the service manually or paired either bot again. See [verification](status.md#verification).

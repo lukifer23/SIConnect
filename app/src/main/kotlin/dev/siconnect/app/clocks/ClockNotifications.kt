@@ -32,7 +32,15 @@ internal class ClockNotifications(private val context:Context) {
             Notification.EXTRA_SUMMARY_TEXT,Notification.EXTRA_INFO_TEXT).mapNotNull {extras.getCharSequence(it)?.take(4000)?.toString()}
         return fields+extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES).orEmpty().take(32).map {it.take(4000).toString()}
     }
-    fun observe(timer:ManagedTimer):OwnedTimerNotification? {
+    fun observe(timer:ManagedTimer):OwnedTimerNotification? = try {
+        readObservation(timer)
+    } catch (error:CapabilityException) {
+        // Clock can withdraw a notification between enumeration and reading its actions.
+        if(error.code!="NOTIFICATION_GONE" && error.code!="NOTIFICATION_CHANGED") throw error
+        readObservation(timer)
+    }
+
+    private fun readObservation(timer:ManagedTimer):OwnedTimerNotification? {
         val listener=NotificationListenerAccess.requireConnected(context)
         val pkg=try {context.packageManager.getPackageInfo(timer.packageName,0)} catch(_:android.content.pm.PackageManager.NameNotFoundException) {null}
         if(pkg?.applicationInfo?.uid!=timer.uid || pkg.firstInstallTime!=timer.installedAtMs)

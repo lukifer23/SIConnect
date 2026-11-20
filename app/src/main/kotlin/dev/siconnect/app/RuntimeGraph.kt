@@ -37,6 +37,10 @@ class RuntimeGraph(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, error ->
         android.util.Log.e("SIConnect", "Runtime task failed: ${error.javaClass.simpleName}")
     })
+    private val visibleOwnerScreens = java.util.concurrent.atomic.AtomicInteger()
+    val ownerScreenVisible get() = visibleOwnerScreens.get() > 0
+    fun ownerScreenStarted() { visibleOwnerScreens.incrementAndGet() }
+    fun ownerScreenStopped() { visibleOwnerScreens.decrementAndGet() }
     val settings = Settings(context)
     val db = SIConnectDb(context)
     val requests = SqlRequestStore(db)
@@ -100,6 +104,11 @@ class RuntimeGraph(val context: Context) {
         nm.createNotificationChannels(listOf(
             NotificationChannel("approvals", "Owner approvals", NotificationManager.IMPORTANCE_HIGH),
             NotificationChannel("messages", "Reminders and messages", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel("countdown", "Running countdowns", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel("timer_alerts", "Timer alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI,android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            },
             NotificationChannel("connection", "Remote connection", NotificationManager.IMPORTANCE_LOW)))
         registerCapabilities(this)
         registerAutomationCapabilities(this)

@@ -28,6 +28,7 @@ internal class ReminderLifecycle(
     private val engine: ExecutionEngine,
     private val dispatch: ReminderDispatch,
     private val clock: Clock = Clock { System.currentTimeMillis() },
+    private val remainingMs:(Reminder)->Long = { it.fireAtMs-clock.nowMs() },
 ) {
     private val locks=Array(32) {Mutex()}
     private fun lock(id:String)=locks[(id.hashCode() and Int.MAX_VALUE)%locks.size]
@@ -54,6 +55,8 @@ internal class ReminderLifecycle(
 
     suspend fun put(r:Reminder,deduplicate:Boolean=false):Reminder = lock(r.id).withLock {
         val old=store.get(r.id)
+        reject(old==null || old.agentId==r.agentId, "POLICY_DENIED", "This reminder identity is owned by another agent")
+        reject(old==null || old.countdownSeconds==r.countdownSeconds, "IDEMPOTENCY_CONFLICT", "A countdown identity cannot be replaced by a different timer")
         if(deduplicate && old!=null) {
             if(old.agentId!=r.agentId || old.fireAtMs!=r.fireAtMs || old.title!=r.title || old.text!=r.text || old.exact!=r.exact)
                 throw CapabilityException("IDEMPOTENCY_CONFLICT","Reminder key belongs to different arguments; update explicitly",noSideEffects=true)
@@ -106,7 +109,7 @@ internal class ReminderLifecycle(
                 "BLOCKED"->RequestState.FAILED
                 else->RequestState.entries.firstOrNull {it.name==r.state}
             }
-            if(r.fireAtMs>clock.nowMs()+1000) return null
+            if(remainingMs(r)>1000) return null
             val claimed=if(r.state=="SCHEDULED") save(r,r.copy(state="FIRING")) else r
             val record=delivery(r) ?: engine.submit(InvocationRequest(requestId=deliveryId(id),
                 agentId="local-automation",capabilityId="notifications.post",arguments=arguments(r)),Origin.LOCAL_AUTOMATION,awaitCompletion=false)
@@ -125,7 +128,7 @@ internal class ReminderLifecycle(
             when(r.state) {
                 "SCHEDULED","BLOCKED" -> {
                     if(r.exact && !dispatch.canScheduleExact()) save(r,r.copy(state="BLOCKED",error="EXACT_PERMISSION_REQUIRED"))
-                    else if(r.fireAtMs<clock.nowMs()-6*60*60_000L) save(r,r.copy(state="MISSED",error="REMINDER_TOO_OLD"))
+                    else if(remainingMs(r) < -6*60*60_000L) save(r,r.copy(state="MISSED",error="REMINDER_TOO_OLD"))
                     else try {dispatch.schedule(r);if(r.state=="BLOCKED") save(r,r.copy(state="SCHEDULED",error=null))}
                         catch(e:CancellationException) {throw e}
                         catch(e:Exception) {save(r,r.copy(state="BLOCKED",error=e.javaClass.simpleName))}

@@ -17,14 +17,11 @@ class ClockContractTest {
         assertTrue(ClockContract.matchesLabel("other.clock",label,listOf(label),null))
         assertFalse(ClockContract.matchesLabel("other.clock",label,listOf("Other $label"),null))
     }
-    @Test fun typedIntentPreservesLabelAsSingleArgAndNeverUsesDismissAll() {
-        val label=ClockContract.publishedLabel("'; echo owned; $ literal",timer)
-        val argv=ClockContract.timerIntentArgv(ClockContract.SAMSUNG_CLOCK,1140,label)
-        assertEquals(label,argv[argv.indexOf("android.intent.extra.alarm.MESSAGE")+1])
-        assertTrue("android.intent.action.SET_TIMER" in argv)
-        assertFalse(argv.any {it.contains("DISMISS_TIMER")})
-        assertFalse(argv.contains("-c"))
-        assertEquals("1140",argv[argv.indexOf("android.intent.extra.alarm.LENGTH")+1])
+    @Test fun timerLabelsPreserveLiteralUserTextAndRemainBoundToOneTimer() {
+        val label=ClockContract.publishedLabel("  Tea & coffee (8 min)  ",timer)
+        assertEquals("Tea & coffee (8 min) · SIConnect:$timer",label)
+        assertEquals("SIConnect:$timer",ClockContract.publishedLabel("",timer))
+        ClockContract.validateTimer(ClockContract.SAMSUNG_CLOCK,480,label)
     }
     @Test fun cancelNeverInfersPauseDeleteOrUnknownAppTextAsStop() {
         assertTrue(ClockContract.cancelMeaning(ClockContract.SAMSUNG_CLOCK,0,"Cancel"))
@@ -34,24 +31,27 @@ class ClockContractTest {
         assertFalse(ClockContract.cancelMeaning("other.clock",0,"Cancel"))
     }
     @Test fun invalidDurationPackageAndMultilineLabelAreRejectedBeforeIntent() {
-        for(seconds in listOf(0,86401)) try {ClockContract.timerIntentArgv(ClockContract.SAMSUNG_CLOCK,seconds,"label");fail("Invalid duration admitted")}
+        for(seconds in listOf(0,86401)) try {ClockContract.validateTimer(ClockContract.SAMSUNG_CLOCK,seconds,"label");fail("Invalid duration admitted")}
             catch(_:IllegalArgumentException) { }
-        try {ClockContract.timerIntentArgv("clock;touch file",60,"label");fail("Invalid package admitted")}
+        try {ClockContract.validateTimer("clock;touch file",60,"label");fail("Invalid package admitted")}
         catch(_:IllegalArgumentException) { }
         try {ClockContract.publishedLabel("line\nline",timer);fail("Invalid label admitted")}
         catch(_:IllegalArgumentException) { }
     }
-    @Test fun typedTimerUsesRealScopeRiskSharedScreenAndPrivilegedControlPolicy() {
+    @Test fun nativeTimerRequiresScopeAndSharedScreenWithPrivilegedControlOff() {
         val descriptor=CapabilityDescriptor("clock.timer_start",title="Timer",description="",inputSchema=objectSchema(),
-            backend=BackendKind.ADB_SERVICE,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN)
+            backend=BackendKind.NATIVE,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN)
         val grant=AgentGrant("agent","agent",scopes=listOf("clock.*"),autoApproveUpTo=RiskClass.MODERATE_IMPACT)
-        fun decision(agent:AgentGrant=grant,controls:DeviceControls=DeviceControls())=PolicyEngine().evaluate(agent,descriptor,JsonObject(emptyMap()),
-            RiskAssessment(descriptor.risk,"Timer"),Availability.IMPLEMENTED,controls,Origin.REMOTE,100)
+        fun decision(agent:AgentGrant=grant,controls:DeviceControls=DeviceControls(),foregroundReview:Boolean=false,background:Boolean=false)=PolicyEngine().evaluate(agent,descriptor,JsonObject(emptyMap()),
+            RiskAssessment(descriptor.risk,"Timer",requiresForegroundReview=foregroundReview,nativeBackgroundOnly=background),Availability.IMPLEMENTED,controls,Origin.REMOTE,100)
         assertEquals(PolicyOutcome.ALLOW,decision().outcome)
+        assertEquals("foreground_review",decision(grant.copy(fullControl=true),foregroundReview=true).rule)
+        assertEquals(PolicyOutcome.DENY,decision(grant.copy(scopes=emptyList()),foregroundReview=true).outcome)
         assertEquals(PolicyOutcome.DENY,decision(grant.copy(scopes=listOf("device.*"))).outcome)
         assertEquals(PolicyOutcome.DENY,decision(grant.copy(allowSharedScreen=false)).outcome)
+        assertEquals(PolicyOutcome.ALLOW,decision(grant.copy(allowSharedScreen=false),background=true).outcome)
         assertEquals(PolicyOutcome.DENY,decision(grant.copy(revoked=true)).outcome)
         assertEquals(PolicyOutcome.DENY,decision(controls=DeviceControls(remoteExecutionEnabled=false)).outcome)
-        assertEquals(PolicyOutcome.UNAVAILABLE,decision(controls=DeviceControls(privilegedEnabled=false)).outcome)
+        assertEquals(PolicyOutcome.ALLOW,decision(controls=DeviceControls(privilegedEnabled=false)).outcome)
     }
 }

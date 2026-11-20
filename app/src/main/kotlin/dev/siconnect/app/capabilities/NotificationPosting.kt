@@ -45,15 +45,17 @@ internal suspend fun postNotification(g:RuntimeGraph,a:JsonObject,ctx:ExecutionC
     if(!nm.areNotificationsEnabled()) throw CapabilityException("PERMISSION_REQUIRED","Notification access was revoked",noSideEffects=true)
     val tag=hash?.let {"siconnect:"+Settings.sha256Hex(ctx.agentId+":"+it)}
     val id=if(tag==null) ctx.requestId.hashCode() else 0
-    return postObservedNotification(g,a,tag,id,key!=null)
+    val countdown=ctx.agentId=="local-automation" && ctx.requestId.startsWith("reminder:countdown:") &&
+        g.reminders.get(ctx.requestId.removePrefix("reminder:"))?.countdownSeconds!=null
+    return postObservedNotification(g,a,if(countdown) ctx.requestId else tag,if(countdown) 0 else id,key!=null,countdown)
 }
 
 /** A stable health tag updates one active notification; suppression is decided before this method. */
-private suspend fun postObservedNotification(g:RuntimeGraph,a:JsonObject,tag:String?,id:Int,onlyOnce:Boolean):JsonObject {
+private suspend fun postObservedNotification(g:RuntimeGraph,a:JsonObject,tag:String?,id:Int,onlyOnce:Boolean,countdown:Boolean=false):JsonObject {
     val nm=g.context.getSystemService(NotificationManager::class.java)
     if(!nm.areNotificationsEnabled()) throw CapabilityException("PERMISSION_REQUIRED","Notification access was revoked",noSideEffects=true)
-    val notification=Notification.Builder(g.context,"messages").setSmallIcon(R.drawable.ic_stat).setContentTitle(a.str("title"))
-        .setContentText(a.str("text")).setAutoCancel(true).setOnlyAlertOnce(onlyOnce).build()
+    val notification=Notification.Builder(g.context,if(countdown) "timer_alerts" else "messages").setSmallIcon(R.drawable.ic_stat).setContentTitle(a.str("title"))
+        .apply { if(countdown) setCategory(Notification.CATEGORY_ALARM) }.setContentText(a.str("text")).setAutoCancel(true).setOnlyAlertOnce(onlyOnce).build()
     if(tag==null) nm.notify(id,notification) else nm.notify(tag,id,notification)
     var observed=false
     repeat(20) {

@@ -6,7 +6,7 @@ import android.content.pm.PackageManager
 import android.provider.AlarmClock
 import dev.siconnect.app.RuntimeGraph
 import dev.siconnect.app.accessibility.SemanticUiRules
-import dev.siconnect.app.backend.ShellRequest
+import android.content.ActivityNotFoundException
 import dev.siconnect.app.notifications.NotificationListenerAccess
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
@@ -39,16 +39,14 @@ internal class ClockTimers(private val g:RuntimeGraph) {
         if(!supportedUser()) return Availability.UNSUPPORTED
         val access=NotificationListenerAccess.availability(g.context)
         if(!access.isExecutable) return access
-        if(!g.privileged.available()) return Availability.PRIVILEGE_REQUIRED
         return runCatching {packageName(args?.get("packageName")?.jsonPrimitive?.content);Availability.IMPLEMENTED}.getOrDefault(Availability.UNSUPPORTED)
     }
-    private fun validate(ctx:ExecutionContext,args:JsonObject,descriptor:CapabilityDescriptor,availability:Availability,selected:BackendKind?=null) {
+    private fun validate(ctx:ExecutionContext,args:JsonObject,descriptor:CapabilityDescriptor,availability:Availability) {
         val record=g.requests.get(ctx.requestId) ?: throw CapabilityException("REQUEST_NOT_FOUND","Original timer request is unavailable",noSideEffects=true)
         if(record.state!=RequestState.EXECUTING || record.agentId!=ctx.agentId || record.capabilityId!=descriptor.id || record.capabilityVersion!=descriptor.version ||
             (record.selectedBackend!=null && record.selectedBackend!=descriptor.backend) || record.argsHash!=Canonical.actionHash(descriptor.id,descriptor.version,args) ||
             System.currentTimeMillis()>=record.expiresAtMs || ctx.deadlineAtMs?.let {System.currentTimeMillis()>=it}==true)
             throw CapabilityException("CLOCK_REQUEST_CHANGED","Original timer request changed, expired or was cancelled before dispatch",noSideEffects=true)
-        if(selected!=null && g.privileged.kind!=selected) throw CapabilityException("PRIVILEGE_REQUIRED","Selected timer backend changed; no timer command was sent",noSideEffects=true)
         val policy=PolicyEngine().evaluate(g.agents.grant(ctx.agentId),descriptor,args,record.assessment ?: RiskAssessment(descriptor.risk,descriptor.title),
             availability,g.settings.controls.value,Origin.valueOf(record.origin),System.currentTimeMillis())
         if(policy.outcome in setOf(PolicyOutcome.DENY,PolicyOutcome.UNAVAILABLE) || (policy.outcome==PolicyOutcome.REQUIRE_APPROVAL && record.approvedBy==null))
@@ -56,43 +54,57 @@ internal class ClockTimers(private val g:RuntimeGraph) {
     }
     suspend fun start(args:JsonObject,ctx:ExecutionContext,descriptor:CapabilityDescriptor):CapabilityResult=withContext(Dispatchers.IO) {
         requireSupportedUser()
-        val selected=descriptor.backend
         val pkg=packageName(args["packageName"]?.jsonPrimitive?.content)
         val seconds=args.getValue("durationSeconds").jsonPrimitive.int
         val label=args["label"]?.jsonPrimitive?.content.orEmpty()
         val id=UUID.randomUUID().toString();val published=ClockContract.publishedLabel(label,id)
-        val argv=ClockContract.timerIntentArgv(pkg,seconds,published)
+        ClockContract.validateTimer(pkg,seconds,published)
+        val intent=Intent(AlarmClock.ACTION_SET_TIMER).setPackage(pkg)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(AlarmClock.EXTRA_LENGTH,seconds)
+            .putExtra(AlarmClock.EXTRA_MESSAGE,published)
+            .putExtra(AlarmClock.EXTRA_SKIP_UI,true)
         val info=g.context.packageManager.getPackageInfo(pkg,0)
         val timer=ManagedTimer(id,ctx.agentId,ctx.requestId,pkg,requireNotNull(info.applicationInfo).uid,info.firstInstallTime,seconds,label,published,System.currentTimeMillis(),"PREPARED")
         g.ui.withScreen(ctx,pkg,args["leaseId"]?.jsonPrimitive?.content) {
-            validate(ctx,args,descriptor,startAvailability(args),selected)
+            validate(ctx,args,descriptor,startAvailability(args))
             notifications.requireNoExistingClockWork(pkg)
             if(journal.byStartRequest(ctx.requestId)!=null) throw CapabilityException("CLOCK_START_ALREADY_RECORDED","Original timer start already has durable identity; read timer status instead of replaying",noSideEffects=true)
             try {journal.prepare(timer)} catch(e:android.database.sqlite.SQLiteException) {throw CapabilityException("CLOCK_JOURNAL_UNAVAILABLE","Timer identity could not be saved; no timer command was sent",noSideEffects=true)}
             var attempted=false
             try {
-                currentCoroutineContext().ensureActive();validate(ctx,args,descriptor,startAvailability(args),selected)
+                currentCoroutineContext().ensureActive();validate(ctx,args,descriptor,startAvailability(args))
                 notifications.requireNoExistingClockWork(pkg)
+                if (!g.ownerScreenVisible) throw CapabilityException("CLOCK_FOREGROUND_REQUIRED",
+                    "Keep SIConnect open to start the external Clock app, or use reminders.start_countdown for a background timer", noSideEffects=true)
                 journal.phase(ctx.requestId,"DISPATCHING");attempted=true
-                val result=try {g.privileged.execute(ShellRequest(ctx.requestId,argv=argv,timeoutMs=5000,maxOutputBytes=4096,outputEncoding="text"),selected)}
-                catch(error:CapabilityException) {if(error.noSideEffects) attempted=false;throw error}
-                val accepted=result.exitCode==0 && !result.timedOut && !result.cancelled && result.error==null &&
-                    !result.stdout.contains("Error:",ignoreCase=true) && !result.stderr.contains("Error:",ignoreCase=true)
-                journal.phase(ctx.requestId,if(accepted) "ACCEPTED" else "OUTCOME_UNKNOWN")
-                if(!accepted) return@withScreen CapabilityResult(timer.metadata(),selected,result.identity,VerificationStatus.FAILED,
-                    "Clock intent was not confirmed; inspect this original managed timer before repeating",errorCode="CLOCK_START_UNCERTAIN")
+                try {
+                    g.context.startActivity(intent)
+                } catch (error: ActivityNotFoundException) {
+                    attempted=false
+                    throw CapabilityException("CLOCK_APP_UNAVAILABLE","Clock no longer handles the timer request",noSideEffects=true)
+                } catch (error: SecurityException) {
+                    attempted=false
+                    throw CapabilityException("CLOCK_PERMISSION_REQUIRED","Android refused the Clock timer intent",noSideEffects=true)
+                }
                 val observation=withTimeoutOrNull(2500) {
                     while(true) {notifications.observe(timer)?.let {return@withTimeoutOrNull it};delay(100)}
                     @Suppress("UNREACHABLE_CODE") error("No owned timer observed")
                 }
+                // Android can silently block background activity starts. A normal return alone is inconclusive.
+                journal.phase(ctx.requestId,if(observation!=null) "ACCEPTED" else "OUTCOME_UNKNOWN")
                 val output=buildJsonObject {
                     requireNotNull(journal.timer(id)).metadata().forEach {(k,v)->put(k,v)}
-                    put("dispatchAccepted",true);put("skipUiRequested",true);put("physicalScreenUnchangedVerified",false)
+                    put("dispatchAccepted",observation!=null);put("skipUiRequested",true);put("physicalScreenUnchangedVerified",false)
                     if(observation==null) {put("notificationObserved",false);put("timerStartVerified",false);put("cancellationSupported",false);put("cancellationUnavailableCode","CLOCK_TIMER_NOT_OBSERVED")}
                     else observation.observation().forEach {(k,v)->put(k,v)}
                     put("doNotReplay",true)
                 }
-                CapabilityResult(output,selected,result.identity,VerificationStatus.NOT_VERIFIED,"SET_TIMER dispatch accepted; owned notification/countdown observations are reported separately")
+                CapabilityResult(output,BackendKind.NATIVE,"uid=${android.os.Process.myUid()}",
+                    if(observation==null) VerificationStatus.FAILED else VerificationStatus.NOT_VERIFIED,
+                    if(observation!=null) "Clock published the matching timer label; countdown evidence is reported separately"
+                    else "Clock did not publish the matching timer notification in time. Check the original timer ID before starting another.",
+                    errorCode=if(observation==null) "CLOCK_START_UNCERTAIN" else null)
             } catch(error:Exception) {
                 runCatching {journal.phase(ctx.requestId,if(attempted) "OUTCOME_UNKNOWN" else "NOT_DISPATCHED")}
                 if(!attempted && error !is CancellationException && error !is CapabilityException)
@@ -107,9 +119,23 @@ internal class ClockTimers(private val g:RuntimeGraph) {
         requireSupportedUser()
         val requested=args["timerId"]?.jsonPrimitive?.content
         val limit=args["limit"]?.jsonPrimitive?.int ?: 20
-        val rows=if(requested!=null) listOf(journal.owned(ctx.agentId,requested)) else journal.page(ctx.agentId,limit,args["beforeTimerId"]?.jsonPrimitive?.content)
-        return buildJsonObject {
-            put("timers",JsonArray(rows.map {timer->buildJsonObject {
+        val beforeId=args["beforeTimerId"]?.jsonPrimitive?.content
+        fun countdown(id:String)=g.reminders.ownedCountdown(ctx.agentId,id)
+        val beforeMs=if(requested!=null || beforeId==null) null else if(beforeId.startsWith("countdown:")) {
+            val r=countdown(beforeId)
+            r.fireAtMs-requireNotNull(r.countdownSeconds)*1000L
+        } else journal.owned(ctx.agentId,beforeId).createdAtMs
+        val external=when {
+            requested==null -> journal.pageBefore(ctx.agentId,limit,beforeMs,beforeId)
+            requested.startsWith("countdown:") -> emptyList()
+            else -> listOf(journal.owned(ctx.agentId,requested))
+        }
+        val local=when {
+            requested==null -> g.reminders.countdownPage(ctx.agentId,limit,beforeMs,beforeId)
+            requested.startsWith("countdown:") -> listOf(countdown(requested))
+            else -> emptyList()
+        }
+        val rows=external.map {timer->buildJsonObject {
                 timer.metadata().forEach {(k,v)->put(k,v)};put("operations",JsonArray(journal.operations(timer.timerId)))
                 try {
                     val observation=notifications.observe(timer)
@@ -117,8 +143,12 @@ internal class ClockTimers(private val g:RuntimeGraph) {
                     else observation.observation().forEach {(k,v)->put(k,v)}
                 } catch(error:CapabilityException) {put("notificationObserved",false);put("timerStartVerified",false);put("cancellationSupported",false);put("observationUnavailableCode",error.code)}
                 put("absenceProvesStopped",false)
-            }}))
-            put("nextBeforeTimerId",if(requested==null && rows.size==limit.coerceIn(1,50)) JsonPrimitive(rows.last().timerId) else JsonNull)
+            } } + local.map(g.reminders::countdownMetadata)
+        val page=rows.sortedWith(compareByDescending<JsonObject> {it.getValue("createdAtMs").jsonPrimitive.long}
+            .thenByDescending {it.getValue("timerId").jsonPrimitive.content}).take(limit)
+        return buildJsonObject {
+            put("timers",JsonArray(page))
+            put("nextBeforeTimerId",if(requested==null && page.size==limit) page.last().getValue("timerId") else JsonNull)
             put("onlyManagedTimersIncluded",true);put("allDeviceTimersEnumerated",false)
         }
     }
@@ -139,13 +169,17 @@ internal class ClockTimers(private val g:RuntimeGraph) {
                 try {requireNotNull(action.selected.action.actionIntent).send()}
                 catch(_:PendingIntent.CanceledException) {attempted=false;throw CapabilityException("ACTION_CANCELLED","Clock withdrew this timer action; no new cancellation was sent",noSideEffects=true)}
                 journal.phase(ctx.requestId,"ACCEPTED")
-                val removed=withTimeoutOrNull(2000) {
+                var observationError:String?=null
+                val removed=try { withTimeoutOrNull(2000) {
                     while(true) {if(notifications.observe(timer)==null) return@withTimeoutOrNull true;delay(100)}
                     @Suppress("UNREACHABLE_CODE") false
-                } ?: false
+                } ?: false } catch(error:CapabilityException) {
+                    observationError=error.code
+                    false
+                }
                 CapabilityResult(buildJsonObject {
                     timer.metadata().forEach {(k,v)->put(k,v)};put("cancelRequestId",ctx.requestId);put("dispatchAccepted",true)
-                    put("ownedNotificationRemovedObserved",removed);put("timerStoppedIndependentlyVerified",false);put("doNotReplay",true)
+                    put("ownedNotificationRemovedObserved",removed);observationError?.let {put("observationUnavailableCode",it)};put("timerStoppedIndependentlyVerified",false);put("doNotReplay",true)
                 },BackendKind.NATIVE,"uid=${android.os.Process.myUid()}; Clock action creator uid=${timer.uid}",VerificationStatus.NOT_VERIFIED,
                     "Exact Clock-published action dispatched; disappearance of its owned notification is a bounded observation, not independent timer-store verification")
             } catch(error:Exception) {

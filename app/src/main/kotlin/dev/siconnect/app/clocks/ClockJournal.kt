@@ -70,8 +70,11 @@ internal class ClockJournal(context:Context,name:String="clock.db"):SQLiteOpenHe
         .use {if(it.moveToFirst()) it.getString(0) else null}?.let(::timer)
     fun page(agent:String,limit:Int,beforeId:String?):List<ManagedTimer> {
         val before=beforeId?.let {owned(agent,it)}
+        return pageBefore(agent,limit,before?.createdAtMs,before?.timerId)
+    }
+    fun pageBefore(agent:String,limit:Int,beforeMs:Long?,beforeId:String?):List<ManagedTimer> {
         val args=mutableListOf(agent)
-        val after=if(before==null) "" else " AND (created_at<? OR (created_at=? AND timer_id<?))".also {args+=listOf(before.createdAtMs.toString(),before.createdAtMs.toString(),before.timerId)}
+        val after=if(beforeMs==null) "" else " AND (created_at<? OR (created_at=? AND timer_id<?))".also {args+=listOf(beforeMs.toString(),beforeMs.toString(),requireNotNull(beforeId))}
         args+=limit.coerceIn(1,50).toString()
         // One query for the page instead of one per row.
         return readableDatabase.rawQuery("SELECT * FROM timers WHERE agent_id=?$after ORDER BY created_at DESC,timer_id DESC LIMIT ?",args.toTypedArray())

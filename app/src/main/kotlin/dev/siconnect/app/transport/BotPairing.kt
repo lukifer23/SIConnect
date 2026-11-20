@@ -36,7 +36,8 @@ class BotPairing(private val g: RuntimeGraph) {
         val grant = AgentGrant(
             agentId, name,
             scopes = listOf("device.*", "requests.*", "apps.list", "apps.inspect", "apps.inspect_detailed",
-                "notifications.post", "alarms.next", "reminders.*", "weather.forecast"),
+                "notifications.post", "alarms.next", "clock.timer_start", "clock.timer_status", "clock.timer_cancel",
+                "reminders.*", "weather.forecast"),
             autoApproveUpTo = RiskClass.READ_ONLY,
         )
         g.agents.put(AgentRecord(grant,Settings.sha256Hex(token),System.currentTimeMillis(),tokenHint="OAuth pairing"))

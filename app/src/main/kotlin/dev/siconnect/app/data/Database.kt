@@ -152,9 +152,22 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE INDEX notification_dedup_request ON notification_dedup(request_id)")
         }
         if(old < 12 && new >= 12) ScheduleMetadata.migrate(db)
+        if(old < 13 && new >= 13) {
+            db.execSQL("ALTER TABLE reminders ADD COLUMN countdown_started_at INTEGER")
+            db.rawQuery("SELECT reminder_id,json FROM reminders WHERE reminder_id GLOB 'countdown:*'",null).use { cursor ->
+                while(cursor.moveToNext()) {
+                    val r=AppJson.decodeFromString(dev.siconnect.app.capabilities.Reminder.serializer(),cursor.getString(1))
+                    r.countdownSeconds?.let { seconds ->
+                        db.execSQL("UPDATE reminders SET countdown_started_at=? WHERE reminder_id=?",
+                            arrayOf(r.fireAtMs-seconds*1000L,cursor.getString(0)))
+                    }
+                }
+            }
+            db.execSQL("CREATE INDEX countdowns_by_agent ON reminders(created_by,countdown_started_at DESC,reminder_id DESC) WHERE countdown_started_at IS NOT NULL")
+        }
     }
 
-    companion object { const val VERSION = 12 }
+    companion object { const val VERSION = 13 }
 }
 
 /** Commits only when [block] completes; any exception (or non-local return path that throws) rolls back. */

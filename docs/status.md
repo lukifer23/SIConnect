@@ -6,10 +6,12 @@ Updated November 20, 2026. This is the single current status page. Dated reports
 
 | Item | Value |
 | --- | --- |
-| Android app | **0.6.0-dev.23 / versionCode 31**, installed in place with the existing development signer |
-| Main SQLite schema | **12** (unchanged since code 26); Termux journal **1**; Clock journal **1** |
-| Phone capabilities | **112** observed in the Fold’s build 31 catalog. |
+| Android app | **0.6.0-dev.24 / versionCode 32**, installed in place with the existing development signer |
+| Main SQLite schema | **13** (indexes agent-owned countdowns); Termux journal **1**; Clock journal **1** |
+| Phone capabilities | Build 31 had **112**. Build 32 adds one background countdown tool. |
 | Gateway | Worker version `644d4851-eb75-4748-a4f1-3d8cc219b46e` deployed November 20. Previous version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49`. |
+
+Build 32 adds a native background countdown with a visible chronometer and a dedicated Android alarm notification channel. The existing `clock.timer_start` tool starts it when given a duration and no external package. Existing reminders grants also cover `reminders.start_countdown`. The separate external Clock tool waits for owner review if SIConnect is in the background. It replaces the Clock timer shell command with Android’s native SET_TIMER intent. New pairings include start, status and cancel. Existing owners can search for **timer** in the agent’s permissions. An unobserved start records an uncertain outcome and retains its original timer identity.
 
 Build 31 adds combined backend, display use and availability filters in the phone’s tool catalog. Native calendar listing reads calendar metadata in one provider query. Attendee and reminder reads report overflow only when another row exists. See the [phone guide](phone-setup.md#start-with-native-features).
 
@@ -33,6 +35,8 @@ The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**.
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 21 pass |
 | Lint | 0 errors |
+| Hosted timer, code 32 | Grok Bot used its existing OAuth connector and `clock_timer_start` with a duration of 480 seconds. The phone recorded success under Grok’s identity and displayed the matching live SIConnect countdown while SIConnect was in the background. A separate short countdown test verified the expiry alert. |
+| Physical, code 32 | The Fold ran a real disposable Samsung Clock start, observation and cancellation test with the native intent path. Duplicate request IDs dispatched once, other agents could not cancel the timer, preexisting Clock work blocked a second start and the test observed removal of its own timer notification. |
 | Physical, code 31 | Installed in place on the Fold. The catalog showed 78 of 112 tools ready, including 72 native background tools. The private-display filter showed eight tools and zero ready with the current backend state. Combined filters, the empty state and clearing filters were verified on the cover screen. A synthetic Android provider test verified one calendar-list query per call and accurate overflow for calendars, attendees and reminders at 0, 1, 99, 100 and 101 rows. |
 | Physical, code 30 | Both Android Keystore enrollment tests passed on the Fold, including migration, process recreation and stale completion. After an in-place update the phone acknowledged the hosted gateway without opening the app. After killing the background process, a new process and acknowledgement were observed within 6.7 seconds. All four prior remote identities remained revoked. |
 | Physical, provider reboot test | Dot and Grok Bot each called `device_battery` before a full Fold reboot and again after the first Android unlock. The phone recorded a new gateway acknowledgement at 22:21:37 UTC before opening SIConnect. Grok Bot succeeded at 22:22:12 and Dot at 22:22:45. Both clients displayed new request IDs matching successful on-device records for their separate OAuth identities. The existing sessions and grants worked without a new sign-in. USB was attached for the reboot and read-only diagnostics. The provider calls used the public HTTPS Worker. |
@@ -59,7 +63,6 @@ Run these on the physical phone with the existing signer. Do not reset data, bro
   - genuine biometric cancellation.
 - **Native journeys.** Test Calendar writes against a dedicated writable test calendar only. Reuse the selected disposable SAF root. Verify one configured weather/reminder journey and Maps departure/arrival end to end.
 - **Build-27 items still pending:**
-  - Clock timer start/observe/cancel on a disposable timer.
   - `messages.recent` limits and cleanup.
   - `codex.execute` with a real bounded request.
   - Recovery-center observations through recreation.

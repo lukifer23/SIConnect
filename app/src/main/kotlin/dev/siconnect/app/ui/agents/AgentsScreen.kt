@@ -125,7 +125,8 @@ import dev.siconnect.core.*
             }
             OutlinedTextField(query,{query=it},label={Text("Find a permission")},singleLine=true,modifier=Modifier.fillMaxWidth())
             val groups=state.capabilities.filterNot {it.descriptor.ownerOnly}.groupBy {it.descriptor.id.substringBefore('.')}.toSortedMap()
-                .filterKeys {it!="shell" && familyLabel(it).contains(query,true)}
+                .filter { (family, tools) -> family != "shell" && (familyLabel(family).contains(query.trim(),true) ||
+                    tools.any { it.descriptor.id.contains(query.trim(),true) || it.descriptor.title.contains(query.trim(),true) }) }
             if(groups.isEmpty()) EmptyState("No matching permissions","Try a tool category such as calendar, apps, or files.")
             groups.forEach {(family,caps)->
                 val count=caps.count {allowed(a,it.descriptor.id)}
@@ -299,4 +300,4 @@ private fun allowed(a:AgentRecord,id:String)=!a.grant.revoked && (a.grant.expire
 private fun isLegacyShared(a:AgentRecord)=a.grant.agentId=="development-client"
 private fun isOAuthPaired(a:AgentRecord)=a.grant.agentId.startsWith("bot_") && a.tokenHint=="OAuth pairing"
 private fun credentialType(a:AgentRecord)=when {isLegacyShared(a)->"Legacy shared credential";isOAuthPaired(a)->"OAuth-paired identity";else->"Saved credential · pairing type unrecorded"}
-private fun familyLabel(f:String)=mapOf("device" to "Device diagnostics","apps" to "Apps","notifications" to "Notifications","messages" to "Messaging","calendar" to "Calendar","reminders" to "Reminders","weather" to "Weather","location" to "Phone location","commute" to "Maps commute","files" to "Managed files","documents" to "Selected documents","ui" to "UI interaction","headless" to "Private app workspaces","termux" to "Termux commands","requests" to "Request results","system" to "System commands","settings" to "System settings","alarms" to "Clock information","clock" to "Clock controls")[f] ?: f.replaceFirstChar {it.uppercase()}
+private fun familyLabel(f:String)=mapOf("device" to "Device diagnostics","apps" to "Apps","notifications" to "Notifications","messages" to "Messaging","calendar" to "Calendar","reminders" to "Reminders","weather" to "Weather","location" to "Phone location","commute" to "Maps commute","files" to "Managed files","documents" to "Selected documents","ui" to "UI interaction","headless" to "Private app workspaces","termux" to "Termux commands","requests" to "Request results","system" to "System commands","settings" to "System settings","alarms" to "Clock information","clock" to "Clock timers")[f] ?: f.replaceFirstChar {it.uppercase()}

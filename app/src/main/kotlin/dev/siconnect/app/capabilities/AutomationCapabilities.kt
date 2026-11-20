@@ -16,7 +16,7 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 @Serializable
-data class Reminder(val id: String, val fireAtMs: Long, val title: String, val text: String, val agentId: String, val state: String="SCHEDULED", val exact: Boolean=false, val error: String?=null, val revision: Long=0)
+data class Reminder(val id: String, val fireAtMs: Long, val title: String, val text: String, val agentId: String, val state: String="SCHEDULED", val exact: Boolean=false, val error: String?=null, val revision: Long=0, val countdownSeconds:Int?=null, val elapsedDeadlineMs:Long?=null, val bootCount:Int?=null)
 
 fun registerAutomationCapabilities(g: RuntimeGraph) {
     fun register(id: String, schema: JsonObject, risk: RiskClass, available: (JsonObject)->Availability={Availability.IMPLEMENTED},
@@ -37,6 +37,23 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
         if(r.agentId!=ctx.agentId && ctx.agentId!="local-owner") throw CapabilityException("POLICY_DENIED","Reminder belongs to another agent",noSideEffects=true)
         return r
     }
+    g.registry.register(object : Capability {
+        override val descriptor = CapabilityDescriptor("reminders.start_countdown", title="Start a background countdown",
+            description="Use for a timer of a given duration, including when the phone is locked or SIConnect is closed. SIConnect shows a running countdown notification and posts a timer alert when due. Android notification and alarm settings control delivery and sound. Read reminders.list or cancel by ID with reminders.cancel.",
+            inputSchema=objectSchema {
+                integer("durationSeconds","Duration in seconds",true,min=1,max=86400)
+                string("label","Name shown on this phone",maxLength=80)
+            }, backend=BackendKind.NATIVE,risk=RiskClass.LOW_IMPACT,interaction=InteractionMode.BACKGROUND,
+            sideEffects=listOf("Schedules a timer alert and displays a countdown on this phone"))
+        override fun availability()=g.reminders.countdownAvailability()
+        override fun availabilityDetail()="Requires precise alarms and enabled timer notifications in Android settings."
+        override suspend fun execute(args:JsonObject,ctx:ExecutionContext):CapabilityResult {
+            val seconds=args.getValue("durationSeconds").jsonPrimitive.int
+            val reminder=g.reminders.startCountdown(ctx,seconds,args["label"]?.jsonPrimitive?.content)
+            return CapabilityResult(AppJson.encodeToJsonElement(Reminder.serializer(),reminder),BackendKind.NATIVE,
+                "uid=${android.os.Process.myUid()}",VerificationStatus.VERIFIED,"Saved exact alarm and posted countdown on this phone")
+        }
+    })
     register("reminders.create",objectSchema {
         string("title","Title",true,maxLength=150);string("text","Text",true,maxLength=1000)
         integer("fireAtMs","Delivery time in epoch milliseconds",true,min=1);boolean("exact","Precise time using AlarmManager; requires special access")
@@ -56,6 +73,7 @@ fun registerAutomationCapabilities(g: RuntimeGraph) {
         if(precise && !g.reminders.canScheduleExact()) Availability.PERMISSION_REQUIRED else Availability.IMPLEMENTED
     }) { a,ctx ->
         val r=owned(a.str("id"),ctx)
+        if(r.countdownSeconds!=null) throw CapabilityException("COUNTDOWN_NOT_EDITABLE","Cancel this countdown and start a new one to change its duration",noSideEffects=true)
         val updated=r.copy(fireAtMs=a["fireAtMs"]?.jsonPrimitive?.longOrNull ?: r.fireAtMs,title=a["title"]?.jsonPrimitive?.content ?: r.title,
             text=a["text"]?.jsonPrimitive?.content ?: r.text,exact=a["exact"]?.jsonPrimitive?.booleanOrNull ?: r.exact)
         AppJson.encodeToJsonElement(Reminder.serializer(),g.reminders.put(updated))
