@@ -17,6 +17,8 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import java.util.concurrent.TimeUnit
 
+data class RunningCountdown(val id:String,val label:String,val deadlineElapsedMs:Long)
+
 /** One durable reminder identity, with explicitly selected exact or deferrable delivery. */
 class ReminderScheduler(private val g: RuntimeGraph) {
     private val table=JsonTable(g.db,"reminders","reminder_id")
@@ -41,6 +43,11 @@ class ReminderScheduler(private val g: RuntimeGraph) {
             "Time is up",ctx.agentId,exact=true,countdownSeconds=seconds,
             elapsedDeadlineMs=android.os.SystemClock.elapsedRealtime()+duration,bootCount=bootCount())
         return lifecycle.put(reminder,deduplicate=true)
+    }
+
+    fun runningCountdowns()=table.list("countdown_started_at IS NOT NULL AND state='SCHEDULED'",orderBy="fire_at,reminder_id",limit=3).map { json ->
+        val r=AppJson.decodeFromString(Reminder.serializer(),json)
+        RunningCountdown(r.id,r.title,android.os.SystemClock.elapsedRealtime()+remaining(r))
     }
 
     fun ownedCountdown(agent:String,id:String):Reminder = get(id)?.takeIf {it.countdownSeconds!=null && it.agentId==agent}
@@ -97,7 +104,10 @@ class ReminderScheduler(private val g: RuntimeGraph) {
                 else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,reminder.fireAtMs,pending(reminder))
                 val left=remaining(reminder)
                 if(reminder.countdownSeconds!=null && left>0) {
-                    val notification=Notification.Builder(g.context,"countdown").setSmallIcon(dev.siconnect.app.R.drawable.ic_stat)
+                    val open=PendingIntent.getActivity(g.context,0,Intent(g.context,dev.siconnect.app.ui.MainActivity::class.java)
+                        .setAction("dev.siconnect.app.SHOW_COUNTDOWNS").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                        PendingIntent.FLAG_IMMUTABLE)
+                    val notification=Notification.Builder(g.context,"countdown").setContentIntent(open).setSmallIcon(dev.siconnect.app.R.drawable.ic_stat)
                         .setContentTitle(reminder.title).setContentText("Countdown").setWhen(System.currentTimeMillis()+left)
                         .setUsesChronometer(true).setChronometerCountDown(true).setShowWhen(true)
                         .setOnlyAlertOnce(true).setOngoing(true).setTimeoutAfter(left).build()

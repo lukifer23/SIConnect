@@ -225,6 +225,10 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         }
         LaunchedEffect(Unit) { g.engine.recordUpdates.collect { record -> if(reviewId==record.requestId) review=record } }
         LaunchedEffect(pending,permissionRevision) {
+            if(intent.action=="dev.siconnect.app.SHOW_COUNTDOWNS") {
+                closeInspection();destination=Destination.HOME
+                intent.action=null
+            }
             val target=intent.getStringExtra("requestId")
             if(target!=null) {
                 val stored=withContext(Dispatchers.IO) { g.ready.await();g.requests.get(target) }
@@ -524,13 +528,21 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
         }) }
         reminder?.takeIf {reminderId==it.id}?.let { r -> AlertDialog(onDismissRequest={reminderId=null;reminder=null},title={Text(r.title)},
             text={Column(Modifier.heightIn(max=with(androidx.compose.ui.platform.LocalDensity.current) {androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()}*.6f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                Text(r.text)
-                Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM,java.text.DateFormat.SHORT).format(java.util.Date(r.fireAtMs)))
+                if(r.countdownSeconds!=null) Text("SIConnect countdown · ${r.state.lowercase()}") else Text(r.text)
+                Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM,java.text.DateFormat.MEDIUM).format(java.util.Date(r.fireAtMs)))
                 Text(if(r.exact) "Precise timing through Android AlarmManager" else "Flexible timing through Android WorkManager")
                 r.error?.let {Text(it)}
                 if(reminderError.isNotBlank()) Text(reminderError,color=MaterialTheme.colorScheme.error)
             }},confirmButton={Column {
-                if(r.state in setOf("SCHEDULED","BLOCKED") && (!r.exact || r.state=="BLOCKED")) Button(onClick={
+                if(r.countdownSeconds!=null && r.state=="SCHEDULED") OutlinedButton(enabled=!busy,onClick={
+                    work({reminderError=it}) {
+                        val result=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="reminders.cancel",
+                            arguments=buildJsonObject {put("id",r.id)}),Origin.LOCAL_OWNER)
+                        check(result.state==RequestState.SUCCEEDED) {result.errorMessage ?: "Could not cancel countdown"}
+                        reminderId=null;reminder=null;note="Countdown cancelled"
+                    }
+                }) {Text("Cancel countdown")}
+                if(r.countdownSeconds==null && r.state in setOf("SCHEDULED","BLOCKED") && (!r.exact || r.state=="BLOCKED")) Button(onClick={
                     if(!exactAccess) startActivity(Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))
                     else work({reminderError=it}) {
                         val result=g.engine.submit(InvocationRequest(agentId="local-owner",capabilityId="reminders.update",arguments=buildJsonObject {put("id",r.id);put("exact",true)}),Origin.LOCAL_OWNER)

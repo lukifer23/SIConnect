@@ -17,6 +17,7 @@ data class ControlCenterSnapshot(
     val proposals:List<ProposalSummary> = emptyList(),val pendingProposalCount:Int=0,
     val activeRequests:List<RequestSummary> = emptyList(),
     val attentionAutomations:List<AutomationSummary> = emptyList(),
+    val countdowns:List<dev.siconnect.app.automation.RunningCountdown> = emptyList(),
 )
 
 /** One retained metadata projection. No shell output is loaded to render overview screens. */
@@ -48,7 +49,7 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
                         .orEmpty().split(':').any {android.content.ComponentName.unflattenFromString(it)==android.content.ComponentName(g.context,dev.siconnect.app.accessibility.SemanticAccessibilityService::class.java)},
                     proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount(),
                     activeRequests=g.requests.historyPage(limit=50,states=setOf(RequestState.EXECUTING,RequestState.VERIFYING)),
-                    attentionAutomations=schedules.automationPage(limit=3,filter=AutomationFilter.ATTENTION)) }
+                    attentionAutomations=schedules.automationPage(limit=3,filter=AutomationFilter.ATTENTION),countdowns=g.reminders.runningCountdowns()) }
                 catch(e:CancellationException) {throw e}
                 catch(e:Exception) {mutable.value=mutable.value.copy(error="Could not refresh: ${e.javaClass.simpleName}")}
             }

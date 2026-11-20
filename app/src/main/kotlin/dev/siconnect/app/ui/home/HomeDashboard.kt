@@ -5,6 +5,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,28 @@ import kotlinx.serialization.json.JsonObject
     val paused=!controls.remoteExecutionEnabled
     PageLayout {
         PageHeader(if(wide) "Overview" else "Your phone, connected.",if(wide) "Your phone, on your terms." else "Manage your agents, review their work, and stay in control.","SIConnect")
+        if(state.countdowns.isNotEmpty()) {
+            Panel {
+                SectionHeading("SIConnect countdowns")
+                state.countdowns.forEach { timer ->
+                    val remaining by produceState(initialValue=0L,key1=timer.deadlineElapsedMs) {
+                        do {
+                            val left=(timer.deadlineElapsedMs-android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                            value=(left+999)/1000
+                            if(left>0) kotlinx.coroutines.delay((left-1)%1000+1)
+                        } while(left>0)
+                    }
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(timer.label,style=MaterialTheme.typography.titleMedium)
+                            Text(if(remaining>0) android.text.format.DateUtils.formatElapsedTime(remaining)+" remaining" else "Time is up",
+                                style=MaterialTheme.typography.headlineSmall)
+                        }
+                        TextButton(onClick={onReminder(timer.id)}) {Text("Details")}
+                    }
+                }
+            }
+        }
         @Composable fun connectionPanel() {
             Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.fillMaxWidth().padding(if(wide) 20.dp else 24.dp),verticalArrangement=Arrangement.spacedBy(if(wide) 12.dp else 16.dp)) {
