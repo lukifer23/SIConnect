@@ -442,8 +442,8 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
                     if(parsed.isFailure) gatewayError=parsed.exceptionOrNull()?.message ?: "Invalid setup code"
                     else ownerAuthentication.authenticate("Enroll with this gateway",{work({gatewayError=it}) {
                         val code=parsed.getOrThrow()
-                        g.gateway.stop();g.settings.setEnrollToken(code.enrollment)
-                        g.settings.setGateway(GatewayConfig(code.endpoint,true));g.settings.enrolled=false
+                        g.gateway.stop()
+                        g.settings.beginEnrollment(GatewayConfig(code.endpoint,true),code.enrollment)
                         withContext(Dispatchers.Main) {startForegroundService(Intent(this@MainActivity,ConnectionService::class.java))}
                         connectionCode="";setup=false;note="Connecting your phone…"
                     }},{gatewayError=it})
@@ -466,7 +466,8 @@ open class MainActivity: androidx.fragment.app.FragmentActivity() {
             if(busy) { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Preparing your secure pairing code…") }
             if(pairError.isNotBlank()) Text(pairError,color=MaterialTheme.colorScheme.error)
             if(invitation==null) {
-                Text("Creates a separate bot with its own permissions, even when another bot has the same name. To preserve an existing bot’s permissions, open its card and choose Reconnect this agent.")
+                Text("New agents start with native phone tools. Reads such as battery status can run immediately. Changes such as posting a notification ask for approval.")
+                Text("Already paired this bot? Open its agent card and choose Reconnect this agent to keep its identity and permissions.")
                 OutlinedTextField(pairName,{pairName=it.take(60)},label={Text("Bot name")},placeholder={Text("For example, Work assistant")},singleLine=true)
                 Text("Add SIConnect’s MCP address in your bot, choose OAuth, and enter the temporary code on the SIConnect sign-in page.")
             } else {

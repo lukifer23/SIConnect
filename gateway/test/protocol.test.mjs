@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
+import { checkPublicOrigin } from '../scripts/check-public-origin.mjs';
 import { Client, StreamableHTTPClientTransport, auth } from '@modelcontextprotocol/client';
 import { Client as LegacyClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport as LegacyTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -87,6 +88,35 @@ test('unauthenticated MCP and device connections are refused',async()=>{
   assert.equal((await fetch(base+'/mcp',{method:'POST',body:'{}'})).status,401);
   assert.equal((await fetch(base+'/device/test-device')).status,401);
 });
+test('public origin agrees across health, challenge, resource and OAuth discovery', async () => {
+  assert.equal(await checkPublicOrigin(base), base);
+});
+test('enrollment retries with the original credential and rejects a different one', async()=>{
+  const register=value=>fetch(base+'/register/test-device',{method:'POST',headers:{
+    Authorization:`Bearer ${enrollment}`,'Content-Type':'application/json'
+  },body:JSON.stringify({deviceToken:value})});
+  assert.equal((await register(device)).status,200);
+  assert.equal((await register(secret())).status,409);
+  assert.equal((await register(device)).status,200);
+});
+
+async function pairingReceipt(code,agentId) {
+  const hashValue=hash(code);
+  const peer=socket;
+  return new Promise((resolve,reject)=>{
+    const listener=raw=>{
+      const message=JSON.parse(raw);
+      if(message.type!=='pairing_status' || message.hash!==hashValue) return;
+      clearTimeout(timer);
+      peer.off('message',listener);
+      resolve(message.status);
+    };
+    const timer=setTimeout(()=>{peer.off('message',listener);reject(new Error('No pairing status receipt'));},2000);
+    peer.on('message',listener);
+    peer.send(JSON.stringify({type:'pairing_check',agentId,hash:hashValue}));
+  });
+}
+
 test('official v1 client initializes 2025-era, lists and calls structured tools',async()=>{
   const c=await client(true);
   try { assert.equal((await c.listTools()).tools[0].name,'test_echo'); const r=await c.callTool({name:'test_echo',arguments:{value:'legacy'}});assert.equal(r.structuredContent.result.output.value,'legacy'); }
@@ -215,16 +245,14 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   const form=new URLSearchParams({handle,code,decision:'approve'});
   // A forged browser cannot consume the valid phone invitation.
   assert.equal((await fetch(base+'/authorize',{method:'POST',body:form,redirect:'manual'})).status,400);
-  const consumed = new Promise(resolve => {
-    const listener = raw => {
-      const message = JSON.parse(raw);
-      if (message.type === 'pairing_consumed') { socket.off('message', listener); resolve(message); }
-    };
-    socket.on('message', listener);
-  });
+  assert.equal(await pairingReceipt(code,agentId),'saved');
+  const disconnected = new Promise(resolve=>socket.once('close',resolve));
+  socket.close(); await disconnected;
   const approved=await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'});
   assert.equal(approved.status,302,await approved.text());
-  assert.equal((await consumed).hash,hash(code));
+  // The phone missed the push. Its persisted hash recovers the receipt without republishing the code.
+  await reconnectPeer();
+  assert.equal(await pairingReceipt(code,agentId),'consumed');
   const callback=new URL(approved.headers.get('Location'));assert.equal(callback.searchParams.get('state'),'integration-state');
   assert.equal(await auth(provider,{serverUrl:base+'/mcp',authorizationCode:callback.searchParams.get('code'),iss:callback.searchParams.get('iss')}),'AUTHORIZED');
   assert.ok(tokens.access_token);assert.ok(tokens.refresh_token);
@@ -233,7 +261,16 @@ test('OAuth SDK authorization, browser consent, single-use pairing, PKCE, refres
   finally {await c.close()}
   // Replay is refused: the used code is rejected before the spent consent is even consulted.
   assert.equal((await fetch(base+'/authorize',{method:'POST',headers:{Cookie:cookie},body:form,redirect:'manual'})).status,401);
+  const offline=new Promise(resolve=>socket.once('close',resolve));
+  socket.close();await offline;
   const old=tokens.access_token;assert.equal(await auth(provider,{serverUrl:base+'/mcp'}),'AUTHORIZED');assert.notEqual(tokens.access_token,old);
+  const restarted=new Client({name:'Restarted OAuth client',version:'1'});
+  try {
+    await restarted.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{authProvider:provider}));
+    assert.equal((await restarted.callTool({name:'siconnect_connection',arguments:{}})).structuredContent.phoneSessionAcknowledged,false);
+    await reconnectPeer();
+    assert.equal((await restarted.callTool({name:'test_echo',arguments:{value:'after restart'}})).structuredContent.result.output.value,'after restart');
+  } finally { await restarted.close(); }
   await rehello({revokedAgents:[agentId]});
   const rejected=await fetch(base+'/token',{method:'POST',body:new URLSearchParams({
     grant_type:'refresh_token',client_id:registration.client_id,refresh_token:tokens.refresh_token
@@ -331,6 +368,21 @@ async function rehello(extra={}) {
   socket.send(JSON.stringify({type:'hello',capabilities:capabilities(),...extra}));
   await ack;
 }
+
+test('identical reconnect catalogs retain their revision and changed catalogs get a new revision',async()=>{
+  const catalog=async()=>await (await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).json();
+  await rehello();
+  const before=await catalog();
+  await reconnectPeer();
+  assert.equal((await catalog()).revision,before.revision);
+  try {
+    const changed=capabilities();changed[0].descriptor.title='Updated title';
+    await rehello({capabilities:changed});
+    const next=await catalog();
+    assert.notEqual(next.revision,before.revision);
+    assert.equal(next.capabilities[0].descriptor.title,'Updated title');
+  } finally {await rehello();}
+});
 
 test('one malformed or colliding phone descriptor does not break the MCP endpoint',async()=>{
   const bad=[...capabilities(),

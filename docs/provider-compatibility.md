@@ -1,5 +1,9 @@
 # Provider compatibility
 
+## November 20, 2026 · build 30
+
+The owner removed the previous Dot and Grok Bot connectors. The phone revoked all four earlier remote identities. Earlier successes below describe those historical connections. The fresh SDK test replaces the OAuth client while the phone is offline, refreshes the grant, reconnects the phone, reconciles the spent invitation and completes a tool call against a test peer. A production client needs its own successful sign-in and a battery request matched to its phone identity. See [phone setup](phone-setup.md#connect-dot-or-grok-bot) and [current verification](status.md).
+
 ## Code 14 — October 26, 2026
 
 Fresh Grok battery/battery/shell identity/runtime reads all succeeded on the minified code-14 app and matched SQLite. An additional repeated keyed battery call returned the gateway-derived stable identity with one recorded execution. Grok initially misinterpreted intentionally stripped native arguments as failed deduplication; independent engine evidence confirms it passed. Native capability summaries are not MCP schemas. Fresh official SDK discovery on the same existing principal advertises the transport key; actual keyed reads/writes, changed-operation conflict and exact-file cleanup passed. No grant or credential changed.

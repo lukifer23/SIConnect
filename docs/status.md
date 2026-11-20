@@ -6,10 +6,12 @@ Updated November 20, 2026. This is the single current status page. Dated reports
 
 | Item | Value |
 | --- | --- |
-| Android app | **0.6.0-dev.21 / versionCode 29**, installed in place with the existing development signer |
+| Android app | **0.6.0-dev.22 / versionCode 30**, installed in place with the existing development signer |
 | Main SQLite schema | **12** (unchanged since code 26); Termux journal **1**; Clock journal **1** |
-| Phone capabilities | **112** last counted on build 27. Builds 28 and 29 add no capabilities. |
-| Gateway | Worker version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49` deployed November 20. Previous version `ac8d435b-fbec-4f6a-b510-e4605e229f52`. |
+| Phone capabilities | **112** last counted on build 27. Builds 28 through 30 add no capabilities. |
+| Gateway | Worker version `644d4851-eb75-4748-a4f1-3d8cc219b46e` deployed November 20. Previous version `036ae97d-a0d6-4dd5-89b7-bdf8bbc27e49`. |
+
+Build 30 fixes interrupted enrollment and reconciles pairing receipts missed while the phone was offline. Identical reconnects retain the gateway catalog revision. Fresh OAuth agents start with native scopes and read-only automatic approval. Existing agents keep their owner-selected permissions. See [connection recovery](troubleshooting.md#a-connection-stopped-working-after-restart).
 
 Build 29 puts individual and bulk revocation in **Agents**. Resetting all agents revokes their phone grants in one SQLite transaction, clears stored bot credentials and the pending invitation, and retains local automations, audit records and device enrollment. The Worker checks revocation during pairing and OAuth token exchange and retains previously reported revocations when the phone's recent list changes.
 
@@ -25,8 +27,9 @@ The gateway still issues one-hour OAuth access tokens and sets a fixed 30-day re
 | Android JVM unit | 152 pass |
 | Embedded ADB | 2 pass |
 | Python tools | 13 pass |
-| Gateway (local SDK v1/v2 protocol, test-only device peer) | 18 pass |
+| Gateway (local SDK v1/v2 protocol, test-only device peer) | 21 pass |
 | Lint | 0 errors |
+| Physical, code 30 | Both Android Keystore enrollment tests passed on the Fold, including migration, process recreation and stale completion. After an in-place update the phone acknowledged the hosted gateway without opening the app. After killing the background process, a new process and acknowledgement were observed within 6.7 seconds. All four prior remote identities remained revoked. |
 | Physical, code 29 | Single and bulk revoke confirmed on the Fold cover screen. Four of four remote grants revoked. Verified zero encrypted bot keys, zero pending invitations, and removal of both legacy development bearer files. An old phone bearer returned HTTP 401 on the hosted MCP endpoint. The phone recorded a fresh gateway acknowledgement after an in-place update and again after background process death. The foreground service returned in 1.2 seconds in the process-death check. Both checks ran before reopening the activity. |
 | Physical, code 28 | Exact automation in forced deep Doze (screen off, unplugged): started 10 ms after its slot and succeeded (`ExactDozeAcceptanceDeviceTest`); `RuntimeDeviceTest` 13, `NotificationActionDeviceTest` 1, `FullAccessPendingContinuationDeviceTest` 1, `TermuxJournalDeviceTest` 4, `SchedulerDeviceTest` 3, `ProposalDeviceTest` 4, `AgentRenameDeviceTest` 3, `ManualAutomationDeviceTest` 2, `CalendarDeviceTest` 2, `DocumentDeviceTest` 2, `ClockJournalDeviceTest` 1, `ControlCenterDeviceTest` 1 |
 
@@ -36,6 +39,7 @@ The gateway test suite uses a local test peer and is never phone evidence. CI ru
 
 Run these on the physical phone with the existing signer. Do not reset data, broaden grants or repeat personal sends to make a check pass.
 
+- **Tunnel cutover.** The November 20 hosted checks used the existing Worker address. The deployment account returned no visible named tunnels, Worker custom domains or zones. The public hostname for the owner's tunnel remains unverified. Validate that hostname and OAuth discovery before saving fresh Dot and Grok Bot connections.
 - **Hosted gateway behavior with a real client.** Use a real client credential to check, against the deployed Worker:
   - revocation (`AGENT_REVOKED`);
   - the per-agent cap;

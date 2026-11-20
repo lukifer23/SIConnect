@@ -57,8 +57,8 @@ data class CommuteProfile(
 }
 
 /**
- * Non-secret settings in SharedPreferences; secrets encrypted with a non-exportable Android Keystore
- * AES-GCM key. The app is excluded from backups (see data_extraction_rules.xml).
+ * Settings are stored in private SharedPreferences. Secret values use a non-exportable
+ * Android Keystore AES-GCM key. The app is excluded from backups (see data_extraction_rules.xml).
  */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("siconnect", Context.MODE_PRIVATE)
@@ -85,9 +85,46 @@ class Settings(context: Context) {
     val controls: StateFlow<DeviceControls> = _controls
     fun setControls(c: DeviceControls) { write("controls", DeviceControls.serializer(), c); _controls.value = c }
 
+    // Older versions kept the encrypted token in another preferences file. Copy the
+    // ciphertext before deleting the old entry so interrupted migration can resume.
+    init {
+        synchronized(KEY_LOCK) {
+            secretPrefs.getString("enroll_token", null)?.let { legacy ->
+                if (!prefs.getBoolean("enrolled", false) && !prefs.contains("enroll_token")) {
+                    check(prefs.edit().putString("enroll_token", legacy).commit()) { "Could not migrate gateway enrollment" }
+                }
+                check(secretPrefs.edit().remove("enroll_token").commit()) { "Could not finish enrollment migration" }
+            }
+        }
+    }
     private val _gateway = MutableStateFlow(read("gateway", GatewayConfig.serializer()) ?: GatewayConfig())
     val gateway: StateFlow<GatewayConfig> = _gateway
-    fun setGateway(g: GatewayConfig) { write("gateway", GatewayConfig.serializer(), g); _gateway.value = g }
+
+    @Synchronized fun setGateway(g: GatewayConfig) {
+        val edit=prefs.edit()
+        if(g.baseUrl!=_gateway.value.baseUrl) edit.remove("enroll_token").putBoolean("enrolled",false)
+        saveGateway(edit,g)
+    }
+
+    @Synchronized fun beginEnrollment(config:GatewayConfig,token:String) {
+        require(token.isNotBlank())
+        saveGateway(prefs.edit().putString("enroll_token",encryptSecret(token.trim())).putBoolean("enrolled",false),config)
+    }
+
+    private fun saveGateway(edit:android.content.SharedPreferences.Editor,config:GatewayConfig) {
+        check(edit.putString("gateway",AppJson.encodeToString(GatewayConfig.serializer(),config)).commit()) { "Could not save gateway settings" }
+        _gateway.value=config
+    }
+
+    @Synchronized fun pendingEnrollment(config:GatewayConfig):String? {
+        if(_gateway.value!=config || prefs.getBoolean("enrolled",false)) return null
+        return prefs.getString("enroll_token",null)?.let(::decryptSecret)
+    }
+
+    @Synchronized fun completeEnrollment(config:GatewayConfig,token:String) {
+        if(pendingEnrollment(config)!=token) return
+        check(prefs.edit().putBoolean("enrolled",true).remove("enroll_token").commit()) { "Could not finish gateway enrollment" }
+    }
 
     var weather: WeatherDefaults
         get() = read("weather", WeatherDefaults.serializer()) ?: WeatherDefaults()
@@ -109,10 +146,6 @@ class Settings(context: Context) {
     fun deviceSecret(): String = getSecret("device_secret") ?: randomToken("sid_").also { putSecret("device_secret", it) }
     fun setDeviceSecret(value: String) { require(value.length in 20..300); putSecret("device_secret", value.trim()) }
     fun rotateDeviceSecret(): String = randomToken("sid_").also { putSecret("device_secret", it) }
-
-    /** One-time enrollment token configured on the gateway (wrangler secret DEVICE_ENROLL_TOKEN). */
-    fun enrollToken(): String? = getSecret("enroll_token")
-    fun setEnrollToken(token: String?) = if (token.isNullOrBlank()) secretPrefs.edit().remove("enroll_token").apply() else putSecret("enroll_token", token.trim())
 
     /** Owner-accessible pairing credential, encrypted with the same non-exportable Keystore key. */
     fun botToken(): String? = getSecret("bot_token")
@@ -141,24 +174,25 @@ class Settings(context: Context) {
         pairingChanges.value++
     }
 
-    var enrolled: Boolean
-        get() = prefs.getBoolean("enrolled", false)
-        set(v) { check(prefs.edit().putBoolean("enrolled", v).commit()) { "Could not persist gateway enrollment" } }
-
     private fun <T> read(key: String, s: kotlinx.serialization.KSerializer<T>): T? =
         prefs.getString(key, null)?.let { runCatching { AppJson.decodeFromString(s, it) }.getOrNull() }
 
     private fun <T> write(key: String, s: kotlinx.serialization.KSerializer<T>, v: T) =
         prefs.edit().putString(key, AppJson.encodeToString(s, v)).apply()
 
-    private fun putSecret(name: String, value: String) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val blob = cipher.iv + cipher.doFinal(value.toByteArray())
-        check(secretPrefs.edit().putString(name, Base64.encodeToString(blob, Base64.NO_WRAP)).commit()) { "Could not persist encrypted credential" }
+    private fun putSecret(name:String,value:String) {
+        check(secretPrefs.edit().putString(name,encryptSecret(value)).commit()) { "Could not persist encrypted credential" }
     }
 
-    private fun getSecret(name: String): String? {
-        val blob = secretPrefs.getString(name, null)?.let { Base64.decode(it, Base64.NO_WRAP) } ?: return null
+    private fun encryptSecret(value:String):String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+        return Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray()), Base64.NO_WRAP)
+    }
+
+    private fun getSecret(name:String):String? = secretPrefs.getString(name,null)?.let(::decryptSecret)
+
+    private fun decryptSecret(encoded:String):String {
+        val blob=Base64.decode(encoded,Base64.NO_WRAP)
         // A damaged credential must never be mistaken for an absent one and regenerated.
         return try {
             require(blob.size>=28) { "Encrypted credential is truncated" }

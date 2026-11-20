@@ -4,13 +4,19 @@ Current version, verification and open acceptance work are kept in one place: [s
 
 ## Start with native features
 
-Install an APK signed with the certificate already trusted by the existing installation. Open Home → Access (or Settings). Use Guided setup and verification for the optional walkthrough. The setup screen separates welcome, Android access, native readiness, gateway enrollment, AI-agent connection, optional advanced control, background operation and verification. Request only the access needed for the intended workflow. Notification listener, Accessibility, exact alarms and selected document folders use their Android special-access/picker screens; a runtime permission does not grant those services.
+Install an APK signed with the certificate already trusted by the existing installation. Open **Settings** or choose **Review** under **Home → Phone readiness**. Use Guided setup and verification for the optional walkthrough. The setup screen separates welcome, Android access, native readiness, gateway enrollment, AI-agent connection, optional advanced control, background operation and verification. Request only the access needed for the intended workflow. Notification listener, Accessibility, exact alarms and selected document folders use their Android special-access/picker screens; a runtime permission does not grant those services.
 
 Calendar access requires the appropriate runtime permissions. SAF access requires an owner-selected folder. Weather requires an explicitly configured location. Native diagnostics and permitted native operations remain usable while advanced control is unavailable.
 
-## Connect AI agent
+## Connect Dot or Grok Bot
 
-Home → Gateway shows the existing connection and MCP address. If it is offline, Connect saved gateway reuses its enrollment and credentials. Manage AI agents opens the existing Agents screen. Use a secure setup code only for an unconfigured or deliberately changed gateway. Gateway setup accepts bounded JSON (or its base64 representation) containing `url` and `enroll`; review the HTTPS origin before owner authentication. This does not provision Cloudflare infrastructure. Obtain enrollment material through the existing authenticated gateway administration path; never post it in an issue. Then connect the external AI client using its existing OAuth or private bearer flow. Do not recreate a working agent to fix an unrelated Android ADB problem.
+1. Open **Home → Connection details**. If an enrolled phone is offline, choose **Connect saved gateway** and wait for **Connected**. Choose **Copy MCP address**. For a tunnel deployment, verify that it uses the tunnel’s published hostname. Both providers use that HTTPS address.
+2. In the provider's custom MCP setup, name the connector **SIConnect**, enter that address and select OAuth if offered. In Dot, open **Plugins → Add → Add custom MCP server**. In Grok Bot, open **Connect Apps → Add a custom connector**. A client that offers only bearer authentication needs a separately provisioned credential. Pairing codes belong on the gateway's OAuth consent page.
+3. On the phone, open **Agents → Pair agent**, authenticate, enter a distinct name such as **Dot** or **Grok Bot**, then choose **Create new bot**. Once the gateway acknowledges the invitation, choose **Copy pairing code**. Enter it on the consent page for the same HTTPS origin within the displayed ten-minute window. Finish one connection before creating the second.
+4. In that client, run `siconnect_connection`, then `device_battery`. Check that **Agents → [agent] → Activity** shows the battery request for the intended identity. Repeat for the second provider. Native actions use Android permissions and can run with USB disconnected and debugging disabled.
+5. To sign an existing OAuth agent back in, open its **Connection** tab and choose **Reconnect this agent**. This preserves its permissions and request history. After **Revoke access**, a new pairing creates a new identity. **Disconnect all agents** revokes every remote identity on this phone.
+
+New OAuth agents can read device status, inspect apps and use a bounded set of native tools. Actions above read-only risk require approval. The owner can review each grant in **Agents**. For initial gateway enrollment or a deliberate gateway change, use the secure setup code issued by the gateway administrator. Check the HTTPS origin before owner authentication.
 
 ## Enable advanced device control
 
@@ -44,7 +50,7 @@ See [installation and signing](installation.md). Never install a differently sig
 
 ## Background work and connection history
 
-Automations identifies workflows that run without opening the screen and retains readable device-health results. Home → Gateway offers local connection history and Disconnect remote gateway; reconnect preserves existing enrollment and agents. See [background operations and scheduling limits](background-operations.md).
+Automations identifies workflows that run without opening the screen and retains readable device-health results. Home → Connection details offers local connection history and Disconnect remote gateway; reconnect preserves existing enrollment and agents. See [background operations and scheduling limits](background-operations.md).
 
 
 ## Background operation and current verification

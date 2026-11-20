@@ -20,8 +20,7 @@ class GatewayDeviceSetup {
         val enrollment=requireNotNull(args.getString("enrollment"))
         val deviceSecret=requireNotNull(args.getString("deviceSecret"))
         g.settings.setDeviceSecret(deviceSecret)
-        g.settings.setEnrollToken(enrollment);g.settings.enrolled=false
-        g.settings.setGateway(GatewayConfig(endpoint,true))
+        g.settings.beginEnrollment(GatewayConfig(endpoint,true),enrollment)
         val token=Json.parseToJsonElement(File(g.context.noBackupFilesDir,"development-client.json").readText()).jsonObject.getValue("token").jsonPrimitive.content
         File(g.context.noBackupFilesDir,"gateway-device.json").writeText(buildJsonObject {
             put("deviceId",g.settings.deviceId);put("agentId","development-client");put("agentToken",token)

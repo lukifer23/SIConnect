@@ -22,9 +22,13 @@ export class DeviceBridge extends DurableObject<Env> {
     if (path === '/register') {
       // Only the outer Worker can call this internal route after enrollment authentication.
       const body = await request.json() as { hash: string };
-      if (await this.ctx.storage.get('credential')) return json({ error: 'ALREADY_REGISTERED' }, 409);
-      await this.ctx.storage.put('credential', body.hash);
-      return json({ registered: true });
+      const matches = await this.ctx.storage.transaction(async storage => {
+        const existing = await storage.get<string>('credential');
+        if (existing) return constantEqual(existing, body.hash);
+        await storage.put('credential', body.hash);
+        return true;
+      });
+      return matches ? json({ registered: true }) : json({ error: 'ALREADY_REGISTERED' }, 409);
     }
     if (path === '/socket') {
       const token = bearer(request);
@@ -45,13 +49,19 @@ export class DeviceBridge extends DurableObject<Env> {
       if (!/^[a-f0-9]{64}$/.test(hash)) return json({ error: 'INVALID_PAIRING' }, 400);
       const invitation = await this.ctx.storage.transaction(async storage => {
         const item = await storage.get<Invitation>('pair:' + hash);
-        if (item && await storage.get<boolean>('revoked:' + item.agentId)) return undefined;
-        if (item && (await storage.get<string[]>('revokedAgents') ?? []).includes(item.agentId)) return undefined;
-        if (item) { await storage.delete('pair:' + hash); await storage.put('used:' + hash, item.expiresAt); }
+        if (!item || item.expiresAt <= Date.now()) return undefined;
+        if (await storage.get<boolean>('revoked:' + item.agentId)) return undefined;
+        if ((await storage.get<string[]>('revokedAgents') ?? []).includes(item.agentId)) return undefined;
+        await storage.delete('pair:' + hash);
+        await storage.put({ ['used:' + hash]: item.expiresAt, ['lastPaired:' + item.agentId]: hash });
         return item;
       });
-      if (!invitation || invitation.expiresAt <= Date.now()) return json({ error: 'INVALID_PAIRING' }, 401);
-      for (const socket of this.ctx.getWebSockets('device')) if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: invitation.agentId, hash }));
+      if (!invitation) return json({ error: 'INVALID_PAIRING' }, 401);
+      for (const socket of this.ctx.getWebSockets('device')) {
+        if (socket.readyState !== 1) continue;
+        try { socket.send(JSON.stringify({ type: 'pairing_consumed', agentId: invitation.agentId, hash })); }
+        catch { /* The committed receipt can be retrieved after reconnection. */ }
+      }
       return json(invitation);
     }
     if (path === '/pairing/check') {
@@ -64,8 +74,11 @@ export class DeviceBridge extends DurableObject<Env> {
     const agent = new URL(request.url).searchParams.get('agent');
     if (agent && await this.revoked(agent)) return json({ error: 'AGENT_REVOKED', detail: 'The phone owner revoked this agent. Pair a new agent in SIConnect.' }, 403);
     if (path === '/grant-status' && agent) return json({ active: true });
-    if (path === '/catalog') return json({ protocol: 2, online: !!await this.activeSocket(), revision: await this.ctx.storage.get<string>('catalogRevision') ?? null,
-      capabilities: await this.ctx.storage.get('capabilities') ?? [] });
+    if (path === '/catalog') {
+      const catalog = await this.ctx.storage.get<unknown>(['catalogRevision', 'capabilities']);
+      return json({ protocol: 2, online: !!await this.activeSocket(), revision: catalog.get('catalogRevision') ?? null,
+        capabilities: catalog.get('capabilities') ?? [] });
+    }
     if (path === '/invoke') {
       const body = await request.json() as { agentId: string; agentToken: string; transportExpiresAtMs?: number; request: Record<string, unknown> };
       if (await this.revoked(body.agentId)) return json({ error: 'AGENT_REVOKED', executionDispatched: false }, 403);
@@ -130,24 +143,35 @@ export class DeviceBridge extends DurableObject<Env> {
         for (const cap of body.capabilities as Capability[]) {
           if (!/^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*)+$/.test(cap.descriptor.id)) throw new Error('Invalid capability');
         }
-        // Older phones omit the list; only replace it when the phone states it.
-        if (body.revokedAgents !== undefined) {
-          if (!Array.isArray(body.revokedAgents) || body.revokedAgents.length > 500 ||
-              !body.revokedAgents.every((id: unknown) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id))) throw new Error('Invalid revocation list');
-          // Preserve permanent revocations when the phone's bounded list rolls over.
-          const incoming = new Set<string>(body.revokedAgents);
-          await this.ctx.storage.transaction(async storage => {
+        const revoked = body.revokedAgents;
+        if (revoked !== undefined && (!Array.isArray(revoked) || revoked.length > 500 ||
+            !revoked.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id)))) throw new Error('Invalid revocation list');
+        const revision = await sha256(JSON.stringify(body.capabilities));
+        await this.ctx.storage.transaction(async storage => {
+          if (attachment.epoch !== await storage.get('socketEpoch')) throw new Error('Replaced device session');
+          if (revoked !== undefined) {
+            const incoming = new Set<string>(revoked);
             const previous = await storage.get<string[]>('revokedAgents') ?? [];
             for (const id of previous) {
               if (!incoming.has(id)) await storage.put('revoked:' + id, true);
             }
-            await storage.put('revokedAgents', [...incoming]);
-          });
-        }
-        await this.ctx.storage.put('capabilities', body.capabilities);
-        await this.ctx.storage.put('catalogRevision', crypto.randomUUID());
+            if (incoming.size !== previous.length || previous.some(id => !incoming.has(id)))
+              await storage.put('revokedAgents', [...incoming]);
+          }
+          if (revision !== await storage.get('catalogRevision'))
+            await storage.put({ capabilities: body.capabilities, catalogRevision: revision });
+        });
         socket.serializeAttachment({ ...attachment, ready: true } satisfies SocketState);
         socket.send(JSON.stringify({ type: 'hello_ack', protocol: 2 }));
+      } else if (body.type === 'pairing_check') {
+        const { agentId, hash } = body;
+        if (typeof agentId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(agentId) ||
+            typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid receipt query');
+        const keys = await this.ctx.storage.get<string | number | Invitation>(['lastPaired:' + agentId, 'used:' + hash, 'pair:' + hash]);
+        const item = keys.get('pair:' + hash);
+        const consumed = keys.get('lastPaired:' + agentId) === hash || keys.has('used:' + hash);
+        const saved = typeof item === 'object' && item.agentId === agentId && item.expiresAt > Date.now();
+        socket.send(JSON.stringify({ type: 'pairing_status', agentId, hash, status: consumed ? 'consumed' : saved ? 'saved' : 'unknown' }));
       } else if (body.type === 'pairing') {
         const item = body.invitation as Invitation;
         if (!item || !/^[a-f0-9]{64}$/.test(item.hash) || !/^[A-Za-z0-9_-]{1,100}$/.test(item.agentId) ||
@@ -238,7 +262,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 type CompiledTool = { name: string; descriptor: Capability['descriptor']; inputSchema: z.ZodType };
-/** Per-isolate cache keyed by device and catalog revision; a new hello yields a new revision. */
+/** Per-isolate cache keyed by device and catalog revision; unchanged catalogs retain their revision across reconnects. */
 const compiledTools = new Map<string, CompiledTool[]>();
 function compileTools(capabilities: Capability[]): CompiledTool[] {
   // One malformed or colliding phone descriptor must not take down the whole MCP endpoint.

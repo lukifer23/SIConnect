@@ -33,7 +33,12 @@ class BotPairing(private val g: RuntimeGraph) {
         val agentId=Settings.randomToken("bot_",12)
         val token=Settings.randomToken("sia_")
         g.settings.setPairedBotToken(agentId,token)
-        val grant=AgentGrant(agentId,name,scopes=listOf("device.*","requests.*","apps.list","apps.inspect","apps.inspect_detailed","shell.*","notifications.post","alarms.next","reminders.*","weather.forecast"),autoApproveUpTo=RiskClass.LOW_IMPACT)
+        val grant = AgentGrant(
+            agentId, name,
+            scopes = listOf("device.*", "requests.*", "apps.list", "apps.inspect", "apps.inspect_detailed",
+                "notifications.post", "alarms.next", "reminders.*", "weather.forecast"),
+            autoApproveUpTo = RiskClass.READ_ONLY,
+        )
         g.agents.put(AgentRecord(grant,Settings.sha256Hex(token),System.currentTimeMillis(),tokenHint="OAuth pairing"))
         publish(makeInvitation(agentId,name,token))
     }
@@ -123,10 +128,17 @@ class BotPairing(private val g: RuntimeGraph) {
         cipher.init(Cipher.DECRYPT_MODE,key(invitation.code),GCMParameterSpec(128,bytes,0,12));cipher.updateAAD(aad(invitation.agentId,invitation.expiresAt))
         return Json.parseToJsonElement(String(cipher.doFinal(bytes,12,bytes.size-12))).jsonObject
     }
+    private fun matchingInvitation(agentId:String,hash:String) = g.settings.pendingPairing()?.takeIf {
+        it.agentId==agentId && Settings.sha256Hex(it.code)==hash
+    }
+
+    suspend fun confirmSaved(agentId:String,hash:String) = lock.withLock {
+        val pending=matchingInvitation(agentId,hash) ?: return@withLock
+        if(!pending.published) g.settings.setPendingPairing(pending.copy(published=true))
+    }
+
     suspend fun consumed(agentId: String, hash: String) = lock.withLock {
-        val pending=g.settings.pendingPairing()?.takeIf {
-            it.agentId==agentId && Settings.sha256Hex(it.code)==hash
-        } ?: return@withLock
+        val pending=matchingInvitation(agentId,hash) ?: return@withLock
         // Recover owner token for invitations created by earlier app versions before clearing.
         if(g.settings.pairedBotToken(agentId)==null) g.settings.setPairedBotToken(agentId,decrypt(pending).getValue("agentToken").jsonPrimitive.content)
         g.settings.setPendingPairing(null)

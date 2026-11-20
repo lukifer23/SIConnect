@@ -136,15 +136,16 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 detail.value="Connecting to the saved gateway…"
                 state.value=ConnectionState.CONNECTING
                 var existingEnrollment=false
-                if(!g.settings.enrolled && !g.settings.enrollToken().isNullOrBlank()) {
+                val enrollmentToken=g.settings.pendingEnrollment(config)
+                if(enrollmentToken!=null) {
                     state.value=ConnectionState.AUTHENTICATING
                     val registration=withContext(Dispatchers.IO) {
                         client.newCall(Request.Builder().url(base+"/register/${g.settings.deviceId}")
-                            .header("Authorization","Bearer ${g.settings.enrollToken()}")
+                            .header("Authorization","Bearer $enrollmentToken")
                             .post(buildJsonObject { put("deviceToken",g.settings.deviceSecret()) }.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r -> r.code }
                     }
                     when(EnrollmentOutcome.of(registration)) {
-                        EnrollmentOutcome.ENROLLED -> { g.settings.enrolled=true; g.settings.setEnrollToken(null) }
+                        EnrollmentOutcome.ENROLLED -> g.settings.completeEnrollment(config,enrollmentToken)
                         EnrollmentOutcome.ALREADY_REGISTERED -> existingEnrollment=true
                         EnrollmentOutcome.REJECTED -> { state.value=ConnectionState.AUTH_FAILED; detail.value="Gateway enrollment was rejected ($registration). Check the gateway address and enrollment token."; break }
                         EnrollmentOutcome.RETRY -> throw java.io.IOException("Gateway enrollment temporarily unavailable ($registration)")
@@ -189,10 +190,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                     require(msg.getValue("protocol").jsonPrimitive.int>=2) { "Gateway update required" }
                                     if(existingEnrollment) synchronized(this@GatewayConnection) {
                                         if(generation.get()!=epoch) return@launch
-                                        if(g.settings.gateway.value==config && !g.settings.enrolled) {
-                                            g.settings.enrolled=true
-                                            g.settings.setEnrollToken(null)
-                                        }
+                                        g.settings.completeEnrollment(config,requireNotNull(enrollmentToken))
                                     }
                                     val reconnect=state.value!=ConnectionState.ONLINE
                                     state.value=ConnectionState.ONLINE;detail.value="Connected";attempt=0
@@ -203,6 +201,20 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                             helloRequests.tryEmit(Unit)
                                         }
                                         recordEvent(Event(System.currentTimeMillis(),eventType="gateway.connected",deviceId=g.settings.deviceId))
+                                        g.settings.pendingPairing()?.let { pending ->
+                                            ws.send(buildJsonObject {
+                                                put("type","pairing_check")
+                                                put("agentId",pending.agentId)
+                                                put("hash",dev.siconnect.app.data.Settings.sha256Hex(pending.code))
+                                            }.toString())
+                                        }
+                                    }
+                                } else if(type=="pairing_status") {
+                                    val agentId=msg.getValue("agentId").jsonPrimitive.content
+                                    val hash=msg.getValue("hash").jsonPrimitive.content
+                                    when(msg.getValue("status").jsonPrimitive.content) {
+                                        "saved" -> g.pairing.confirmSaved(agentId,hash)
+                                        "consumed" -> g.pairing.consumed(agentId,hash)
                                     }
                                 } else if(type=="pairing_saved") {
                                     pairingAcks[msg.getValue("hash").jsonPrimitive.content]?.complete(Unit)

@@ -1,5 +1,17 @@
 # Troubleshooting
 
+## A connection stopped working after restart
+
+| What you see | What to do |
+| --- | --- |
+| Home shows the gateway retrying | Check network access and the connection history in **Home → Connection details**. After a reboot, unlock the phone. If you paused the gateway, tap **Connect saved gateway**. |
+| The provider still shows a connector, but `siconnect_connection` reports the phone offline | The provider reached the gateway. Wait for a new phone handshake, then run `device_battery` and find that request under the agent's Activity tab. |
+| A code appears to have been used while the phone was offline | Let the phone reconnect. Build 30 checks the receipt for that exact invitation. If consent never completed and the code expired, renew the invitation on the same agent. |
+| The provider reports HTTP 401 or `invalid_grant` | Let the client refresh its one-hour access token. If refresh fails, check revocation on the phone. For an active OAuth identity, restart consent from the existing connector and use **Connection → Reconnect this agent**. The refresh grant has a fixed 30-day lifetime. |
+| The gateway reports `AGENT_REVOKED` | The saved identity was revoked. To authorize that provider again, create a new identity from **Agents → Pair agent**. |
+| A request shows `agent_scope`, Android permission required, or backend unavailable | Open the request in **Activity**. Check the named agent's permission, the Android permission, or the specific backend indicated by the error. |
+| A write lost its response | Look up the original request in **Activity** or with `requests_recent` and `requests_get` before retrying. The first call may already have taken effect. |
+
 ## October 21, 2026 checkpoint
 
 If semantic access is configured but unavailable, inspect `ui.status.serviceState`: DISABLED_BY_OWNER, ENABLED_BUT_DISCONNECTED, CONNECTED_BUT_SCREEN_LOCKED, CONNECTED_WITH_NO_FOREGROUND_WINDOW or CONNECTED_READY. The ordinary app cannot inspect Android’s private crash list (`androidServiceCrashStateKnown=false`). In this pass, ADB exit history proved instrumentation force-stops and `dumpsys accessibility` showed the enabled service crashed/unbound. Restore through Android Accessibility → Installed apps → SIConnect, off/on; no secure-settings write is performed automatically. Finish instrumentation before restoration. Native background capabilities remain independent. The normal-process fixture requires an unlocked screen and rejects lock/off before session setup.
