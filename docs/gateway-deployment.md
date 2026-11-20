@@ -18,9 +18,9 @@ npm run deploy
 
 For an in-place upgrade, confirm the current account, Worker, deployment and namespace bindings. Run the gateway tests above, then deploy with `npx wrangler deploy --keep-vars`. Record the returned version ID. Check `/health`, the OAuth discovery endpoints and the HTTP 401 challenge from an unauthenticated request to `/mcp`. Confirm a new phone handshake separately.
 
-### Using an existing Cloudflare Tunnel
+### Publishing through the named Cloudflare Tunnel
 
-Find the SIConnect published hostname on the named tunnel in the correct Cloudflare account. Verify that its ingress service reaches the existing SIConnect gateway and supports the phone WebSocket. The tunnel connector must be on an always-available host for this topology to work while the development machine is off. Record the tunnel and public hostname in the deployment inventory. A Worker deployment ID alone identifies only a code version. See [Cloudflare Tunnel routing](https://developers.cloudflare.com/tunnel/concepts/routing/).
+In **Networking → Tunnels**, open **SIConnect** in the account that owns the gateway. Check **Connection Status** and its published hostname. A tunnel ID is available before a connector joins. Verify that its ingress service reaches the existing SIConnect gateway and supports the phone WebSocket. The tunnel connector must be on an always-available host for this topology to work while the development machine is off. Record the tunnel and public hostname in the deployment inventory. A Worker deployment ID alone identifies only a code version. See [Cloudflare Tunnel routing](https://developers.cloudflare.com/tunnel/concepts/routing/).
 
 Set `PUBLIC_ORIGIN` to the verified public HTTPS origin. From `gateway/`, run `npm run check-origin -- https://YOUR-PUBLISHED-HOSTNAME`. This checks health, the unauthenticated MCP challenge, issuer, authorization, token and registration URLs against that hostname without credentials. Use the same origin for phone enrollment and both provider MCP addresses. Finish with an acknowledged phone session and a separate native read from each provider. Name the provider-side connector **SIConnect** and the phone identities **Dot** and **Grok Bot** so Activity and revocation identify the caller.
 

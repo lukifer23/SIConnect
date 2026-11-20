@@ -39,7 +39,7 @@ The gateway test suite uses a local test peer and is never phone evidence. CI ru
 
 Run these on the physical phone with the existing signer. Do not reset data, broaden grants or repeat personal sends to make a check pass.
 
-- **Tunnel cutover.** The November 20 hosted checks used the existing Worker address. The deployment account returned no visible named tunnels, Worker custom domains or zones. The public hostname for the owner's tunnel remains unverified. Validate that hostname and OAuth discovery before saving fresh Dot and Grok Bot connections.
+- **Tunnel cutover.** The November 20 hosted checks used the existing Worker address. The Cloudflare dashboard subsequently showed a named tunnel, **SIConnect**, at **Waiting for your Tunnel to connect**. The CLI identity could list resources but could not read that tunnel by ID. No published tunnel hostname or connected origin host has been verified. Validate that hostname and OAuth discovery before saving fresh Dot and Grok Bot connections.
 - **Hosted gateway behavior with a real client.** Use a real client credential to check, against the deployed Worker:
   - revocation (`AGENT_REVOKED`);
   - the per-agent cap;
