@@ -8,12 +8,13 @@ import type { Invitation, PhoneAuthorization } from './pairing.js';
 import { invocationEnvelope, invocationSchema } from './invocation.js';
 
 type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
-type SocketState = { epoch: string; ready: boolean };
+type SocketState = { epoch: string; ready: boolean; connectionProbe?: boolean };
 type Pending = { epoch: string; agentId: string; resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 const encoder = new TextEncoder();
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 
 export class DeviceBridge extends DurableObject<Env> {
+  private probe?: { epoch: string; id: string; result: Promise<boolean>; finish: (answered: boolean) => void };
   private readonly pending = new Map<string, Pending>();
   private readonly rate = new Map<string, { slot: number; count: number }>();
 
@@ -37,6 +38,7 @@ export class DeviceBridge extends DurableObject<Env> {
       if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'WEBSOCKET_REQUIRED' }, 426);
       const epoch = crypto.randomUUID();
       await this.ctx.storage.put('socketEpoch', epoch);
+      this.probe?.finish(false);
       for (const p of this.pending.values()) p.reject(new Error('DEVICE_REPLACED_UNKNOWN_OUTCOME'));
       for (const existing of this.ctx.getWebSockets('device')) existing.close(1000, 'Replaced by authenticated reconnect');
       const pair = new WebSocketPair();
@@ -73,6 +75,7 @@ export class DeviceBridge extends DurableObject<Env> {
     }
     const agent = new URL(request.url).searchParams.get('agent');
     if (agent && await this.revoked(agent)) return json({ error: 'AGENT_REVOKED', detail: 'The phone owner revoked this agent. Pair a new agent in SIConnect.' }, 403);
+    if (path === '/session-status' && agent) return this.sessionStatus();
     if (path === '/grant-status' && agent) return json({ active: true });
     if (path === '/catalog') {
       const catalog = await this.ctx.storage.get<unknown>(['catalogRevision', 'capabilities']);
@@ -161,8 +164,11 @@ export class DeviceBridge extends DurableObject<Env> {
           if (revision !== await storage.get('catalogRevision'))
             await storage.put({ capabilities: body.capabilities, catalogRevision: revision });
         });
-        socket.serializeAttachment({ ...attachment, ready: true } satisfies SocketState);
+        socket.serializeAttachment({ ...attachment, ready: true, connectionProbe: body.connectionProbe === true } satisfies SocketState);
         socket.send(JSON.stringify({ type: 'hello_ack', protocol: 2 }));
+      } else if (body.type === 'connection_probe_ack') {
+        const probe = this.probe;
+        if (probe && probe.epoch === attachment.epoch && probe.id === body.id) probe.finish(true);
       } else if (body.type === 'pairing_check') {
         const { agentId, hash } = body;
         if (typeof agentId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(agentId) ||
@@ -202,6 +208,32 @@ export class DeviceBridge extends DurableObject<Env> {
       }
     } catch { this.closeDevice(socket, 1008, 'Invalid device envelope'); }
   }
+  /** Only explicit status calls contact the phone. Concurrent callers share one bounded check. */
+  private async sessionStatus(): Promise<Response> {
+    const socket = await this.activeSocket();
+    if (!socket) return json({phoneSessionAcknowledged: false, phoneReachability: 'NO_SESSION'});
+    const state = socket.deserializeAttachment() as SocketState;
+    if (!state.connectionProbe) return json({phoneSessionAcknowledged: true, phoneReachability: 'UNSUPPORTED'});
+    let probe = this.probe;
+    if (!probe || probe.epoch !== state.epoch) {
+      const id = crypto.randomUUID();
+      let resolve!: (answered: boolean) => void;
+      const result = new Promise<boolean>(done => { resolve = done; });
+      const finish = (answered: boolean) => {
+        clearTimeout(timer);
+        if (this.probe?.id === id) this.probe = undefined;
+        resolve(answered);
+      };
+      const timer = setTimeout(() => finish(false), 4000);
+      this.probe = probe = {epoch: state.epoch, id, result, finish};
+      try { socket.send(JSON.stringify({type: 'connection_probe', id})); }
+      catch { finish(false); }
+    }
+    if (await probe.result) return json({phoneSessionAcknowledged: true, phoneReachability: 'RESPONDED'});
+    const online = !!await this.activeSocket();
+    return json({phoneSessionAcknowledged: online, phoneReachability: online ? 'UNCONFIRMED' : 'NO_SESSION'});
+  }
+
   /** Server-initiated close: fail this session's pending calls now rather than at their 130s timer. */
   private closeDevice(socket: WebSocket, code: number, reason: string): void {
     this.webSocketClose(socket, code, reason, false);
@@ -224,6 +256,7 @@ export class DeviceBridge extends DurableObject<Env> {
   }
   webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const epoch = (socket.deserializeAttachment() as SocketState | null)?.epoch;
+    if (this.probe && this.probe.epoch === epoch) this.probe.finish(false);
     for (const p of this.pending.values()) if (p.epoch === epoch) p.reject(new Error('DEVICE_DISCONNECTED_UNKNOWN_OUTCOME'));
   }
   webSocketError(socket: WebSocket): void { this.webSocketClose(socket, 1011, 'Transport failure', false); socket.close(1011, 'Transport failure'); }
@@ -281,7 +314,7 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
       const bridge = env.DEVICES.get(env.DEVICES.idFromName(authorization.deviceId));
       const catalogUrl = 'https://internal/catalog?agent=' + encodeURIComponent(authorization.agentId);
       const catalogResponse = await bridge.fetch(catalogUrl);
-      if (catalogResponse.status === 403) return catalogResponse;
+      if (!catalogResponse.ok) return catalogResponse;
       const catalog = await catalogResponse.json() as { online: boolean; revision: string | null; capabilities: Capability[] };
       const cacheKey = catalog.revision ? `${authorization.deviceId}:${catalog.revision}` : null;
       let tools = cacheKey ? compiledTools.get(cacheKey) : undefined;
@@ -315,16 +348,22 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
         }
         server.registerTool('siconnect_connection', {
           title: 'Fresh SIConnect gateway connection status',
-          description: 'Check whether the gateway currently has an acknowledged phone session. Works even when phone tools return DEVICE_OFFLINE. Recheck this after a connection error instead of treating an earlier failure as current state. Does not probe USB, phone internet, accessibility or privileged-service readiness, and sends no execution to the phone.',
+          description: 'Check whether the phone answers over its existing gateway connection. A RESPONDED result confirms a round trip. UNCONFIRMED means a session exists but a reply was not observed. Older phones report UNSUPPORTED. This read-only check runs no device action.',
           inputSchema: z.object({}),
           annotations: { readOnlyHint: true, destructiveHint: false }
         }, async () => {
-          const fresh = await (await bridge.fetch(catalogUrl)).json() as { online: boolean; capabilities: Capability[] };
-          const status = { observedAtMs: Date.now(), phoneSessionAcknowledged: fresh.online,
-            nativeCatalogTools: fresh.capabilities.length, executionDispatched: false,
-            observationScope: 'GATEWAY_TO_PHONE_SESSION', backendAvailability: 'NOT_MEASURED',
-            guidance: fresh.online ? 'Phone session is acknowledged now. Retry undispatched reads; retrieve original request IDs for actions whose execution may already have started.'
-              : 'No acknowledged phone session at this observation time. USB/internet/backend readiness are separate. Restore the existing connection without re-pairing or resubmitting uncertain actions.' };
+          const response = await bridge.fetch('https://internal/session-status?agent=' + encodeURIComponent(authorization.agentId));
+          const fresh = await response.json() as Record<string, unknown>;
+          if (!response.ok) return {content: [{type: 'text', text: JSON.stringify(fresh)}], structuredContent: fresh, isError: true};
+          const guidance: Record<string, string> = {
+            RESPONDED: 'The phone answered this check. Individual tools still depend on their permissions and backend availability.',
+            UNSUPPORTED: 'This phone build reports its handshake only. Update SIConnect or use an authorized read such as device_battery to check reachability.',
+            UNCONFIRMED: 'The gateway has an acknowledged session but could not confirm a phone reply. Retry the status check. Keep original request IDs for any pending work.',
+            NO_SESSION: 'Wait for the phone to reconnect to its existing gateway, then check again.',
+          };
+          const status = { ...fresh, observedAtMs: Date.now(), nativeCatalogTools: catalog.capabilities.length,
+            executionDispatched: false, observationScope: 'GATEWAY_TO_PHONE_SESSION', backendAvailability: 'NOT_MEASURED',
+            guidance: guidance[String(fresh.phoneReachability)] };
           return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status, isError: false };
         });
         return server;

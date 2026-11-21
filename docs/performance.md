@@ -1,5 +1,16 @@
 # Performance and resource evidence
 
+## November 20 wireless background observations
+
+The Fold was awake and on battery during both collections. Android reported foreground-service importance for SIConnect at every sample. The owner UI stayed closed. The collector read process counters and proportional set size (PSS) over wireless ADB.
+
+| Build | Samples | Valid CPU interval | App CPU seconds | CPU, percent of one core | App PSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 33, existing process | 10 | 89.981 s | 0.34 s | 0.38% | 41.6–42.5 MiB |
+| 34, after update and hosted reachability check | 9 | 89.366 s | 0.38 s | 0.43% | 74.6–75.1 MiB |
+
+The second collection observed a freshly restarted process. Process ages differ, so the higher memory reading needs a comparison at matched uptime. Battery drain and long-term memory growth require longer observations.
+
 ## November 6 host review
 
 Code 21 uses the existing bounded process supervisor for private app launches, avoiding wait-before-drain pipe stalls and unbounded `readText()` allocation. This is a source-level resource fix, not a measured phone speedup. No matched quiet CPU/memory/network profile or battery study was collected in this pass. Disposable SQLite fixtures exercised real growth/compaction; they are not a production workload measurement. Lint/build checks and remaining scaling concerns are recorded in [the audit](source-audit-2026-11-06.md). Full reminder/automation hydration and permanent identity growth remain targets for measured work. All device observations below are historical; no old collector is assumed to still be running.

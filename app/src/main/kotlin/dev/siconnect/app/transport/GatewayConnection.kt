@@ -89,7 +89,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
         if(ws.send(text)) lastHello=ws to text
     }
     private fun hello()=buildJsonObject {
-        put("type","hello");put("deviceId",g.settings.deviceId)
+        put("type","hello");put("deviceId",g.settings.deviceId);put("connectionProbe",true)
         put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses()))
         // The gateway refuses catalog/connection/invoke for these identities, so a revoked bot's
         // still-valid OAuth grant cannot list tools or probe the phone. Revocation is permanent per ID.
@@ -209,6 +209,10 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                             }.toString())
                                         }
                                     }
+                                } else if(type=="connection_probe") {
+                                    val id = msg.getValue("id").jsonPrimitive.content
+                                    require(id.length == 36) { "Invalid connection probe ID" }
+                                    ws.send(buildJsonObject { put("type","connection_probe_ack");put("id",id) }.toString())
                                 } else if(type=="pairing_status") {
                                     val agentId=msg.getValue("agentId").jsonPrimitive.content
                                     val hash=msg.getValue("hash").jsonPrimitive.content

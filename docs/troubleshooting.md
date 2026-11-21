@@ -6,6 +6,8 @@
 | --- | --- |
 | Home shows the gateway retrying | Check network access and the connection history in **Home → Connection details**. After a reboot, unlock the phone. If you paused the gateway, tap **Connect saved gateway**. |
 | The provider still shows a connector, but `siconnect_connection` reports the phone offline | The provider reached the gateway. Wait for a new phone handshake, then run `device_battery` and find that request under the agent's Activity tab. |
+| The gateway shows a session but `phoneReachability` is `UNCONFIRMED` | The phone did not answer the status check within four seconds, or the connection changed during the check. Retry status. Use the original request ID to look up any action already submitted. |
+| The status tool returns `UNSUPPORTED` | The connected phone build predates the live check. Update SIConnect in place or verify with an authorized read such as `device_battery`. |
 | A code appears to have been used while the phone was offline | Let the phone reconnect. Build 30 checks the receipt for that exact invitation. If consent never completed and the code expired, renew the invitation on the same agent. |
 | The provider reports HTTP 401 or `invalid_grant` | Let the client refresh its one-hour access token. If refresh fails, check revocation on the phone. For an active OAuth identity, restart consent from the existing connector and use **Connection → Reconnect this agent**. Each successful refresh renews a 30-day idle window. A connector that goes 30 days without a successful refresh needs consent again. |
 | The gateway reports `AGENT_REVOKED` | The saved identity was revoked. To authorize that provider again, create a new identity from **Agents → Pair agent**. |

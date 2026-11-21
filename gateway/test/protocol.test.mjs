@@ -319,6 +319,7 @@ test('authenticated socket replacement rejects old in-flight ownership and requi
   const disconnected=await c.callTool({name:'siconnect_connection',arguments:{}});
   assert.equal(disconnected.isError,false);
   assert.equal(disconnected.structuredContent.phoneSessionAcknowledged,false);
+  assert.equal(disconnected.structuredContent.phoneReachability,'NO_SESSION');
   assert.equal(disconnected.structuredContent.executionDispatched,false);
   const ack=new Promise(resolve=>next.on('message',raw=>{if(JSON.parse(raw).type==='hello_ack') resolve()}));
   next.send(JSON.stringify({type:'hello',capabilities:capabilities()}));
@@ -393,6 +394,57 @@ async function rehello(extra={}) {
   socket.send(JSON.stringify({type:'hello',capabilities:capabilities(),...extra}));
   await ack;
 }
+
+test('status distinguishes handshake, silent socket and correlated phone reply without executing a tool', async () => {
+  await rehello();
+  const c = await client();
+  const status = async () => {
+    const response = await c.callTool({name: 'siconnect_connection', arguments: {}});
+    assert.equal(response.isError, false);
+    assert.equal(response.structuredContent.executionDispatched, false);
+    return response.structuredContent;
+  };
+  const frames = [];
+  const observe = raw => {
+    const frame = JSON.parse(raw);
+    if (frame.type === 'connection_probe') frames.push(frame.id);
+  };
+  const peer = socket;
+  peer.on('message', observe);
+  const before = executions;
+  try {
+    assert.equal((await status()).phoneReachability, 'UNSUPPORTED');
+    assert.deepEqual(frames, []);
+    await rehello({connectionProbe: true});
+    const silent = await Promise.all([status(), status()]);
+    assert.equal(frames.length, 1, 'Simultaneous checks should share one frame');
+    for (const observation of silent) {
+      assert.equal(observation.phoneReachability, 'UNCONFIRMED');
+      assert.equal(observation.phoneSessionAcknowledged, true);
+    }
+    const staleId = frames[0];
+    peer.once('message', raw => {
+      const frame = JSON.parse(raw);
+      assert.equal(frame.type, 'connection_probe');
+      assert.notEqual(frame.id, staleId);
+      peer.send(JSON.stringify({type: 'connection_probe_ack', id: staleId}));
+    });
+    assert.equal((await status()).phoneReachability, 'UNCONFIRMED');
+    peer.once('message', raw => {
+      const frame = JSON.parse(raw);
+      peer.send(JSON.stringify({type: 'connection_probe_ack', id: frame.id}));
+    });
+    assert.equal((await status()).phoneReachability, 'RESPONDED');
+    const checking = status();
+    await new Promise(resolve => peer.once('message', resolve));
+    await reconnectPeer();
+    assert.notEqual((await checking).phoneReachability, 'RESPONDED');
+    assert.equal(executions, before);
+  } finally {
+    peer.off('message', observe);
+    await c.close();
+  }
+});
 
 test('identical reconnect catalogs retain their revision and changed catalogs get a new revision',async()=>{
   const catalog=async()=>await (await fetch(base+'/connection',{headers:{Authorization:`Bearer ${agent}`}})).json();
