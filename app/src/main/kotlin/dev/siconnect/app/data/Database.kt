@@ -169,9 +169,28 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             db.execSQL("CREATE INDEX requests_agent_history ON requests(agent_id, updated_at DESC, request_id DESC)")
             db.execSQL("CREATE INDEX tombstones_agent_history ON request_tombstones(agent_id, updated_at DESC, request_id DESC)")
         }
+        if (old < 15 && new >= 15) {
+            db.execSQL("ALTER TABLE agents ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
+            db.rawQuery("SELECT agent_id FROM agents", null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(0)
+                    val json = requireNotNull(db.storedJson("agents", "agent_id", id))
+                    val revoked = try {
+                        AppJson.decodeFromString(AgentRecord.serializer(), json).grant.revoked
+                    } catch (_: kotlinx.serialization.SerializationException) {
+                        // Preserve an unreadable legacy record and withhold remote access for its ID.
+                        true
+                    }
+                    if (revoked) {
+                        db.execSQL("UPDATE agents SET revoked=1 WHERE agent_id=?", arrayOf(id))
+                    }
+                }
+            }
+            db.execSQL("CREATE INDEX agents_revoked_order ON agents(created_at,agent_id) WHERE revoked=1")
+        }
     }
 
-    companion object { const val VERSION = 14 }
+    companion object { const val VERSION = 15 }
 }
 
 /** Commits only when [block] completes; any exception (or non-local return path that throws) rolls back. */
@@ -463,12 +482,18 @@ class AgentStore(private val db: SIConnectDb) : AgentDirectory {
     fun all(): List<AgentRecord> = db.readableDatabase.query("agents", arrayOf("json"), null, null, null, null, "created_at")
         .mapAll { decode(it.getString(0)) }
 
+    fun revokedRemoteIds(): List<String> = db.readableDatabase.rawQuery(
+        "SELECT agent_id FROM agents WHERE revoked=1 AND agent_id NOT GLOB 'local-*' " +
+            "ORDER BY created_at DESC,agent_id DESC LIMIT 500", null,
+    ).mapAll { it.getString(0) }.asReversed()
+
     fun byCredentialHash(hash:String):AgentRecord? = db.readableDatabase.query("agents",arrayOf("json"),"token_sha256=?",
         arrayOf(hash),null,null,null,"2").mapAll {decode(it.getString(0))}.singleOrNull()
 
     fun put(record: AgentRecord) {
         val rowId=db.writableDatabase.insertWithOnConflict("agents", null, ContentValues().apply {
             put("agent_id", record.grant.agentId); put("token_sha256", record.tokenSha256)
+            put("revoked", record.grant.revoked)
             put("created_at", record.createdAtMs); put("last_seen_at", record.lastSeenAtMs)
             put("json", AppJson.encodeToString(AgentRecord.serializer(), record))
         }, SQLiteDatabase.CONFLICT_REPLACE)

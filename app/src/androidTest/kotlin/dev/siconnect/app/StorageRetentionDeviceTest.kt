@@ -220,7 +220,7 @@ class StorageRetentionDeviceTest {
             SIConnectDb(context,name).use { db ->
                 SqlSkillRunStore(db).insert(workflow("legacy"))
                 SqlRequestStore(db).insert(record("legacy-tombstone"));SqlRequestStore(db).prune(now)
-                db.writableDatabase.execSQL("INSERT INTO agents VALUES('fixture','hash',1,NULL,'preserved')")
+                db.writableDatabase.execSQL("INSERT INTO agents(agent_id,token_sha256,created_at,last_seen_at,json) VALUES('fixture','hash',1,NULL,'preserved')")
                 db.writableDatabase.execSQL("INSERT INTO automations(automation_id,enabled,next_run_at,owner,json,revision) VALUES(?,?,?,?,?,?)",
                     arrayOf<Any?>(schedule.id,0,schedule.nextAtMs,"local-automation",scheduleJson,schedule.revision))
                 db.writableDatabase.execSQL("INSERT INTO reminders(reminder_id,fire_at,state,created_by,json,revision) VALUES(?,?,?,?,?,?)",

@@ -6,10 +6,12 @@ Updated November 20, 2026. This is the single current status page. Dated reports
 
 | Item | Value |
 | --- | --- |
-| Android app | **0.6.0-dev.26 / versionCode 34**, installed in place with the existing development signer |
-| Main SQLite schema | **14** (indexes per-agent request history); Termux journal **1**; Clock journal **1** |
+| Android app | **0.6.0-dev.27 / versionCode 35**, installed in place with the existing development signer |
+| Main SQLite schema | **15** (indexes revoked identities); Termux journal **1**; Clock journal **1** |
 | Phone capabilities | Build 31 had **112**. Build 32 adds one background countdown tool. |
 | Gateway | Worker version `fe3d1b13-dc85-4df9-937f-76e7893e6ff4` deployed November 20 (US Central). Previous version `d540df34-ac5d-46eb-8b0c-164a58cb2c3e`. |
+
+Build 35 sends the capability catalog once per socket and again when its contents change. An unchanged refresh skips JSON encoding. The phone reads revoked remote IDs from a bounded index. A new socket always publishes its initial catalog.
 
 Build 34 answers an explicit `siconnect_connection` check over the existing phone socket. `RESPONDED` means the gateway received the matching reply. The gateway shares concurrent probes and waits up to four seconds. A timeout leaves the existing connection available for a retry. The check adds no periodic phone messages.
 
@@ -34,11 +36,12 @@ The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**.
 | Suite | Result |
 | --- | --- |
 | Core (JVM) | 91 pass |
-| Android JVM unit | 152 pass |
+| Android JVM unit | 154 pass |
 | Embedded ADB | 2 pass |
 | Python tools | 13 pass |
 | Gateway (local SDK v1/v2 protocol, test-only device peer) | 22 pass |
 | Lint | 0 errors |
+| Physical, code 35 | The Fold acknowledged the existing Worker connection after the final in-place wireless install at 00:56:47 UTC on November 21. Both provider identities remained active and five remote identities remained revoked. Eleven device tests passed, covering revocations, credential preservation and legacy migrations. Build 35 provider-side calls are unverified. See the [matched restart measurements](performance.md). |
 | Hosted status, code 34 | Grok Bot called `siconnect_connection` through its existing OAuth session. The Worker reported `UNSUPPORTED` on build 33. After an in-place update over wireless debugging, the background bridge restarted and Grok reported `RESPONDED`, `phoneSessionAcknowledged: true` and `executionDispatched: false`. SIConnect’s owner UI was not opened for the test. |
 | OAuth renewal, November 20 | With the phone peer offline, the SDK rotated the token and the local Worker stored a new 30-day expiry. A subsequent owner revocation blocked refresh. Hosted health, MCP challenge and OAuth discovery agreed on the existing Worker origin after deployment. |
 | Hosted reboot, code 33 | After a full Fold reboot and first unlock, the phone logged a fresh gateway acknowledgement at 23:49:16 UTC without opening SIConnect. Dot and Grok Bot each called `device_battery` through their existing OAuth sessions. At 23:49:32 and 23:50:16 UTC respectively, their new request IDs matched successful phone records under their separate identities. Both reported 99%. USB supported the reboot and diagnostics. The providers used the deployed HTTPS Worker. |

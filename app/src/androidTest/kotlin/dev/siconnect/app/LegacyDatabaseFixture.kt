@@ -7,6 +7,11 @@ import android.database.sqlite.SQLiteDatabase
 internal fun SQLiteDatabase.removeExecutionRetentionSchema() {
     beginTransaction()
     try {
+        execSQL("CREATE TABLE legacy_agents (agent_id TEXT PRIMARY KEY,token_sha256 TEXT NOT NULL,created_at INTEGER NOT NULL,last_seen_at INTEGER,json TEXT NOT NULL)")
+        execSQL("INSERT INTO legacy_agents SELECT agent_id,token_sha256,created_at,last_seen_at,json FROM agents")
+        execSQL("DROP TABLE agents")
+        execSQL("ALTER TABLE legacy_agents RENAME TO agents")
+        execSQL("CREATE INDEX agents_credential ON agents(token_sha256)")
         execSQL("DROP INDEX requests_agent_history")
         // Strip later schedule projections first. A version reset alone leaves current columns
         // behind and tests a duplicate-ALTER failure rather than the historical upgrade.

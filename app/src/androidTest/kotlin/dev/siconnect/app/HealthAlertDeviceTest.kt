@@ -123,6 +123,7 @@ class HealthAlertDeviceTest {
             repeat(2) {SIConnectDb(context,name).use {db->
                 assertEquals(SIConnectDb.VERSION,db.readableDatabase.version)
                 assertEquals("preserved",db.readableDatabase.rawQuery("SELECT json FROM agents WHERE agent_id='fixture'",null).use {it.moveToFirst();it.getString(0)})
+                assertEquals(listOf("fixture"),dev.siconnect.app.data.AgentStore(db).revokedRemoteIds())
                 assertEquals(0,android.database.DatabaseUtils.queryNumEntries(db.readableDatabase,"health_alert_state"))
             }}
         } finally {context.deleteDatabase(name)}

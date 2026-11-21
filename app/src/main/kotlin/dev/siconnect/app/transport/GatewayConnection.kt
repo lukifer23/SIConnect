@@ -5,7 +5,6 @@ import android.content.*
 import dev.siconnect.app.R
 import dev.siconnect.app.RuntimeGraph
 import dev.siconnect.app.graph
-import dev.siconnect.app.data.AppJson
 import dev.siconnect.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -18,7 +17,6 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -72,7 +70,6 @@ class GatewayConnection(private val g: RuntimeGraph) {
     // into one probe/encode/send, and skip resending an unchanged catalog on the same socket.
     private val helloRequests=kotlinx.coroutines.flow.MutableSharedFlow<Unit>(replay=1,onBufferOverflow=kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
     private val catalogChanges=java.util.concurrent.atomic.AtomicLong()
-    @Volatile private var lastHello:Pair<WebSocket,String>?=null
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private val helloSender by lazy {g.scope.launch {helloRequests.debounce(250).collect {runCatching {sendHello()}}}}
     fun refreshCatalog() {
@@ -83,22 +80,28 @@ class GatewayConnection(private val g: RuntimeGraph) {
         helloRequests.tryEmit(Unit)
     }
     private fun sendHello() {
-        val ws=socket ?: return
-        val text=hello()
-        if(lastHello?.let {it.first===ws && it.second==text}==true) return
-        if(ws.send(text)) lastHello=ws to text
+        val active = session.get() ?: return
+        if (generation.get() == active.epoch) active.publisher.publish(::hello, active.socket::send)
     }
-    private fun hello()=buildJsonObject {
-        put("type","hello");put("deviceId",g.settings.deviceId);put("connectionProbe",true)
-        put("capabilities",AppJson.encodeToJsonElement(ListSerializer(CapabilityStatus.serializer()),g.registry.statuses()))
-        // The gateway refuses catalog/connection/invoke for these identities, so a revoked bot's
-        // still-valid OAuth grant cannot list tools or probe the phone. Revocation is permanent per ID.
-        put("revokedAgents",JsonArray(g.agents.all().filter {it.grant.revoked && !it.grant.agentId.startsWith("local-")}
-            .map {it.grant.agentId}.takeLast(500).map(::JsonPrimitive)))
-    }.toString()
+
+    private fun hello() = GatewayHello(
+        deviceId = g.settings.deviceId,
+        capabilities = g.registry.statuses(),
+        revokedAgents = g.agents.revokedRemoteIds(),
+    )
+
+    private data class Session(val epoch: Long, val socket: WebSocket, val publisher: GatewayHelloPublisher)
+    private val session = java.util.concurrent.atomic.AtomicReference<Session?>()
+    private val socket get() = session.get()?.socket
     private var loop: Job?=null
-    @Volatile private var socket: WebSocket?=null
-    @Synchronized fun stop() { generation.incrementAndGet(); loop?.cancel(); loop=null; socket?.close(1000,"Owner disabled connection"); socket=null; detail.value="Remote access paused";state.value=ConnectionState.DISABLED }
+    @Synchronized fun stop() {
+        generation.incrementAndGet()
+        loop?.cancel()
+        loop=null
+        session.getAndSet(null)?.socket?.close(1000,"Owner disabled connection")
+        detail.value="Remote access paused"
+        state.value=ConnectionState.DISABLED
+    }
     /** Local owner restriction; does not remove enrollment, identities or outstanding results. */
     @Synchronized fun pauseFromOwner() {
         stop()
@@ -165,13 +168,13 @@ class GatewayConnection(private val g: RuntimeGraph) {
                 val request=Request.Builder().url(base.replaceFirst("https://","wss://").replaceFirst("http://","ws://")+"/device/${g.settings.deviceId}")
                     .header("Authorization","Bearer ${g.settings.deviceSecret()}").build()
                 val handshakeCatalog=catalogChanges.get()
+                val publisher = GatewayHelloPublisher()
                 val connectedSocket=client.newWebSocket(request,object:WebSocketListener() {
                     override fun onOpen(ws: WebSocket,r: Response) {
                         if(generation.get()!=epoch) {ws.cancel();done.complete(Unit);return}
                         detail.value="Waiting for the gateway to confirm this phone…"
                         state.value=ConnectionState.AUTHENTICATING
-                        val text=hello()
-                        if(ws.send(text)) lastHello=ws to text
+                        publisher.publish(::hello, ws::send)
                         g.scope.launch {
                             delay(10_000)
                             if(socket===ws && state.value==ConnectionState.AUTHENTICATING) { detail.value="Gateway did not confirm connection";ws.close(1002,"Handshake timeout");done.complete(Unit) }
@@ -290,11 +293,15 @@ class GatewayConnection(private val g: RuntimeGraph) {
                         done.complete(Unit)
                     }
                 })
-                socket=connectedSocket
+                val active = Session(epoch, connectedSocket, publisher)
+                synchronized(this@GatewayConnection) {
+                    if (isActive && generation.get() == epoch) session.set(active)
+                    else { connectedSocket.cancel(); done.complete(Unit) }
+                }
                 try { done.await() } finally {
                     generation.compareAndSet(epoch,epoch+1)
                     connectedSocket.cancel()
-                    if(socket===connectedSocket) socket=null
+                    session.compareAndSet(active, null)
                     pairingAcks.values.forEach {it.completeExceptionally(IllegalStateException("Gateway connection lost; retry the same invitation"))}
                 }
                 ensureActive()

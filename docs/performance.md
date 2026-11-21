@@ -1,5 +1,16 @@
 # Performance and resource evidence
 
+## November 20 matched restart on the Fold
+
+Each build was installed in place over wireless ADB. Sampling started about 20 seconds into the new process and took ten observations over 90 seconds. Android reported foreground-service importance at every sample. The phone was awake, on battery, with the keyguard hidden. The owner UI stayed closed.
+
+| Android build | Process age at first sample | App CPU time | CPU as fraction of one core | App PSS min / median / max |
+| --- | ---: | ---: | ---: | ---: |
+| 34 | 20.2 s | 1.91 s | 2.12% | 75.5 / 81.6 / 88.9 MiB |
+| 35 | 20.9 s | 1.43 s | 1.59% | 74.8 / 77.0 / 79.5 MiB |
+
+Build 35 compares the capability and revocation snapshots before encoding an update. Each connection owns its snapshot and releases it on disconnect. Revoked-agent discovery reads at most 500 IDs from an indexed SQLite query. Median PSS was 4.6 MiB lower in this pair of runs. Longer observations and repeated trials would be needed to quantify steady-state memory, battery use or a typical saving.
+
 ## November 20 wireless background observations
 
 The Fold was awake and on battery during both collections. Android reported foreground-service importance for SIConnect at every sample. The owner UI stayed closed. The collector read process counters and proportional set size (PSS) over wireless ADB.
@@ -9,7 +20,7 @@ The Fold was awake and on battery during both collections. Android reported fore
 | 33, existing process | 10 | 89.981 s | 0.34 s | 0.38% | 41.6–42.5 MiB |
 | 34, after update and hosted reachability check | 9 | 89.366 s | 0.38 s | 0.43% | 74.6–75.1 MiB |
 
-The second collection observed a freshly restarted process. Process ages differ, so the higher memory reading needs a comparison at matched uptime. Battery drain and long-term memory growth require longer observations.
+The second collection observed a freshly restarted process. The matched restart comparison above controls for that difference. Battery drain and long-term memory growth require longer observations.
 
 ## November 6 host review
 
