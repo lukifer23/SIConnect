@@ -51,18 +51,15 @@ class GatewayConnection(private val g: RuntimeGraph) {
         }
     }
     private val client=OkHttpClient.Builder().pingInterval(90,TimeUnit.SECONDS).build()
-    private val pairingAcks=java.util.concurrent.ConcurrentHashMap<String,CompletableDeferred<Unit>>()
     suspend fun publishPairing(invitation: PairingInvitation) {
-        check(state.value==ConnectionState.ONLINE) { "Phone is offline" }
-        val hash=dev.siconnect.app.data.Settings.sha256Hex(invitation.code)
-        val ack=CompletableDeferred<Unit>()
-        check(pairingAcks.putIfAbsent(hash,ack)==null) { "Pairing is already being prepared" }
-        try {
-            check(socket?.send(buildJsonObject { put("type","pairing");put("invitation",buildJsonObject {
+        val active = session.get()
+        check(active != null && generation.get() == active.epoch && state.value == ConnectionState.ONLINE) { "Phone is offline" }
+        val hash = dev.siconnect.app.data.Settings.sha256Hex(invitation.code)
+        active.receipts.awaitReceipt(hash) {
+            active.socket.send(buildJsonObject { put("type","pairing");put("invitation",buildJsonObject {
                 put("hash",hash);put("agentId",invitation.agentId);put("expiresAt",invitation.expiresAt);put("sealed",invitation.sealed)
-            }) }.toString())==true) { "Connection lost" }
-            withTimeout(8_000) { ack.await() }
-        } finally { pairingAcks.remove(hash,ack) }
+            }) }.toString())
+        }
     }
     private val generation=java.util.concurrent.atomic.AtomicLong()
     /** Refresh discovery after backend/permission changes using the same authoritative registry. */
@@ -79,9 +76,11 @@ class GatewayConnection(private val g: RuntimeGraph) {
         helloSender
         helloRequests.tryEmit(Unit)
     }
-    private fun sendHello() {
+    private suspend fun sendHello() {
         val active = session.get() ?: return
-        if (generation.get() == active.epoch) active.publisher.publish(::hello, active.socket::send)
+        if (generation.get() != active.epoch) return
+        active.publisher.publish(::hello, active.socket::send)
+        active.replay.drain(active.socket, active.receipts, g.agents::revocationsAfter)
     }
 
     private fun hello() = GatewayHello(
@@ -90,7 +89,8 @@ class GatewayConnection(private val g: RuntimeGraph) {
         revokedAgents = g.agents.revokedRemoteIds(),
     )
 
-    private data class Session(val epoch: Long, val socket: WebSocket, val publisher: GatewayHelloPublisher)
+    private data class Session(val epoch: Long, val socket: WebSocket, val publisher: GatewayHelloPublisher,
+        val receipts: GatewayReceipts, val replay: RevocationReplay)
     private val session = java.util.concurrent.atomic.AtomicReference<Session?>()
     private val socket get() = session.get()?.socket
     private var loop: Job?=null
@@ -169,6 +169,8 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     .header("Authorization","Bearer ${g.settings.deviceSecret()}").build()
                 val handshakeCatalog=catalogChanges.get()
                 val publisher = GatewayHelloPublisher()
+                val receipts = GatewayReceipts()
+                val replay = RevocationReplay()
                 val connectedSocket=client.newWebSocket(request,object:WebSocketListener() {
                     override fun onOpen(ws: WebSocket,r: Response) {
                         if(generation.get()!=epoch) {ws.cancel();done.complete(Unit);return}
@@ -195,6 +197,10 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                         if(generation.get()!=epoch) return@launch
                                         g.settings.completeEnrollment(config,requireNotNull(enrollmentToken))
                                     }
+                                    if (!replay.enabled && msg["revocationReplay"]?.jsonPrimitive?.booleanOrNull == true) {
+                                        replay.enabled = true
+                                        g.scope.launch { replay.drain(ws, receipts, g.agents::revocationsAfter) }
+                                    }
                                     val reconnect=state.value!=ConnectionState.ONLINE
                                     state.value=ConnectionState.ONLINE;detail.value="Connected";attempt=0
                                     if(reconnect) {
@@ -212,6 +218,21 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                             }.toString())
                                         }
                                     }
+                                } else if (type == "revocations_saved") {
+                                    receipts.acknowledge("revocations:" + msg.getValue("id").jsonPrimitive.content)
+                                } else if (type == "discovery_scope") {
+                                    val id = msg.getValue("id").jsonPrimitive.content
+                                    require(id.length == 36)
+                                    val grant = g.authenticate(msg.getValue("agentToken").jsonPrimitive.content)?.grant
+                                    val allowed = if (grant == null || grant.agentId.startsWith("local-") ||
+                                        !g.settings.controls.value.remoteExecutionEnabled) emptyList() else
+                                        g.registry.all().mapNotNull { capability ->
+                                            val descriptor = capability.descriptor
+                                            if (grant.discovers(descriptor)) JsonPrimitive(descriptor.id) else null
+                                        }
+                                    ws.send(buildJsonObject {
+                                        put("type", "discovery_scope_result"); put("id", id); put("allowed", JsonArray(allowed))
+                                    }.toString())
                                 } else if(type=="connection_probe") {
                                     val id = msg.getValue("id").jsonPrimitive.content
                                     require(id.length == 36) { "Invalid connection probe ID" }
@@ -224,13 +245,13 @@ class GatewayConnection(private val g: RuntimeGraph) {
                                         "consumed" -> g.pairing.consumed(agentId,hash)
                                     }
                                 } else if(type=="pairing_saved") {
-                                    pairingAcks[msg.getValue("hash").jsonPrimitive.content]?.complete(Unit)
+                                    receipts.acknowledge(msg.getValue("hash").jsonPrimitive.content)
                                 } else if(type=="pairing_consumed") {
                                     val agentId=msg.getValue("agentId").jsonPrimitive.content
                                     val hash=msg["hash"]?.jsonPrimitive?.content
                                     if(hash!=null) {
                                         // publishPairing waits while holding the pairing mutex.
-                                        pairingAcks[hash]?.completeExceptionally(IllegalStateException("This pairing code was already used."))
+                                        receipts.reject(hash, "This pairing code was already used.")
                                         g.pairing.consumed(agentId,hash)
                                     } else {
                                         // Older gateways omit the hash on first consumption. Reannounce
@@ -293,7 +314,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                         done.complete(Unit)
                     }
                 })
-                val active = Session(epoch, connectedSocket, publisher)
+                val active = Session(epoch, connectedSocket, publisher, receipts, replay)
                 synchronized(this@GatewayConnection) {
                     if (isActive && generation.get() == epoch) session.set(active)
                     else { connectedSocket.cancel(); done.complete(Unit) }
@@ -302,7 +323,7 @@ class GatewayConnection(private val g: RuntimeGraph) {
                     generation.compareAndSet(epoch,epoch+1)
                     connectedSocket.cancel()
                     session.compareAndSet(active, null)
-                    pairingAcks.values.forEach {it.completeExceptionally(IllegalStateException("Gateway connection lost; retry the same invitation"))}
+                    receipts.close()
                 }
                 ensureActive()
                 if(state.value==ConnectionState.AUTH_FAILED) break

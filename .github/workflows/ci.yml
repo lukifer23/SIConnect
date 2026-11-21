@@ -27,6 +27,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
       - run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - run: ./gradlew :core:test :app:assembleDebug :app:testDebugUnitTest :adb-bootstrap:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest :app:assembleRelease --console=plain
+      - name: Export compiled Android catalog for the Worker contract test
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-catalog-contract
+          path: app/build/catalog-contract/testDebugUnitTest/hello.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Verify release debug isolation
         run: |
           python3 - <<'PY'
@@ -54,6 +61,7 @@ jobs:
             adb-bootstrap/build/reports/tests/
             build/reports/dependency-verification/
   gateway:
+    needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -68,7 +76,13 @@ jobs:
           cache-dependency-path: gateway/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: android-catalog-contract
+          path: ${{ runner.temp }}/android-catalog-contract
       - run: npm test
+        env:
+          SICONNECT_TEST_CATALOG: ${{ runner.temp }}/android-catalog-contract/hello.json
       - run: npm run build
         env:
           WRANGLER_SEND_METRICS: 'false'

@@ -188,9 +188,17 @@ class SIConnectDb(context: Context, name:String = "siconnect.db") : SQLiteOpenHe
             }
             db.execSQL("CREATE INDEX agents_revoked_order ON agents(created_at,agent_id) WHERE revoked=1")
         }
+        if (old < 16 && new >= 16) {
+            db.execSQL("CREATE TABLE agent_revocations (seq INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT UNIQUE NOT NULL)")
+            db.execSQL("INSERT INTO agent_revocations(agent_id) SELECT agent_id FROM agents WHERE revoked=1 AND agent_id NOT GLOB 'local-*' ORDER BY agent_id")
+            db.execSQL("""CREATE TRIGGER record_agent_revocation AFTER INSERT ON agents
+                WHEN NEW.revoked=1 AND NEW.agent_id NOT GLOB 'local-*'
+                BEGIN INSERT INTO agent_revocations(agent_id) SELECT NEW.agent_id
+                    WHERE NOT EXISTS(SELECT 1 FROM agent_revocations WHERE agent_id=NEW.agent_id); END""")
+        }
     }
 
-    companion object { const val VERSION = 15 }
+    companion object { const val VERSION = 16 }
 }
 
 /** Commits only when [block] completes; any exception (or non-local return path that throws) rolls back. */
@@ -486,6 +494,10 @@ class AgentStore(private val db: SIConnectDb) : AgentDirectory {
         "SELECT agent_id FROM agents WHERE revoked=1 AND agent_id NOT GLOB 'local-*' " +
             "ORDER BY created_at DESC,agent_id DESC LIMIT 500", null,
     ).mapAll { it.getString(0) }.asReversed()
+
+    fun revocationsAfter(sequence: Long): List<Pair<Long, String>> = db.readableDatabase.rawQuery(
+        "SELECT seq,agent_id FROM agent_revocations WHERE seq>? ORDER BY seq LIMIT 64", arrayOf(sequence.toString()),
+    ).mapAll { it.getLong(0) to it.getString(1) }
 
     fun byCredentialHash(hash:String):AgentRecord? = db.readableDatabase.query("agents",arrayOf("json"),"token_sha256=?",
         arrayOf(hash),null,null,null,"2").mapAll {decode(it.getString(0))}.singleOrNull()

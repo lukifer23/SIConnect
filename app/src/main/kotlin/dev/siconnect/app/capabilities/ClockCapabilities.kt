@@ -17,12 +17,12 @@ fun registerClockCapabilities(g:RuntimeGraph) {
             description="Start a 1–86400 second SIConnect countdown in the background. Omit packageName for an ordinary hands-free timer. To use a specific external Clock app, supply its packageName. That route requires connected notification access and a visible SIConnect activity, and waits for owner review when SIConnect is in the background. Use clock.timer_status and clock.timer_cancel with the returned timerId. Never automatically replay an uncertain external Clock dispatch.",
             inputSchema=objectSchema {
                 integer("durationSeconds","Exact timer duration in seconds",true,min=1,max=86400)
-                string("label","Optional single-line label up to80 characters; unique ownership marker is appended",maxLength=80)
+                string("label","Optional single-line label, up to 80 characters. External Clock adds an ownership marker.",maxLength=80)
                 string("packageName","Optional external Clock package. Omit for a SIConnect background countdown.",maxLength=200)
                 string("leaseId","Optional owned shared-screen lease targeting that Clock package",maxLength=100)
-            },backend=BackendKind.NATIVE,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN,timeoutMs=15000,
-            permissions=listOf("com.android.alarm.permission.SET_ALARM","Owner-granted connected notification listener"),
-            sideEffects=listOf("Starts an audible Clock timer; the app may open its screen"))
+            },backend=BackendKind.NATIVE,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN,hasBackgroundRoute=true,timeoutMs=15000,
+            permissions=listOf("SIConnect countdown: exact alarms and timer notifications", "External Clock: SET_ALARM and connected notification access"),
+            sideEffects=listOf("Schedules a SIConnect notification countdown or opens the selected Clock app to start its timer"))
         override fun availability()=if(timers.supportedUser()) g.reminders.countdownAvailability() else Availability.UNSUPPORTED
         override fun availability(arguments:JsonObject)=if(background(arguments)) availability() else timers.startAvailability(arguments)
         override fun availabilityDetail()="Background countdowns require precise alarms and timer notifications. External Clock apps require connected notification access."
@@ -37,7 +37,7 @@ fun registerClockCapabilities(g:RuntimeGraph) {
     })
     g.registry.register(object:Capability {
         override val descriptor=CapabilityDescriptor("clock.timer_status",title="Read your managed Clock timers",
-            description="Read this agent's SIConnect countdowns and durable system-user external Clock timer identities and fresh exact-label Clock notification observations. Secondary/work profiles are unsupported. Optional timerId selects one owned timer; otherwise list bounded metadata pages. Never enumerates or adopts unrelated user timers. No notification does not prove stopped/expired. Native countdown seconds are reported only when Clock publishes chronometer metadata; Samsung label evidence alone does not prove duration. Readback never starts, cancels, pauses or retries a timer.",
+            description="Read this agent's SIConnect countdowns and durable system-user external Clock timer identities and fresh exact-label Clock notification observations. Secondary/work profiles are unsupported. Optional timerId selects one owned timer; otherwise list bounded metadata pages. Never enumerates or adopts unrelated user timers. No notification does not prove stopped/expired. SIConnect reports its saved deadline and remaining seconds. External Clock seconds are available only when its notification publishes chronometer metadata; Samsung label evidence alone does not prove duration. Readback never starts, cancels, pauses or retries a timer.",
             inputSchema=objectSchema {
                 string("timerId","Optional exact own timerId from start/status",maxLength=100)
                 integer("limit","Maximum own timers; default20",min=1,max=50)
@@ -55,8 +55,8 @@ fun registerClockCapabilities(g:RuntimeGraph) {
             inputSchema=objectSchema {
                 string("timerId","Exact owned managed timerId",true,maxLength=100)
                 string("leaseId","Optional owned shared-screen lease targeting this Clock package",maxLength=100)
-            },backend=BackendKind.NATIVE,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN,timeoutMs=10000,
-            sideEffects=listOf("Invokes the Clock app's published action for one exactly matched managed timer"))
+            },backend=BackendKind.NATIVE,risk=RiskClass.MODERATE_IMPACT,interaction=InteractionMode.MAY_OPEN_SCREEN,hasBackgroundRoute=true,timeoutMs=10000,
+            sideEffects=listOf("Cancels the owned SIConnect countdown or invokes the selected Clock app’s observed cancellation action"))
         override fun availability()=if(timers.supportedUser()) Availability.IMPLEMENTED else Availability.UNSUPPORTED
         override fun assess(args:JsonObject)=RiskAssessment(descriptor.risk,descriptor.title,sideEffects=descriptor.sideEffects,
             nativeBackgroundOnly=args["timerId"]?.jsonPrimitive?.content?.startsWith("countdown:")==true)

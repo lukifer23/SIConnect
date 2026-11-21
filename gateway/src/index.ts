@@ -8,7 +8,8 @@ import type { Invitation, PhoneAuthorization } from './pairing.js';
 import { invocationEnvelope, invocationSchema } from './invocation.js';
 
 type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
-type SocketState = { epoch: string; ready: boolean; connectionProbe?: boolean };
+type DiscoveryScope = {allowed: string[]; status: 'OBSERVED' | 'NO_SESSION' | 'UNCONFIRMED'};
+type SocketState = { epoch: string; ready: boolean; connectionProbe?: boolean; scopedDiscovery?: boolean; revocationReplay?: boolean };
 type Pending = { epoch: string; agentId: string; resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 const encoder = new TextEncoder();
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -17,6 +18,28 @@ export class DeviceBridge extends DurableObject<Env> {
   private probe?: { epoch: string; id: string; result: Promise<boolean>; finish: (answered: boolean) => void };
   private readonly pending = new Map<string, Pending>();
   private readonly rate = new Map<string, { slot: number; count: number }>();
+
+  private readonly scopeReads = new Map<string, { epoch: string; finish: (scope: DiscoveryScope) => void }>();
+
+  /** Only explicit discovery waits for scope. Ordinary calls still take the direct invocation path. */
+  private async discoveryScope(agentToken: string): Promise<DiscoveryScope> {
+    const socket = await this.activeSocket();
+    const state = socket?.deserializeAttachment() as SocketState | undefined;
+    if (!socket) return {allowed: [], status: 'NO_SESSION'};
+    if (!state?.scopedDiscovery || this.scopeReads.size >= 32) return {allowed: [], status: 'UNCONFIRMED'};
+    const id = crypto.randomUUID();
+    return new Promise(resolve => {
+      const finish = (scope: DiscoveryScope) => {
+        clearTimeout(timer);
+        this.scopeReads.delete(id);
+        resolve(scope);
+      };
+      const timer = setTimeout(() => finish({allowed: [], status: 'UNCONFIRMED'}), 4000);
+      this.scopeReads.set(id, { epoch: state.epoch, finish });
+      try { socket.send(JSON.stringify({ type: 'discovery_scope', id, agentToken })); }
+      catch { finish({allowed: [], status: 'UNCONFIRMED'}); }
+    });
+  }
 
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
@@ -39,6 +62,7 @@ export class DeviceBridge extends DurableObject<Env> {
       const epoch = crypto.randomUUID();
       await this.ctx.storage.put('socketEpoch', epoch);
       this.probe?.finish(false);
+      for (const read of this.scopeReads.values()) read.finish({allowed: [], status: 'UNCONFIRMED'});
       for (const p of this.pending.values()) p.reject(new Error('DEVICE_REPLACED_UNKNOWN_OUTCOME'));
       for (const existing of this.ctx.getWebSockets('device')) existing.close(1000, 'Replaced by authenticated reconnect');
       const pair = new WebSocketPair();
@@ -77,10 +101,24 @@ export class DeviceBridge extends DurableObject<Env> {
     if (agent && await this.revoked(agent)) return json({ error: 'AGENT_REVOKED', detail: 'The phone owner revoked this agent. Pair a new agent in SIConnect.' }, 403);
     if (path === '/session-status' && agent) return this.sessionStatus();
     if (path === '/grant-status' && agent) return json({ active: true });
+    if (path === '/discovery-scope' && agent && request.method === 'POST') {
+      const {agentToken} = await request.json() as {agentToken: string};
+      return json(await this.discoveryScope(agentToken));
+    }
     if (path === '/catalog') {
-      const catalog = await this.ctx.storage.get<unknown>(['catalogRevision', 'capabilities']);
-      return json({ protocol: 2, online: !!await this.activeSocket(), revision: catalog.get('catalogRevision') ?? null,
-        capabilities: catalog.get('capabilities') ?? [] });
+      const catalog = await this.ctx.storage.get<unknown>(['catalogRevision', 'capabilities', 'scopedDiscovery']);
+      const scopedDiscovery = catalog.get('scopedDiscovery') === true;
+      let scopeStatus: DiscoveryScope['status'] | undefined;
+      let capabilities = (catalog.get('capabilities') ?? []) as Capability[];
+      if (scopedDiscovery && request.method === 'POST') {
+        const {agentToken} = await request.json() as {agentToken: string};
+        const scope = await this.discoveryScope(agentToken);
+        scopeStatus = scope.status;
+        const allowed = new Set(scope.allowed);
+        capabilities = capabilities.filter(cap => allowed.has(cap.descriptor.id));
+      }
+      return json({ protocol: 2, scopedDiscovery, scopeStatus, online: !!await this.activeSocket(), revision: catalog.get('catalogRevision') ?? null,
+        capabilities });
     }
     if (path === '/invoke') {
       const body = await request.json() as { agentId: string; agentToken: string; transportExpiresAtMs?: number; request: Record<string, unknown> };
@@ -161,11 +199,29 @@ export class DeviceBridge extends DurableObject<Env> {
             if (incoming.size !== previous.length || previous.some(id => !incoming.has(id)))
               await storage.put('revokedAgents', [...incoming]);
           }
+          const scoped = body.scopedDiscovery === true;
+          if (scoped !== (await storage.get('scopedDiscovery') === true)) await storage.put('scopedDiscovery', scoped);
           if (revision !== await storage.get('catalogRevision'))
             await storage.put({ capabilities: body.capabilities, catalogRevision: revision });
         });
-        socket.serializeAttachment({ ...attachment, ready: true, connectionProbe: body.connectionProbe === true } satisfies SocketState);
-        socket.send(JSON.stringify({ type: 'hello_ack', protocol: 2 }));
+        socket.serializeAttachment({ ...attachment, ready: true, connectionProbe: body.connectionProbe === true, scopedDiscovery: body.scopedDiscovery === true, revocationReplay: body.revocationReplay === true } satisfies SocketState);
+        socket.send(JSON.stringify({ type: 'hello_ack', protocol: 2, revocationReplay: body.revocationReplay === true }));
+      } else if (body.type === 'revocations' && attachment.revocationReplay) {
+        const ids: unknown = body.agents;
+        if (typeof body.id !== 'string' || body.id.length !== 36 || !Array.isArray(ids) || ids.length < 1 ||
+            ids.length > 64 || !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id))) throw new Error('Invalid revocations');
+        const keys = ids.map(id => 'revoked:' + id);
+        await this.ctx.storage.transaction(async storage => {
+          if (attachment.epoch !== await storage.get('socketEpoch')) throw new Error('Replaced session');
+          const saved = await storage.get(keys);
+          const missing = keys.filter(key => !saved.has(key));
+          if (missing.length) await storage.put(Object.fromEntries(missing.map(key => [key, true])));
+        });
+        socket.send(JSON.stringify({type: 'revocations_saved', id: body.id}));
+      } else if (body.type === 'discovery_scope_result' && attachment.scopedDiscovery) {
+        const read = this.scopeReads.get(body.id);
+        if (read?.epoch === attachment.epoch && Array.isArray(body.allowed) && body.allowed.length <= 128 &&
+            body.allowed.every((id: unknown) => typeof id === 'string')) read.finish({allowed: body.allowed, status: 'OBSERVED'});
       } else if (body.type === 'connection_probe_ack') {
         const probe = this.probe;
         if (probe && probe.epoch === attachment.epoch && probe.id === body.id) probe.finish(true);
@@ -236,7 +292,7 @@ export class DeviceBridge extends DurableObject<Env> {
 
   /** Server-initiated close: fail this session's pending calls now rather than at their 130s timer. */
   private closeDevice(socket: WebSocket, code: number, reason: string): void {
-    this.webSocketClose(socket, code, reason, false);
+    this.endSession(socket);
     socket.close(code, reason);
   }
   private async revoked(agentId: string): Promise<boolean> {
@@ -254,12 +310,17 @@ export class DeviceBridge extends DurableObject<Env> {
       return socket.readyState === 1 && state?.ready && state.epoch === epoch;
     });
   }
-  webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean): void {
+  private endSession(socket: WebSocket): void {
     const epoch = (socket.deserializeAttachment() as SocketState | null)?.epoch;
+    for (const read of this.scopeReads.values()) if (read.epoch === epoch) read.finish({allowed: [], status: 'UNCONFIRMED'});
     if (this.probe && this.probe.epoch === epoch) this.probe.finish(false);
     for (const p of this.pending.values()) if (p.epoch === epoch) p.reject(new Error('DEVICE_DISCONNECTED_UNKNOWN_OUTCOME'));
   }
-  webSocketError(socket: WebSocket): void { this.webSocketClose(socket, 1011, 'Transport failure', false); socket.close(1011, 'Transport failure'); }
+  webSocketClose(socket: WebSocket): void {
+    this.endSession(socket);
+    if (socket.readyState !== WebSocket.CLOSED) socket.close(1000, 'Device disconnected');
+  }
+  webSocketError(socket: WebSocket): void { this.closeDevice(socket, 1011, 'Transport failure'); }
 
 }
 
@@ -282,7 +343,7 @@ export default {
         return bridge.fetch(new Request('https://internal/socket', request));
       }
       const principal = ['/mcp','/connection'].includes(url.pathname) ? await authenticate(request, env) : null;
-      if(principal && url.pathname==='/connection') return env.DEVICES.get(env.DEVICES.idFromName(principal.deviceId)).fetch('https://internal/catalog?agent='+encodeURIComponent(principal.id));
+      if(principal && url.pathname==='/connection') return env.DEVICES.get(env.DEVICES.idFromName(principal.deviceId)).fetch(new Request('https://internal/catalog?agent='+encodeURIComponent(principal.id), {method:'POST', body:JSON.stringify({agentToken: bearer(request)})}));
       if (!principal) return oauthFetch(request, env, ctx);
       const token = bearer(request)!;
       return serveMcp(request, env, { agentId: principal.id, deviceId: principal.deviceId, agentToken: token });
@@ -294,7 +355,12 @@ export default {
   }
 } satisfies ExportedHandler<Env>;
 
-type CompiledTool = { name: string; descriptor: Capability['descriptor']; inputSchema: z.ZodType };
+type ToolListing = {
+  name: string; title: string; description: string; inputSchema: {type: 'object'};
+  annotations: {readOnlyHint: boolean; destructiveHint: boolean};
+  _meta: {'dev.siconnect/availability': string};
+};
+type CompiledTool = {id: string; inputSchema: z.ZodType; listing: ToolListing};
 /** Per-isolate cache keyed by device and catalog revision; unchanged catalogs retain their revision across reconnects. */
 const compiledTools = new Map<string, CompiledTool[]>();
 function compileTools(capabilities: Capability[]): CompiledTool[] {
@@ -304,7 +370,19 @@ function compileTools(capabilities: Capability[]): CompiledTool[] {
   for (const cap of capabilities) {
     const name = cap.descriptor.id.replaceAll('.', '_');
     if (names.has(name)) { console.warn('skipping colliding tool name', name); continue; }
-    try { tools.push({ name, descriptor: cap.descriptor, inputSchema: z.fromJSONSchema(invocationSchema(cap.descriptor.inputSchema)) }); names.add(name); }
+    try {
+      const schema = invocationSchema(cap.descriptor.inputSchema);
+      if (schema.type !== 'object') throw new Error('Object schema required');
+      const listing: ToolListing = {
+        name, title: cap.descriptor.title,
+        description: cap.descriptor.description + ' Last reported phone availability: ' + cap.availability + '.',
+        inputSchema: {...schema, type: 'object'},
+        annotations: {readOnlyHint: cap.descriptor.risk === 'READ_ONLY', destructiveHint: ['HIGH_IMPACT', 'CRITICAL'].includes(cap.descriptor.risk)},
+        _meta: {'dev.siconnect/availability': cap.availability}
+      };
+      tools.push({id: cap.descriptor.id, inputSchema: z.fromJSONSchema(schema), listing});
+      names.add(name);
+    }
     catch (error) { console.warn('skipping tool with unsupported schema', name, (error as Error)?.name ?? 'Error'); }
   }
   return tools;
@@ -315,7 +393,7 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
       const catalogUrl = 'https://internal/catalog?agent=' + encodeURIComponent(authorization.agentId);
       const catalogResponse = await bridge.fetch(catalogUrl);
       if (!catalogResponse.ok) return catalogResponse;
-      const catalog = await catalogResponse.json() as { online: boolean; revision: string | null; capabilities: Capability[] };
+      const catalog = await catalogResponse.json() as { online: boolean; scopedDiscovery: boolean; revision: string | null; capabilities: Capability[] };
       const cacheKey = catalog.revision ? `${authorization.deviceId}:${catalog.revision}` : null;
       let tools = cacheKey ? compiledTools.get(cacheKey) : undefined;
       if (!tools) {
@@ -328,13 +406,10 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
       }
       const handler = createMcpHandler(() => {
         const server = new McpServer({ name: 'SIConnect', version: '0.2.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
-        for (const { name, descriptor, inputSchema } of tools) {
-          server.registerTool(name, {
-            title: descriptor.title, description: descriptor.description,
-            inputSchema,
-            annotations: { readOnlyHint: descriptor.risk === 'READ_ONLY', destructiveHint: ['HIGH_IMPACT', 'CRITICAL'].includes(descriptor.risk) }
-          }, async (args, context) => {
-            const envelope = await invocationEnvelope(authorization, descriptor.id, args);
+        for (const {id, listing, inputSchema} of tools) {
+          server.registerTool(listing.name, {title: listing.title, description: listing.description,
+            annotations: listing.annotations, _meta: listing._meta, inputSchema}, async (args, context) => {
+            const envelope = await invocationEnvelope(authorization, id, args);
             const response = await bridge.fetch(new Request('https://internal/invoke', {
               // The SDK signal alone does not fire on client disconnect; the platform request signal does (enable_request_signal).
               method: 'POST', signal: AbortSignal.any([context.mcpReq.signal, request.signal]),
@@ -346,12 +421,12 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
               isError: !response.ok || (record.state !== 'SUCCEEDED' && record.state !== 'AWAITING_APPROVAL') };
           });
         }
-        server.registerTool('siconnect_connection', {
+        const connection = {
           title: 'Fresh SIConnect gateway connection status',
           description: 'Check whether the phone answers over its existing gateway connection. A RESPONDED result confirms a round trip. UNCONFIRMED means a session exists but a reply was not observed. Older phones report UNSUPPORTED. This read-only check runs no device action.',
-          inputSchema: z.object({}),
           annotations: { readOnlyHint: true, destructiveHint: false }
-        }, async () => {
+        };
+        server.registerTool('siconnect_connection', {...connection, inputSchema: z.object({})}, async () => {
           const response = await bridge.fetch('https://internal/session-status?agent=' + encodeURIComponent(authorization.agentId));
           const fresh = await response.json() as Record<string, unknown>;
           if (!response.ok) return {content: [{type: 'text', text: JSON.stringify(fresh)}], structuredContent: fresh, isError: true};
@@ -366,6 +441,19 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
             guidance: guidance[String(fresh.phoneReachability)] };
           return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status, isError: false };
         });
+        if (catalog.scopedDiscovery) {
+          server.server.setRequestHandler('tools/list', async () => {
+            const response = await bridge.fetch(new Request('https://internal/discovery-scope?agent=' + encodeURIComponent(authorization.agentId), {
+              method: 'POST', body: JSON.stringify({agentToken: authorization.agentToken})
+            }));
+            if (!response.ok) throw new Error('Agent discovery unavailable');
+            const scope = await response.json() as DiscoveryScope;
+            const permitted = new Set(scope.allowed);
+            const scoped = tools.filter(tool => permitted.has(tool.id)).map(tool => tool.listing);
+            return {_meta: {'dev.siconnect/scopeStatus': scope.status}, tools: [...scoped,
+              {name: 'siconnect_connection', ...connection, inputSchema: {type: 'object' as const, properties: {}}}]};
+          });
+        }
         return server;
       }, { legacy: 'stateless', responseMode: 'json', maxRequestBodySize: 131072 });
       try { return await handler.fetch(request); } finally { await handler.close(); }

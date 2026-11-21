@@ -20,11 +20,18 @@ Open **Settings → Developer tools → Capabilities** to see what the phone can
 
 New OAuth agents can read device status, inspect apps and use a bounded set of native tools. Actions above read-only risk require approval. The owner can review each grant in **Agents**. For initial gateway enrollment or a deliberate gateway change, use the secure setup code issued by the gateway administrator. Check the HTTPS origin before owner authentication.
 
+Open **Agents → [agent] → Permissions → View agent tools** to search that identity’s tools and see their reported availability. With build 36 and the matching Worker, refreshing the provider tool list asks the phone for this agent’s current scope. Each listed phone tool includes its last reported availability. Android permissions, request arguments and owner approvals are checked again when the tool runs. If the phone is offline or cannot confirm scope within four seconds, discovery returns the connection diagnostic. Providers can cache an earlier listing.
+
 ### Start a Clock timer
 
-For a hands-free timer, ask the bot to use **SIConnect’s background countdown**. Use the existing `clock_timer_start` with no package name, or the background-only `reminders_start_countdown`. Send `durationSeconds: 480` for eight minutes. The phone computes the deadline, displays the time remaining on **SIConnect → Home** and in a countdown notification, and schedules an exact timer alert. Tap the notification to open Home. Samsung Clock displays timers started explicitly in Samsung Clock. Android’s **Precise reminders**, **Running countdowns**, and **Timer alerts** settings must be enabled. Sound follows the timer alert channel, phone volume, and Do Not Disturb settings. Read or cancel an owned countdown with `clock_timer_status` or `clock_timer_cancel` using its returned timer ID. Countdown records are also available through `reminders_list` and `reminders_cancel`.
+| Where the timer appears | How to start | What confirms the result |
+| --- | --- | --- |
+| SIConnect Home and its countdown notification | Call `clock_timer_start` with a duration and omit the package. Enable precise reminders and the countdown and alert notifications. | `SICONNECT_COUNTDOWN`, a saved timer ID and a deadline. Status reads the saved state. Cancel reads back the updated state. |
+| The selected Clock app, including Samsung Clock | Supply its package name. Keep SIConnect visible for the launch and enable notification access. | `EXTERNAL_CLOCK`, the package and the matching notification observation. Check `timerStartVerified` for countdown evidence. An uncertain dispatch retains its ID for status lookup. |
 
-To use **Samsung Clock or another installed Clock app**, pass its exact installed package name to `clock_timer_start`. Android requires SIConnect to be visible when launching that app. If SIConnect is in the background, open its owner-review notification to continue the original request. For an existing bot, **Agents → [agent] → Permissions → Clock timers** controls access. New pairings include the three external Clock operations. Starting or cancelling can open Clock and requires shared-screen permission. Check an uncertain start with `clock_timer_status` before starting another timer. Samsung can publish the matching label without exposing remaining seconds.
+For an eight-minute countdown, pass `durationSeconds: 480`. The background-only `reminders_start_countdown` is also available to agents with that scope. Sound follows the **Timer alerts** channel, phone volume and Do Not Disturb. Read or cancel a timer with `clock_timer_status` or `clock_timer_cancel` using its returned ID. SIConnect countdowns also appear in `reminders_list`.
+
+Manage access under **Agents → [agent] → Permissions → Clock timers**. External Clock requires shared-screen permission. If SIConnect is in the background, open the owner-review notification to continue the original request. Samsung Clock can publish a matching label without exposing remaining seconds. Look up an uncertain start by its original ID before starting another timer.
 
 ### Verify after a phone restart
 

@@ -14,8 +14,8 @@ android {
         applicationId = "dev.siconnect.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 35
-        versionName = "0.6.0-dev.27"
+        versionCode = 36
+        versionName = "0.6.0-dev.28"
         testInstrumentationRunner = if (providers.gradleProperty("installationCheckpoint").orNull == "true")
             "dev.siconnect.app.InstallationCheckpointInstrumentation" else "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,6 +47,11 @@ android {
         aidl = true
         buildConfig = true
     }
+    testOptions.unitTests.all {
+        val catalog = layout.buildDirectory.file("catalog-contract/${it.name}/hello.json").get().asFile
+        it.systemProperty("siconnect.catalog.output", catalog.absolutePath)
+        it.outputs.file(catalog)
+    }
     // Ship the reviewed launcher used by explicit Termux setup; updates never execute it.
     sourceSets.getByName("main").assets.srcDir(rootProject.file("tools/termux"))
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
@@ -68,6 +73,7 @@ dependencies {
     implementation(libs.biometric)
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     testImplementation(libs.junit)
+    testImplementation("org.mockito:mockito-core:5.14.2")
     testImplementation(libs.coroutines.test)
 }
 

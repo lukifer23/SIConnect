@@ -25,6 +25,16 @@ class RevokedAgentsDeviceTest {
                 assertEquals((2..501).map { "remote-$it" }, store.revokedRemoteIds())
                 save("active", 510, true)
                 assertEquals("active", store.revokedRemoteIds().last())
+                // Newly revoking an identity created before the newest 500 must reach the Worker.
+                save("old-account", -1, true)
+                val pages = generateSequence(store.revocationsAfter(0)) { page ->
+                    page.lastOrNull()?.let { store.revocationsAfter(it.first) }
+                }.takeWhile { it.isNotEmpty() }.toList()
+                assertTrue(pages.all { it.size <= 64 })
+                assertEquals((0..501).map { "remote-$it" } + listOf("active", "old-account"), pages.flatten().map { it.second })
+                val cursor = pages.last().last().first
+                save("old-account", -1, true)
+                assertTrue(store.revocationsAfter(cursor).isEmpty())
                 store.delete("active")
                 assertEquals((2..501).map { "remote-$it" }, store.revokedRemoteIds())
             }

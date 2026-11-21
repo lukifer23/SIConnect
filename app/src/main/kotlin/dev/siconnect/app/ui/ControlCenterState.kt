@@ -18,6 +18,7 @@ data class ControlCenterSnapshot(
     val activeRequests:List<RequestSummary> = emptyList(),
     val attentionAutomations:List<AutomationSummary> = emptyList(),
     val latestByAgent:Map<String,RequestSummary> = emptyMap(),
+    val remoteActionsEnabled: Boolean = true,
     val countdowns:List<dev.siconnect.app.automation.RunningCountdown> = emptyList(),
 )
 
@@ -36,7 +37,7 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
         }
         mutable.subscriptionCount.map {it>0}.distinctUntilChanged().collectLatest {visible ->
         if(!visible) return@collectLatest
-        merge(refreshes,g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},g.proposals.updates,
+        merge(refreshes,g.settings.controls.map { Unit },g.engine.recordUpdates.map {Unit},g.runner.runUpdates.map {Unit},g.proposals.updates,
             discoveryUpdates(g.gateway.state),discoveryUpdates(g.privileged.directStatus),discoveryUpdates(g.shizuku.status),
             discoveryUpdates(dev.siconnect.app.accessibility.SemanticAccessibilityService.connectionState),
             discoveryUpdates(dev.siconnect.app.termux.TermuxBridge.get(g.context).updates),
@@ -50,7 +51,7 @@ class ControlCenterState(private val g:RuntimeGraph):ViewModel() {
                     proposals=g.proposals.list(limit=3,states=setOf(ProposalState.PROPOSED,ProposalState.VIEWED)),pendingProposalCount=g.proposals.pendingCount(),
                     activeRequests=g.requests.historyPage(limit=50,states=setOf(RequestState.EXECUTING,RequestState.VERIFYING)),
                     attentionAutomations=schedules.automationPage(limit=3,filter=AutomationFilter.ATTENTION),countdowns=g.reminders.runningCountdowns(),
-                    latestByAgent=g.requests.latestByAgent()) }
+                    remoteActionsEnabled=g.settings.controls.value.remoteExecutionEnabled, latestByAgent=g.requests.latestByAgent()) }
                 catch(e:CancellationException) {throw e}
                 catch(e:Exception) {mutable.value=mutable.value.copy(error="Could not refresh: ${e.javaClass.simpleName}")}
                 // Throttle after publishing so continuous activity cannot starve the visible UI.

@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, createHash, createCipheriv } from 'node:crypto';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -14,6 +14,7 @@ import { Client as LegacyClient } from '@modelcontextprotocol/sdk/client/index.j
 import { StreamableHTTPClientTransport as LegacyTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const secret=()=>randomBytes(32).toString('base64url');
+const replayAgent=secret();
 const agent=secret(), otherAgent=secret(), revokedAgent=secret(), device=secret(), enrollment=secret();
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const base='http://127.0.0.1:8788';
@@ -62,7 +63,7 @@ before(async()=>{
   const config={name:'siconnect-protocol-test',main:resolve('src/index.ts'),compatibility_date:'2026-10-20',compatibility_flags:['nodejs_compat','global_fetch_strictly_public','enable_request_signal'],
     kv_namespaces:[{binding:'OAUTH_KV',id:'00000000000000000000000000000000'}],
     durable_objects:{bindings:[{name:'DEVICES',class_name:'DeviceBridge'}]},migrations:[{tag:'v1',new_sqlite_classes:['DeviceBridge']}],
-    vars:{PUBLIC_ORIGIN:base,DEVICE_ENROLL_TOKEN:enrollment,AGENTS_JSON:JSON.stringify([{id:'test-agent',deviceId:'test-device',tokenSha256:hash(agent),expiresAt:Date.now()+3600000},{id:'revoked-agent',deviceId:'test-device',tokenSha256:hash(revokedAgent),expiresAt:Date.now()+3600000},{id:'second-agent',deviceId:'test-device',tokenSha256:hash(otherAgent),expiresAt:Date.now()+3600000}])}};
+    vars:{PUBLIC_ORIGIN:base,DEVICE_ENROLL_TOKEN:enrollment,AGENTS_JSON:JSON.stringify([{id:'test-agent',deviceId:'test-device',tokenSha256:hash(agent),expiresAt:Date.now()+3600000},{id:'revoked-agent',deviceId:'test-device',tokenSha256:hash(revokedAgent),expiresAt:Date.now()+3600000},{id:'replay-agent',deviceId:'test-device',tokenSha256:hash(replayAgent),expiresAt:Date.now()+3600000},{id:'second-agent',deviceId:'test-device',tokenSha256:hash(otherAgent),expiresAt:Date.now()+3600000}])}};
   await writeFile(join(dir,'wrangler.json'),JSON.stringify(config),{mode:0o600});
   worker=spawn(resolve('node_modules/.bin/wrangler'),['dev','--config',join(dir,'wrangler.json'),'--port','8788','--ip','127.0.0.1','--local'],{env:{...process.env,WRANGLER_SEND_METRICS:'false'},stdio:['ignore','pipe','pipe']});
   worker.stdout.on('data',b=>{output+=b}); worker.stderr.on('data',b=>{output+=b});
@@ -478,6 +479,98 @@ test('one malformed or colliding phone descriptor does not break the MCP endpoin
     assert.equal(names.filter(n=>n==='siconnect_connection').length,1);
     assert.equal((await c.callTool({name:'test_echo',arguments:{value:'still works'}})).structuredContent.result.output.value,'still works');
   } finally {await c.close();await rehello()}
+});
+
+async function exchange(frame, expected, peer = socket) {
+  return new Promise((resolve, reject) => {
+    const finish = (value, error) => {
+      clearTimeout(timer);
+      peer.off('close', close); peer.off('message', message);
+      if (error) reject(error); else resolve(value);
+    };
+    const message = raw => {
+      const reply = JSON.parse(raw);
+      if (reply.type === expected && (!frame.id || frame.id === reply.id)) finish(reply);
+    };
+    const close = code => finish({closed:code});
+    const timer = setTimeout(() => finish(null, new Error('Missing reply to ' + frame.type)), 4000);
+    peer.on('message', message); peer.once('close', close);
+    peer.send(JSON.stringify(frame));
+  });
+}
+
+test('catalog at the supported limit handshakes and one additional capability is rejected', async () => {
+  const cap = capabilities()[0];
+  const rows = Array.from({length:129}, (_, i) => ({...cap, descriptor:{...cap.descriptor,id:'fixture.tool_' + i}}));
+  try {
+    assert.equal((await exchange({type:'hello',capabilities:rows.slice(0,128)}, 'hello_ack')).type,'hello_ack');
+    assert.equal((await exchange({type:'hello',capabilities:rows}, 'hello_ack')).closed,1008);
+  } finally { await reconnectPeer(); }
+});
+
+const shippedFrame = process.env.SICONNECT_TEST_CATALOG;
+test('shipped Android catalog handshakes and every descriptor survives MCP schema compilation', {skip:!shippedFrame}, async () => {
+  const frame = JSON.parse(await readFile(shippedFrame, 'utf8'));
+  const ids = frame.capabilities.map(cap => cap.descriptor.id);
+  const listener = raw => {
+    const m = JSON.parse(raw);
+    if (m.type === 'discovery_scope') socket.send(JSON.stringify({type:'discovery_scope_result',id:m.id,allowed:ids}));
+  };
+  socket.on('message', listener);
+  try {
+    assert.equal((await exchange(frame, 'hello_ack')).type,'hello_ack', 'Worker rejected ' + ids.length + ' Android descriptors');
+    const c = await client();
+    try { assert.deepEqual((await c.listTools()).tools.map(t=>t.name).sort(),
+      [...ids.map(id=>id.replaceAll('.', '_')),'siconnect_connection'].sort()); }
+    finally { await c.close(); }
+  } finally { socket.off('message',listener); await rehello(); }
+});
+
+test('existing clients see independent live discovery scopes, readiness and reductions without reconnecting', async () => {
+  let first = ['test.echo'];
+  const listener = raw => {
+    const m = JSON.parse(raw);
+    if (m.type === 'discovery_scope') socket.send(JSON.stringify({type:'discovery_scope_result',id:m.id,
+      allowed:m.agentToken === agent ? first : ['test.write']}));
+  };
+  socket.on('message',listener);
+  const a = await client(), b = await client(false,otherAgent);
+  try {
+    await rehello({scopedDiscovery:true});
+    const [one,two] = await Promise.all([a.listTools(),b.listTools()]);
+    assert.equal(one._meta['dev.siconnect/scopeStatus'],'OBSERVED');
+    assert.deepEqual(one.tools.map(t=>t.name), ['test_echo','siconnect_connection']);
+    assert.equal(one.tools[0]._meta['dev.siconnect/availability'],'IMPLEMENTED');
+    assert.deepEqual(two.tools.map(t=>t.name), ['test_write','siconnect_connection']);
+    first = [];
+    assert.deepEqual((await a.listTools()).tools.map(t=>t.name), ['siconnect_connection']);
+    const response = await fetch(base+'/connection',{headers:{Authorization:'Bearer '+agent}});
+    assert.deepEqual((await response.json()).capabilities,[]);
+  } finally { await a.close(); await b.close(); socket.off('message',listener); await rehello(); }
+});
+
+test('scope timeout and offline discovery retain only connection diagnostics', {timeout:10000}, async () => {
+  await rehello({scopedDiscovery:true});
+  const c = await client();
+  try {
+    const silent = await c.listTools();
+    assert.equal(silent._meta['dev.siconnect/scopeStatus'],'UNCONFIRMED');
+    assert.deepEqual(silent.tools.map(t=>t.name),['siconnect_connection']);
+    const closed = new Promise(resolve=>socket.once('close',resolve));
+    socket.close(1000); await closed;
+    const offline = await c.listTools();
+    assert.equal(offline._meta['dev.siconnect/scopeStatus'],'NO_SESSION');
+    assert.deepEqual(offline.tools.map(t=>t.name),['siconnect_connection']);
+  } finally { await c.close(); await reconnectPeer(); }
+});
+
+test('acknowledged revocation pages survive replacement and duplicate delivery', async () => {
+  await rehello({revocationReplay:true});
+  const page = {type:'revocations', id:crypto.randomUUID(), agents:['replay-agent']};
+  for (let n=0; n<2; n++) assert.equal((await exchange(page,'revocations_saved')).id,page.id);
+  await reconnectPeer();
+  const response = await fetch(base+'/connection',{headers:{Authorization:'Bearer '+replayAgent}});
+  assert.equal(response.status,403);
 });
 
 test('revocation survives a reconnect and rollover of the phone revocation list',async()=>{

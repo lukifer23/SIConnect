@@ -28,6 +28,8 @@ class GatewayHelloTest {
             put("type", "hello")
             put("deviceId", "phone")
             put("connectionProbe", true)
+            put("scopedDiscovery", true)
+            put("revocationReplay", true)
             put("capabilities", JsonArray(listOf(AppJson.encodeToJsonElement(CapabilityStatus.serializer(), status))))
             put("revokedAgents", JsonArray(emptyList()))
         }

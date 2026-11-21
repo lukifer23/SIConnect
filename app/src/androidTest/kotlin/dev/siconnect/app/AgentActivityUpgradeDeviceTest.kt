@@ -52,6 +52,7 @@ class AgentActivityUpgradeDeviceTest {
                     assertTrue(store.historyPage(50).all { it.agentId == "busy" })
                     assertEquals(listOf("quiet-z", "quiet-a"), store.historyPage(20, agentId = "quiet").map { it.requestId })
                     assertEquals(listOf("busy"), AgentStore(db).revokedRemoteIds())
+                    assertEquals(listOf("busy"), AgentStore(db).revocationsAfter(0).map { it.second })
                     assertEquals(quiet, AgentStore(db).byCredentialHash(quiet.tokenSha256))
                     assertEquals(busy, AgentStore(db).byCredentialHash(busy.tokenSha256))
                     val plan = db.readableDatabase.rawQuery("EXPLAIN QUERY PLAN $LATEST_AGENT_HISTORY", null).mapAll { it.getString(3) }

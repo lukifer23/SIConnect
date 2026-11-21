@@ -11,6 +11,8 @@ internal data class GatewayHello(
     val revokedAgents: List<String>,
     val type: String = "hello",
     val connectionProbe: Boolean = true,
+    val scopedDiscovery: Boolean = true,
+    val revocationReplay: Boolean = true,
 )
 
 /** Each socket owns its own snapshot. Only a successful enqueue suppresses an identical update. */

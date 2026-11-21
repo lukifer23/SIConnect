@@ -77,6 +77,8 @@ data class CapabilityDescriptor(
     val interaction: InteractionMode = InteractionMode.UNSPECIFIED,
     /** Requires both the local-owner principal and the trusted local-owner origin. */
     val ownerOnly: Boolean = false,
+    /** The capability assesses some argument combinations as native background work. */
+    val hasBackgroundRoute: Boolean = false,
 ) {
     /** MCP / OpenAI-compatible tool name: dots are not allowed by several clients. */
     val toolName: String get() = id.replace('.', '_')

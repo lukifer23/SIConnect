@@ -12,7 +12,7 @@ import kotlinx.serialization.json.*
 internal data class ManagedTimer(val timerId:String,val agentId:String,val startRequestId:String,val packageName:String,val uid:Int,
     val installedAtMs:Long,val durationSeconds:Int,val label:String,val publishedLabel:String,val createdAtMs:Long,val startPhase:String) {
     fun metadata():JsonObject=buildJsonObject {
-        put("timerId",timerId);put("startRequestId",startRequestId);put("packageName",packageName);put("packageUid",uid)
+        put("source","EXTERNAL_CLOCK");put("timerId",timerId);put("startRequestId",startRequestId);put("packageName",packageName);put("packageUid",uid)
         put("packageFirstInstallAtMs",installedAtMs);put("durationSeconds",durationSeconds);put("label",label);put("publishedLabel",publishedLabel)
         put("createdAtMs",createdAtMs);put("startPhase",startPhase);put("automaticReplayAllowed",false)
     }

@@ -110,16 +110,7 @@ class RuntimeGraph(val context: Context) {
                     .setUsage(android.media.AudioAttributes.USAGE_ALARM).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
             },
             NotificationChannel("connection", "Remote connection", NotificationManager.IMPORTANCE_LOW)))
-        registerCapabilities(this)
-        registerAutomationCapabilities(this)
-        dev.siconnect.app.capabilities.registerWeatherCommuteCapabilities(this)
-        dev.siconnect.app.capabilities.registerHeadlessCapabilities(this)
-        dev.siconnect.app.capabilities.registerBridgeMaintenance(this)
-        dev.siconnect.app.capabilities.registerProposalCapabilities(this)
-        dev.siconnect.app.capabilities.registerRecoveryCapabilities(this)
-        dev.siconnect.app.capabilities.registerClockCapabilities(this)
-        dev.siconnect.app.capabilities.registerMessagesCapabilities(this)
-        dev.siconnect.app.capabilities.registerCodexCapabilities(this)
+        registerPhoneCatalog(this)
         ready = scope.async {
             startup.start()
             if (BuildConfig.DEBUG) { local = LocalEndpoint(this@RuntimeGraph).also { it.start() } }
@@ -519,4 +510,18 @@ class RuntimeGraph(val context: Context) {
             idempotencyKey=(body["idempotencyKey"] as? JsonPrimitive)?.content,
             expiresAtMs=(body["expiresAtMs"] as? JsonPrimitive)?.longOrNull), Origin.REMOTE)
     }
+}
+
+/** The same registration path is used by the application and the host-side wire contract test. */
+internal fun registerPhoneCatalog(g: RuntimeGraph) {
+    registerCapabilities(g)
+    registerAutomationCapabilities(g)
+    dev.siconnect.app.capabilities.registerWeatherCommuteCapabilities(g)
+    dev.siconnect.app.capabilities.registerHeadlessCapabilities(g)
+    dev.siconnect.app.capabilities.registerBridgeMaintenance(g)
+    dev.siconnect.app.capabilities.registerProposalCapabilities(g)
+    dev.siconnect.app.capabilities.registerRecoveryCapabilities(g)
+    dev.siconnect.app.capabilities.registerClockCapabilities(g)
+    dev.siconnect.app.capabilities.registerMessagesCapabilities(g)
+    dev.siconnect.app.capabilities.registerCodexCapabilities(g)
 }

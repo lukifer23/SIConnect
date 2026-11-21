@@ -118,6 +118,32 @@ import dev.siconnect.core.*
     }
     when(if(a.grant.revoked) "Activity" else tab) {
         "Permissions" -> {
+            val scoped = remember(a.grant, state.capabilities, state.remoteActionsEnabled, usable) {
+                if (usable && state.remoteActionsEnabled) state.capabilities.filter { a.grant.discovers(it.descriptor) }
+                else emptyList()
+            }
+            var showTools by rememberSaveable(a.grant.agentId) { mutableStateOf(false) }
+            OutlinedButton(onClick = { showTools = !showTools }) {
+                Text(if (showTools) "Hide agent tools" else "View agent tools (${scoped.size})")
+            }
+            if (showTools) Panel {
+                when {
+                    !state.remoteActionsEnabled -> Text("Remote actions are paused on Home.")
+                    scoped.isEmpty() -> Text("No phone tools are available to this agent.")
+                    else -> {
+                        var filter by rememberSaveable { mutableStateOf("") }
+                        OutlinedTextField(filter, { filter = it }, singleLine = true, label = { Text("Find an agent tool") })
+                        val matches = scoped.filter { it.descriptor.toolName.contains(filter.trim(), true) ||
+                            it.descriptor.title.contains(filter.trim(), true) }
+                        if (matches.isEmpty()) Text("No matching tools.")
+                        matches.forEach { tool ->
+                            Text(tool.descriptor.toolName, style = MaterialTheme.typography.titleSmall)
+                            Text("${tool.descriptor.title} · ${tool.availability.name.lowercase().replace('_', ' ')}",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
             if(fullControl) FullControlCoverage(a,busy,onFullControl)
             else {
 
@@ -135,9 +161,8 @@ import dev.siconnect.core.*
                     tools.any { it.descriptor.id.contains(query.trim(),true) || it.descriptor.title.contains(query.trim(),true) }) }
             if(groups.isEmpty()) EmptyState("No matching permissions","Try a tool category such as calendar, apps, or files.")
             groups.forEach {(family,caps)->
-                val count=caps.count {allowed(a,it.descriptor.id)}
-                val ready=caps.count {allowed(a,it.descriptor.id) && it.availability.isExecutable &&
-                    (a.grant.allowSharedScreen || it.descriptor.interaction in setOf(InteractionMode.BACKGROUND,InteractionMode.ISOLATED_SCREEN))}
+                val count=caps.count {usable && a.grant.includesInScope(it.descriptor.id)}
+                val ready=caps.count {usable && state.remoteActionsEnabled && a.grant.discovers(it.descriptor) && it.availability.isExecutable}
                 Panel {
                     SwitchRow(count==caps.size && usable,{onFamily(a.grant.agentId,family,it)},enabled=editable) {
                         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
@@ -145,7 +170,7 @@ import dev.siconnect.core.*
                             Text("$count of ${caps.size} allowed · $ready ready",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    caps.filter {allowed(a,it.descriptor.id) && !it.availability.isExecutable}.take(3).forEach {
+                    caps.filter {usable && a.grant.discovers(it.descriptor) && !it.availability.isExecutable}.take(3).forEach {
                         Text("${it.descriptor.title}: ${it.availability.name.lowercase().replace('_',' ')}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
                     }
                 }
@@ -321,7 +346,6 @@ import dev.siconnect.core.*
     }
 }
 private fun agentState(a:AgentRecord)=when {a.grant.revoked->"Revoked";a.grant.expiresAtMs?.let {it<=System.currentTimeMillis()}==true->"Expired";else->"Active"}
-private fun allowed(a:AgentRecord,id:String)=!a.grant.revoked && (a.grant.expiresAtMs?.let {it>System.currentTimeMillis()} ?: true) && a.grant.scopes.any {PolicyEngine.globMatches(it,id)} && a.grant.denied.none {PolicyEngine.globMatches(it,id)}
 private fun isLegacyShared(a:AgentRecord)=a.grant.agentId=="development-client"
 private fun isOAuthPaired(a:AgentRecord)=a.grant.agentId.startsWith("bot_") && a.tokenHint=="OAuth pairing"
 private fun credentialType(a:AgentRecord)=when {isLegacyShared(a)->"Legacy shared credential";isOAuthPaired(a)->"OAuth-paired identity";else->"Saved credential · pairing type unrecorded"}

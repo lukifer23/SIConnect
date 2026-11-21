@@ -18,6 +18,12 @@ npm run deploy
 
 For an in-place upgrade, confirm the current account, Worker, deployment and namespace bindings. Run the gateway tests above, then deploy with `npx wrangler deploy --keep-vars`. Record the returned version ID. Check `/health`, the OAuth discovery endpoints and the HTTP 401 challenge from an unauthenticated request to `/mcp`. Confirm a new phone handshake separately.
 
+### Build 36 compatibility
+
+Roll out the matching Worker before updating phones to build 36. Existing phone builds continue using device-wide discovery and the recent revocation list. A build 36 phone with an older Worker retains those behaviors until its next compatible handshake. On a compatible connection, the phone sends permanent revocations in pages of 64. The Worker acknowledges each page after committing its IDs. A replacement socket replays from the beginning and writes only missing markers.
+
+A fresh MCP tool listing requests scope through the agent’s existing credential. Capability schema compilation is shared across requests. The grant decision is read afresh for each listing. Remote execution still performs the phone’s ordinary authorization and approval checks.
+
 ### Current provider address
 
 Dot and Grok Bot both use `https://siconnect-gateway.siconnect-gateway.workers.dev/mcp`. The account dashboard shows **Workers Free** as the current plan. The phone opens its own outbound WebSocket to the Worker. The Mac can be off, and native actions require neither USB nor debugging. Keeping the same public origin also preserves the resource URL saved by both OAuth clients. Cloudflare applies plan limits to this deployment. See [Workers limits](https://developers.cloudflare.com/workers/platform/limits/).

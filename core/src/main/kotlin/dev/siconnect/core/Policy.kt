@@ -50,6 +50,21 @@ data class AgentGrant(
     val fullControl: Boolean = false,
 )
 
+/** Discovery exposes scope and definite screen restrictions. Argument-specific approvals stay in evaluate. */
+fun AgentGrant.discovers(descriptor: CapabilityDescriptor): Boolean =
+    !revoked && !descriptor.ownerOnly && scopeDenial(descriptor.id) == null &&
+        (allowSharedScreen || descriptor.interaction == InteractionMode.BACKGROUND ||
+            descriptor.interaction == InteractionMode.ISOLATED_SCREEN ||
+            (descriptor.hasBackgroundRoute && descriptor.backend == BackendKind.NATIVE && descriptor.interaction == InteractionMode.MAY_OPEN_SCREEN))
+
+fun AgentGrant.includesInScope(id: String): Boolean = scopeDenial(id) == null
+
+private fun AgentGrant.scopeDenial(id: String): String? = when {
+    denied.any { PolicyEngine.globMatches(it, id) } -> "agent_denylist"
+    scopes.none { PolicyEngine.globMatches(it, id) } -> "agent_scope"
+    else -> null
+}
+
 @Serializable
 data class DeviceControls(
     /** Emergency stop: when false every remote request is denied before evaluation. */
@@ -83,8 +98,9 @@ class PolicyEngine {
         if (agent == null) return deny("Unknown agent", "unknown_agent")
         if (agent.revoked) return deny("Agent access has been revoked", "agent_revoked")
         if (agent.expiresAtMs != null && nowMs >= agent.expiresAtMs) return deny("Agent grant expired", "agent_expired")
-        if (agent.denied.any { globMatches(it, descriptor.id) }) return deny("Capability denied for this agent", "agent_denylist")
-        if (agent.scopes.none { globMatches(it, descriptor.id) }) return deny("Capability outside agent scope", "agent_scope")
+        agent.scopeDenial(descriptor.id)?.let { rule ->
+            return deny(if (rule == "agent_scope") "Capability outside agent scope" else "Capability denied for this agent", rule)
+        }
         if(descriptor.ownerOnly && (origin!=Origin.LOCAL_OWNER || agent.agentId!="local-owner"))
             return deny("Operation is restricted to the local owner runtime", "owner_only")
         val interaction = if (assessment.nativeBackgroundOnly && descriptor.backend==BackendKind.NATIVE &&
