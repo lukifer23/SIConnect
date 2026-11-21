@@ -7,8 +7,9 @@ import { oauthFetch } from './oauth.js';
 import type { Invitation, PhoneAuthorization } from './pairing.js';
 import { invocationEnvelope, invocationSchema } from './invocation.js';
 
-type Capability = { descriptor: { id: string; version: number; title: string; description: string; inputSchema: Record<string, unknown>; risk: string }; availability: string; detail?: string };
-type DiscoveryScope = {allowed: string[]; status: 'OBSERVED' | 'NO_SESSION' | 'UNCONFIRMED'};
+import {readCatalog, type Capability, type CatalogReply} from './catalog.js';
+import {DiscoveryReads, type DiscoveryScope} from './discovery.js';
+
 type SocketState = { epoch: string; ready: boolean; connectionProbe?: boolean; scopedDiscovery?: boolean; revocationReplay?: boolean };
 type Pending = { epoch: string; agentId: string; resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> };
 const encoder = new TextEncoder();
@@ -19,25 +20,16 @@ export class DeviceBridge extends DurableObject<Env> {
   private readonly pending = new Map<string, Pending>();
   private readonly rate = new Map<string, { slot: number; count: number }>();
 
-  private readonly scopeReads = new Map<string, { epoch: string; finish: (scope: DiscoveryScope) => void }>();
+  private readonly scopeReads = new DiscoveryReads();
 
-  /** Only explicit discovery waits for scope. Ordinary calls still take the direct invocation path. */
-  private async discoveryScope(agentToken: string): Promise<DiscoveryScope> {
+  private async discoveryScope(agent: string, agentToken: string): Promise<DiscoveryScope> {
+    const credentialHash = await sha256(agentToken);
     const socket = await this.activeSocket();
-    const state = socket?.deserializeAttachment() as SocketState | undefined;
     if (!socket) return {allowed: [], status: 'NO_SESSION'};
-    if (!state?.scopedDiscovery || this.scopeReads.size >= 32) return {allowed: [], status: 'UNCONFIRMED'};
-    const id = crypto.randomUUID();
-    return new Promise(resolve => {
-      const finish = (scope: DiscoveryScope) => {
-        clearTimeout(timer);
-        this.scopeReads.delete(id);
-        resolve(scope);
-      };
-      const timer = setTimeout(() => finish({allowed: [], status: 'UNCONFIRMED'}), 4000);
-      this.scopeReads.set(id, { epoch: state.epoch, finish });
-      try { socket.send(JSON.stringify({ type: 'discovery_scope', id, agentToken })); }
-      catch { finish({allowed: [], status: 'UNCONFIRMED'}); }
+    const state = socket.deserializeAttachment() as SocketState;
+    if (!state.scopedDiscovery) return {allowed: [], status: 'UNCONFIRMED'};
+    return this.scopeReads.read(state.epoch, agent, credentialHash, id => {
+      socket.send(JSON.stringify({type: 'discovery_scope', id, agentToken}));
     });
   }
 
@@ -62,8 +54,8 @@ export class DeviceBridge extends DurableObject<Env> {
       const epoch = crypto.randomUUID();
       await this.ctx.storage.put('socketEpoch', epoch);
       this.probe?.finish(false);
-      for (const read of this.scopeReads.values()) read.finish({allowed: [], status: 'UNCONFIRMED'});
       for (const p of this.pending.values()) p.reject(new Error('DEVICE_REPLACED_UNKNOWN_OUTCOME'));
+      this.scopeReads.disconnect();
       for (const existing of this.ctx.getWebSockets('device')) existing.close(1000, 'Replaced by authenticated reconnect');
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1], ['device']);
@@ -103,22 +95,24 @@ export class DeviceBridge extends DurableObject<Env> {
     if (path === '/grant-status' && agent) return json({ active: true });
     if (path === '/discovery-scope' && agent && request.method === 'POST') {
       const {agentToken} = await request.json() as {agentToken: string};
-      return json(await this.discoveryScope(agentToken));
+      return json(await this.discoveryScope(agent, agentToken));
     }
     if (path === '/catalog') {
-      const catalog = await this.ctx.storage.get<unknown>(['catalogRevision', 'capabilities', 'scopedDiscovery']);
-      const scopedDiscovery = catalog.get('scopedDiscovery') === true;
+      // Only the internal MCP caller can ask for metadata alone. The bearer endpoint always gets its scoped snapshot.
+      const known = request.method === 'GET' ? request.headers.get('X-SIConnect-Catalog-Revision') : null;
+      const catalog = await readCatalog(this.ctx.storage, known);
+      if ('unchanged' in catalog) return json(catalog);
       let scopeStatus: DiscoveryScope['status'] | undefined;
-      let capabilities = (catalog.get('capabilities') ?? []) as Capability[];
-      if (scopedDiscovery && request.method === 'POST') {
+      let capabilities = catalog.capabilities;
+      if (catalog.scopedDiscovery && request.method === 'POST') {
+        if (!agent) return json({error: 'UNAUTHORIZED'}, 401);
         const {agentToken} = await request.json() as {agentToken: string};
-        const scope = await this.discoveryScope(agentToken);
+        const scope = await this.discoveryScope(agent, agentToken);
         scopeStatus = scope.status;
         const allowed = new Set(scope.allowed);
         capabilities = capabilities.filter(cap => allowed.has(cap.descriptor.id));
       }
-      return json({ protocol: 2, scopedDiscovery, scopeStatus, online: !!await this.activeSocket(), revision: catalog.get('catalogRevision') ?? null,
-        capabilities });
+      return json({protocol: 2, online: !!await this.activeSocket(), ...catalog, scopeStatus, capabilities});
     }
     if (path === '/invoke') {
       const body = await request.json() as { agentId: string; agentToken: string; transportExpiresAtMs?: number; request: Record<string, unknown> };
@@ -219,9 +213,10 @@ export class DeviceBridge extends DurableObject<Env> {
         });
         socket.send(JSON.stringify({type: 'revocations_saved', id: body.id}));
       } else if (body.type === 'discovery_scope_result' && attachment.scopedDiscovery) {
-        const read = this.scopeReads.get(body.id);
-        if (read?.epoch === attachment.epoch && Array.isArray(body.allowed) && body.allowed.length <= 128 &&
-            body.allowed.every((id: unknown) => typeof id === 'string')) read.finish({allowed: body.allowed, status: 'OBSERVED'});
+        if (Array.isArray(body.allowed) && body.allowed.length <= 128 &&
+            body.allowed.every((id: unknown) => typeof id === 'string')) {
+          this.scopeReads.answer(attachment.epoch, body.id, body.allowed);
+        }
       } else if (body.type === 'connection_probe_ack') {
         const probe = this.probe;
         if (probe && probe.epoch === attachment.epoch && probe.id === body.id) probe.finish(true);
@@ -312,7 +307,7 @@ export class DeviceBridge extends DurableObject<Env> {
   }
   private endSession(socket: WebSocket): void {
     const epoch = (socket.deserializeAttachment() as SocketState | null)?.epoch;
-    for (const read of this.scopeReads.values()) if (read.epoch === epoch) read.finish({allowed: [], status: 'UNCONFIRMED'});
+    if (epoch) this.scopeReads.disconnect(epoch);
     if (this.probe && this.probe.epoch === epoch) this.probe.finish(false);
     for (const p of this.pending.values()) if (p.epoch === epoch) p.reject(new Error('DEVICE_DISCONNECTED_UNKNOWN_OUTCOME'));
   }
@@ -361,8 +356,9 @@ type ToolListing = {
   _meta: {'dev.siconnect/availability': string};
 };
 type CompiledTool = {id: string; inputSchema: z.ZodType; listing: ToolListing};
-/** Per-isolate cache keyed by device and catalog revision; unchanged catalogs retain their revision across reconnects. */
-const compiledTools = new Map<string, CompiledTool[]>();
+type CompiledCatalog = {revision: string | null; count: number; tools: CompiledTool[]};
+/** Most recent compiled schema per device. Scope decisions are never stored here. */
+const compiledCatalogs = new Map<string, CompiledCatalog>();
 function compileTools(capabilities: Capability[]): CompiledTool[] {
   // One malformed or colliding phone descriptor must not take down the whole MCP endpoint.
   const tools: CompiledTool[] = [];
@@ -391,19 +387,23 @@ function compileTools(capabilities: Capability[]): CompiledTool[] {
 export async function serveMcp(request: Request, env: Env, authorization: PhoneAuthorization): Promise<Response> {
       const bridge = env.DEVICES.get(env.DEVICES.idFromName(authorization.deviceId));
       const catalogUrl = 'https://internal/catalog?agent=' + encodeURIComponent(authorization.agentId);
-      const catalogResponse = await bridge.fetch(catalogUrl);
+      const cached = compiledCatalogs.get(authorization.deviceId);
+      const catalogResponse = await bridge.fetch(catalogUrl, cached?.revision
+        ? {headers: {'X-SIConnect-Catalog-Revision': cached.revision}} : undefined);
       if (!catalogResponse.ok) return catalogResponse;
-      const catalog = await catalogResponse.json() as { online: boolean; scopedDiscovery: boolean; revision: string | null; capabilities: Capability[] };
-      const cacheKey = catalog.revision ? `${authorization.deviceId}:${catalog.revision}` : null;
-      let tools = cacheKey ? compiledTools.get(cacheKey) : undefined;
-      if (!tools) {
-        tools = compileTools(catalog.capabilities);
-        if (cacheKey) {
-          // Stateless MCP rebuilds the server per request; reuse compiled schemas for an unchanged catalog.
-          if (compiledTools.size >= 16) compiledTools.delete(compiledTools.keys().next().value!);
-          compiledTools.set(cacheKey, tools);
+      const catalog = await catalogResponse.json() as CatalogReply;
+      let compiled: CompiledCatalog;
+      if ('unchanged' in catalog) {
+        if (!cached || cached.revision !== catalog.revision) return json({error: 'CATALOG_REVISION_MISMATCH'}, 502);
+        compiled = cached;
+      } else {
+        compiled = {revision: catalog.revision, count: catalog.capabilities.length, tools: compileTools(catalog.capabilities)};
+        if (compiled.revision && compiledCatalogs.get(authorization.deviceId) === cached) {
+          if (!cached && compiledCatalogs.size >= 16) compiledCatalogs.delete(compiledCatalogs.keys().next().value!);
+          compiledCatalogs.set(authorization.deviceId, compiled);
         }
       }
+      const tools = compiled.tools;
       const handler = createMcpHandler(() => {
         const server = new McpServer({ name: 'SIConnect', version: '0.2.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
         for (const {id, listing, inputSchema} of tools) {
@@ -436,7 +436,7 @@ export async function serveMcp(request: Request, env: Env, authorization: PhoneA
             UNCONFIRMED: 'The gateway has an acknowledged session but could not confirm a phone reply. Retry the status check. Keep original request IDs for any pending work.',
             NO_SESSION: 'Wait for the phone to reconnect to its existing gateway, then check again.',
           };
-          const status = { ...fresh, observedAtMs: Date.now(), nativeCatalogTools: catalog.capabilities.length,
+          const status = { ...fresh, observedAtMs: Date.now(), nativeCatalogTools: compiled.count,
             executionDispatched: false, observationScope: 'GATEWAY_TO_PHONE_SESSION', backendAvailability: 'NOT_MEASURED',
             guidance: guidance[String(fresh.phoneReachability)] };
           return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status, isError: false };

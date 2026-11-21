@@ -22,7 +22,7 @@ For an in-place upgrade, confirm the current account, Worker, deployment and nam
 
 Roll out the matching Worker before updating phones to build 36. Existing phone builds continue using device-wide discovery and the recent revocation list. A build 36 phone with an older Worker retains those behaviors until its next compatible handshake. On a compatible connection, the phone sends permanent revocations in pages of 64. The Worker acknowledges each page after committing its IDs. A replacement socket replays from the beginning and writes only missing markers.
 
-A fresh MCP tool listing requests scope through the agent’s existing credential. Capability schema compilation is shared across requests. The grant decision is read afresh for each listing. Remote execution still performs the phone’s ordinary authorization and approval checks.
+A tool listing checks scope through the agent’s existing credential. Overlapping reads for the same identity, credential and phone socket share one in-flight check. The next listing after it finishes checks again. On a compiled catalog cache hit the Worker sends the known schema revision to the Durable Object, which returns the revision and current discovery mode. A changed revision returns the full catalog. Remote execution still performs the phone’s ordinary authorization and approval checks.
 
 ### Current provider address
 

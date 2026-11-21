@@ -1,6 +1,6 @@
 # Status
 
-Updated November 20, 2026. This is the single current status page. Dated reports in [history](history/) keep their original versions, measurements and limits; they are not re-verification of the current source.
+Updated November 21, 2026. This is the single current status page. Dated reports in [history](history/) keep their original versions, measurements and limits; they are not re-verification of the current source.
 
 ## Current build
 
@@ -41,7 +41,7 @@ The named Cloudflare Tunnel **SIConnect** showed **Healthy** with **No routes**.
 | Android JVM unit | 157 pass |
 | Embedded ADB | 2 pass |
 | Python tools | 13 pass |
-| Gateway (local SDK v1/v2 protocol, test-only device peer) | 27 pass with the exported Android catalog |
+| Gateway (local SDK v1/v2 protocol, test-only device peer) | 31 pass with the exported Android catalog |
 | Lint | 0 errors |
 | Host, code 36 | The Worker accepted all 113 Android descriptors, accepted the 128-entry boundary and rejected 129. Two independent credentials received different tool lists and observed a changed grant. An unavailable scope retained the connection diagnostic. Closing one socket left the replacement pairing receipt intact. A host SQLite migration replayed 603 identities in ten pages after reopening the database. |
 | Physical, code 35 | The Fold acknowledged the existing Worker connection after the final in-place wireless install at 00:56:47 UTC on November 21. Both provider identities remained active and five remote identities remained revoked. Eleven device tests passed, covering revocations, credential preservation and legacy migrations. Build 35 provider-side calls are unverified. See the [matched restart measurements](performance.md). |

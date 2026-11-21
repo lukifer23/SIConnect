@@ -1,5 +1,11 @@
 # Performance and resource evidence
 
+## November 21 gateway discovery
+
+For the exported build 36 catalog (113 descriptors), the internal full catalog response serialized to **200,580 bytes**. The response for a matching revision serialized to **119 bytes**. A cold lookup followed by a matching lookup read the stored descriptors once. These are local UTF-8 JSON body sizes between the MCP Worker and its Durable Object. Production latency, traffic and billing remain unmeasured.
+
+The host concurrency test filled 32 pending permission checks, then added 64 overlapping readers for one of them. Those readers shared the original frame. A new read after completion sent a new frame and observed the changed grant. Socket replacement clears pending checks before the new session is accepted.
+
 ## November 20 matched restart on the Fold
 
 Each build was installed in place over wireless ADB. Sampling started about 20 seconds into the new process and took ten observations over 90 seconds. Android reported foreground-service importance at every sample. The phone was awake, on battery, with the keyguard hidden. The owner UI stayed closed.

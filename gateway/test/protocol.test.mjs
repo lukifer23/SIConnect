@@ -462,6 +462,37 @@ test('identical reconnect catalogs retain their revision and changed catalogs ge
   } finally {await rehello();}
 });
 
+test('warm MCP catalog follows changed descriptors and scope mode across socket replacement', {timeout:10000}, async () => {
+  await rehello();
+  const c = await client();
+  try {
+    const title = async () => (await c.listTools()).tools.find(t => t.name === 'test_echo')?.title;
+    assert.equal(await title(), capabilities()[0].descriptor.title);
+    const changed = capabilities();
+    changed[0].descriptor.title = 'Newly announced echo';
+    await rehello({capabilities:changed});
+    assert.equal(await title(), 'Newly announced echo');
+
+    // Scope negotiation can change independently of the schema hash.
+    await rehello({capabilities:changed, scopedDiscovery:true});
+    const scopeRequested = new Promise(resolve => socket.once('message', raw => resolve(JSON.parse(raw))));
+    const listing = c.listTools();
+    assert.equal((await scopeRequested).type, 'discovery_scope');
+    await reconnectPeer();
+    const interrupted = await listing;
+    assert.equal(interrupted._meta['dev.siconnect/scopeStatus'], 'UNCONFIRMED');
+    assert.deepEqual(interrupted.tools.map(t => t.name), ['siconnect_connection']);
+
+    await rehello({capabilities:changed});
+    assert.equal(await title(), 'Newly announced echo');
+    const status = await c.callTool({name:'siconnect_connection', arguments:{}});
+    assert.equal(status.structuredContent.nativeCatalogTools, changed.length);
+    const pub = await fetch(base + '/connection', {headers: {Authorization:'Bearer ' + agent,
+      'X-SIConnect-Catalog-Revision':'fixture'}});
+    assert.equal((await pub.json()).capabilities.length, changed.length);
+  } finally { await c.close(); await rehello(); }
+});
+
 test('one malformed or colliding phone descriptor does not break the MCP endpoint',async()=>{
   const bad=[...capabilities(),
     {descriptor:{id:'test.bad_schema',version:1,title:'Bad',description:'x',risk:'READ_ONLY',inputSchema:{type:'object',properties:{_siconnectOperationKey:{type:'string'}}}},availability:'IMPLEMENTED'},
